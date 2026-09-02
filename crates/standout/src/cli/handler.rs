@@ -3,7 +3,7 @@ pub use standout_dispatch::{
     Diagnostic, DiagnosticKind, DiagnosticPosition, DiagnosticRange, DispatchResult, EntryStream,
     ExitStatus, Extensions, ExternalFailure, FnHandler, Handler, HandlerResult, InvalidAppStatus,
     InvalidExternalStatus, Output, OutputKind, RunError, RunErrorKind, RunOutput, Severity,
-    StreamError, StreamSink, SuccessKind,
+    StreamCapture, StreamError, StreamSink, SuccessKind,
 };
 
 use standout_input::{InputSourceKind, Inputs, MissingInput};

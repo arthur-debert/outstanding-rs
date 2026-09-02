@@ -55,7 +55,9 @@ pub use style::{
 
 pub use theme::{ColorMode, IconDefinition, IconMode, IconSet, Theme};
 
-pub use output::{write_binary_output, write_output, OutputDestination, OutputMode};
+pub use output::{
+    open_output_file, write_binary_output, write_output, OutputDestination, OutputMode,
+};
 pub use projection::{
     CsvProjection, CsvProjectionBuilder, ProjectionError, StructuredOutputProjection,
 };

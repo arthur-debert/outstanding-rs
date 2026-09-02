@@ -27,8 +27,8 @@
 use clap::Command;
 use standout::cli::DispatchResult;
 use standout::cli::{
-    App, ArtifactDestination, ArtifactRun, Diagnostic, ExitStatus, RunErrorKind, StreamSink,
-    SuccessKind,
+    App, ArtifactDestination, ArtifactRun, Diagnostic, ExitStatus, RunErrorKind, StreamCapture,
+    StreamSink, SuccessKind,
 };
 use standout::{ColorMode, IconMode, InputSources, TargetProperties};
 use standout_input::env::{MockClipboard, MockStdin};
@@ -250,27 +250,26 @@ impl TestHarness {
             argv.push(format!("--{}={}", self.output_flag_name, output_mode_flag(mode)).into());
         }
         let target = self.target_properties();
-        let streamed = CapturedStream::default();
-        let run = app.run_with_sink(
-            cmd,
-            argv,
-            target,
-            sources,
-            StreamSink::new(streamed.clone()),
-        );
+        let captured = StreamCapture::default();
+        let sink = StreamSink::new(captured.clone());
+        let run = app.run_with_sink(cmd, argv, target, sources, sink.clone());
         let warnings = run.warnings().to_vec();
         let output_mode = run.output_mode();
         let outcome = run.into_outcome();
         let tag_resolutions = standout_render::diagnostics::take_captured();
         let theme = app.get_default_theme();
-        // Stream entries reached stdout while the handler ran; the result and
-        // the warning entries follow them, as in a process.
-        let mut stdout = streamed.0.take();
+        // The sink is the harness's stdout, written the way `run_emitted`
+        // writes the process's: the entries the handler streamed, then the
+        // result or the diagnostic, then the warning entries. An output file
+        // override under `ndjson` has retargeted it, and the file gets them all.
         let mut stderr = Vec::new();
-        standout::cli::emit_run_result(&outcome, output_mode, &mut stdout, &mut stderr)
-            .expect("in-memory streams never fail a final write");
-        standout::cli::emit_warning_entries(&warnings, output_mode, &mut stdout)
-            .expect("in-memory streams never fail a final write");
+        sink.with_writer(|stdout| {
+            standout::cli::emit_run_result(&outcome, output_mode, stdout, &mut stderr)
+                .expect("in-memory streams never fail a final write");
+            standout::cli::emit_warning_entries(&outcome, &warnings, output_mode, stdout)
+                .expect("in-memory streams never fail a final write");
+        });
+        let mut stdout = captured.take();
         // `stdout()` is the rendered text; a process gets it plus the one
         // newline `emit_run_result` terminates rendered text with. A stream
         // is kept whole: every line, its newline included.
@@ -281,7 +280,7 @@ impl TestHarness {
             stdout.pop();
         }
         let mut stderr = String::from_utf8_lossy(&stderr).into_owned();
-        if !standout::cli::carries_warning_entries(output_mode) {
+        if !standout::cli::carries_warning_entries(&outcome, output_mode) {
             stderr.push_str(&standout_render::warnings::render_block_for_target(
                 theme,
                 output_mode,
@@ -351,19 +350,6 @@ mod target_properties_defaults {
         assert_eq!(target.color_scheme, ColorMode::Light);
         assert_eq!(target.icon_mode, IconMode::NerdFont);
         assert_eq!(target.ambiguous_width, AmbiguousWidth::Wide);
-    }
-}
-#[derive(Clone, Default)]
-struct CapturedStream(std::rc::Rc<std::cell::Cell<Vec<u8>>>);
-impl std::io::Write for CapturedStream {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let mut bytes = self.0.take();
-        bytes.extend_from_slice(buf);
-        self.0.set(bytes);
-        Ok(buf.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
     }
 }
 fn validate_fixture_path(path: &Path) -> PathBuf {

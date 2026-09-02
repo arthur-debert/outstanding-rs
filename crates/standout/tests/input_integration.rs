@@ -113,6 +113,7 @@ fn run_command_resolves_declared_input() {
                 Ok(Output::Render(json!({ "echo": body })))
             },
             standout::TemplateRef::Inline(("{{ echo }}").to_string()),
+            standout::cli::StreamSink::new(Vec::new()),
         )
         .expect("run_command should resolve the declared input");
     assert_eq!(output.as_text(), Some("hello"));

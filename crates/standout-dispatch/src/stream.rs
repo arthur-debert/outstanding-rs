@@ -1,5 +1,4 @@
-//! The entry stream a handler writes to under the `ndjson` output mode
-//! (`docs/spec/parity-machine-contract.md`, D3).
+//! The entry stream a handler writes to under the `ndjson` output mode.
 //!
 //! [`EntryStream::emit`] serializes one value as compact JSON and writes it
 //! as one line, followed by a flush, so a consumer reading the pipe sees the
@@ -8,6 +7,13 @@
 //! `ndjson`; discarding otherwise, in which case `emit` neither serializes
 //! nor writes. Nothing more than line-per-value: no buffering, no
 //! backpressure, no async.
+//!
+//! The sink is the one destination of everything the stream carries: the
+//! handler's entries, then the result or the diagnostic, then the warning
+//! entries. The process edge writes through it to stdout; a capture entry
+//! point hands it a [`StreamCapture`] and reads the bytes back; an output
+//! file override retargets it with [`StreamSink::redirect`] before the
+//! handler runs, so the file receives the whole stream and stdout nothing.
 
 use serde::Serialize;
 use std::cell::RefCell;
@@ -16,22 +22,55 @@ use std::io::Write;
 use std::rc::Rc;
 
 #[derive(Clone)]
-pub struct StreamSink(Rc<RefCell<dyn Write>>);
+pub struct StreamSink(Rc<RefCell<Box<dyn Write>>>);
 
 impl StreamSink {
     pub fn new(writer: impl Write + 'static) -> Self {
-        Self(Rc::new(RefCell::new(writer)))
+        Self(Rc::new(RefCell::new(Box::new(writer))))
     }
 
     pub fn process_stdout() -> Self {
         Self::new(std::io::stdout())
     }
 
+    /// Replace the destination; every clone of this sink follows.
+    pub fn redirect(&self, writer: impl Write + 'static) {
+        *self.0.borrow_mut() = Box::new(writer);
+    }
+
+    /// Write through the sink directly, for the bytes that follow the
+    /// handler's entries on the same stream.
+    pub fn with_writer<R>(&self, write: impl FnOnce(&mut dyn Write) -> R) -> R {
+        write(&mut **self.0.borrow_mut())
+    }
+
     fn write_line(&self, line: &[u8]) -> std::io::Result<()> {
-        let mut writer = self.0.borrow_mut();
-        writer.write_all(line)?;
-        writer.write_all(b"\n")?;
-        writer.flush()
+        self.with_writer(|writer| {
+            writer.write_all(line)?;
+            writer.write_all(b"\n")?;
+            writer.flush()
+        })
+    }
+}
+
+/// An in-memory sink destination whose bytes are read back with `take`.
+#[derive(Clone, Debug, Default)]
+pub struct StreamCapture(Rc<RefCell<Vec<u8>>>);
+
+impl StreamCapture {
+    pub fn take(&self) -> Vec<u8> {
+        std::mem::take(&mut *self.0.borrow_mut())
+    }
+}
+
+impl Write for StreamCapture {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.borrow_mut().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 
@@ -94,23 +133,9 @@ mod tests {
         resource: &'a str,
     }
 
-    #[derive(Clone, Default)]
-    struct Captured(Rc<RefCell<Vec<u8>>>);
-
-    impl Write for Captured {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.borrow_mut().extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
     #[test]
     fn a_live_stream_writes_one_compact_line_per_entry() {
-        let captured = Captured::default();
+        let captured = StreamCapture::default();
         let stream = EntryStream::writing_to(StreamSink::new(captured.clone()));
         assert!(stream.is_live());
         stream
@@ -126,9 +151,23 @@ mod tests {
             })
             .unwrap();
         assert_eq!(
-            String::from_utf8(captured.0.borrow().clone()).unwrap(),
+            String::from_utf8(captured.take()).unwrap(),
             "{\"type\":\"apply_start\",\"resource\":\"web\"}\n{\"type\":\"note\",\"resource\":\"line\\nbreak\"}\n"
         );
+    }
+
+    #[test]
+    fn a_redirected_sink_moves_every_clone_to_the_new_destination() {
+        let first = StreamCapture::default();
+        let second = StreamCapture::default();
+        let sink = StreamSink::new(first.clone());
+        let stream = EntryStream::writing_to(sink.clone());
+        stream.emit(&serde_json::json!({"n": 1})).unwrap();
+        sink.redirect(second.clone());
+        stream.emit(&serde_json::json!({"n": 2})).unwrap();
+        sink.with_writer(|w| w.write_all(b"tail\n")).unwrap();
+        assert_eq!(first.take(), b"{\"n\":1}\n");
+        assert_eq!(second.take(), b"{\"n\":2}\ntail\n");
     }
 
     #[test]

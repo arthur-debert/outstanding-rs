@@ -26,6 +26,13 @@ fn validate_path(path: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Create the output file a stream is redirected to, with the same parent
+/// check `write_output` applies to a file destination.
+pub fn open_output_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    validate_path(path)?;
+    std::fs::File::create(path)
+}
+
 pub fn write_output(content: &str, dest: &OutputDestination) -> std::io::Result<()> {
     match dest {
         OutputDestination::Stdout => {

@@ -238,3 +238,60 @@ fn a_usage_error_under_ndjson_is_a_diagnostic_line_exiting_two() {
     assert_eq!(entries.len(), 1, "{}", result.stdout());
     assert_eq!(result.expect_diagnostic().kind, DiagnosticKind::ClapUsage);
 }
+
+fn run_to_file(subcommand: &str) -> (standout_test::TestResult, String) {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("out.ndjson");
+    let result = TestHarness::new().output_mode(OutputMode::Ndjson).run(
+        &app(),
+        command(),
+        [
+            "app".to_string(),
+            subcommand.to_string(),
+            format!("--output-file-path={}", path.display()),
+        ],
+    );
+    let file = std::fs::read_to_string(&path).unwrap();
+    (result, file)
+}
+
+#[test]
+fn an_output_file_under_ndjson_takes_the_entries_and_the_result_and_stdout_stays_empty() {
+    let (result, file) = run_to_file("stream");
+    result.assert_success();
+    result.assert_stderr_empty();
+    assert_eq!(result.stdout_bytes(), b"", "{}", result.stdout());
+    assert_eq!(
+        file,
+        "{\"type\":\"version\",\"format_version\":1}\n\
+         {\"type\":\"apply_start\",\"resource\":\"web\"}\n\
+         {\"type\":\"apply_complete\",\"resource\":\"web\"}\n\
+         {\"type\":\"result\",\"data\":{\"applied\":1}}\n"
+    );
+}
+
+#[test]
+fn an_output_file_under_ndjson_takes_the_diagnostic_after_the_entries() {
+    let (result, file) = run_to_file("fail-mid-stream");
+    result.assert_error_kind(RunErrorKind::Handler);
+    result.assert_stderr_empty();
+    assert_eq!(result.stdout_bytes(), b"", "{}", result.stdout());
+    let entries = lines(&file);
+    assert_eq!(entries.len(), 3, "{file}");
+    assert_eq!(entries[1]["type"], "apply_start");
+    assert_eq!(entries[2]["type"], "diagnostic");
+    assert_eq!(entries[2]["severity"], "error");
+}
+
+#[test]
+fn an_output_file_under_ndjson_takes_the_warning_entries_too() {
+    let (result, file) = run_to_file("warn");
+    result.assert_success();
+    result.assert_stderr_empty();
+    assert_eq!(result.stdout_bytes(), b"", "{}", result.stdout());
+    let entries = lines(&file);
+    assert_eq!(entries.len(), 2, "{file}");
+    assert_eq!(entries[0]["type"], "result");
+    assert_eq!(entries[1]["severity"], "warning");
+    assert_eq!(entries[1]["summary"], "a soft warning");
+}

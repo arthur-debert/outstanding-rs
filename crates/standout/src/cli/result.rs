@@ -15,6 +15,7 @@ pub struct CompletedRun {
     inner: DispatchResult,
     warnings: Vec<String>,
     output_mode: OutputMode,
+    entries: String,
 }
 
 impl CompletedRun {
@@ -27,11 +28,26 @@ impl CompletedRun {
             inner,
             warnings,
             output_mode,
+            entries: String::new(),
         }
+    }
+
+    pub fn with_entries(mut self, entries: String) -> Self {
+        self.entries = entries;
+        self
     }
 
     pub fn outcome(&self) -> &DispatchResult {
         &self.inner
+    }
+
+    /// The lines the handler wrote through `ctx.stream()`, each with its
+    /// newline, when the entry point captured them (`run_with`, `dispatch`):
+    /// a process writes these before the result or the diagnostic. Empty
+    /// under every mode but `ndjson`, and when an output file override took
+    /// the stream.
+    pub fn entries(&self) -> &str {
+        &self.entries
     }
 
     pub fn into_outcome(self) -> DispatchResult {

@@ -1,6 +1,6 @@
 use crate::{
-    write_binary_output, write_output, InputSources, OutputDestination, OutputMode, RenderRequest,
-    TargetProperties,
+    open_output_file, write_binary_output, write_output, InputSources, OutputDestination,
+    OutputMode, RenderRequest, TargetProperties,
 };
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use standout_render::warnings::WarningBuffer;
@@ -15,7 +15,8 @@ use crate::cli::dispatch::{dispatch, extract_command_path, get_deepest_matches, 
 use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
 use crate::cli::handler::{
     ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, DispatchResult, EntryStream,
-    ExitStatus, OutputKind, RunError, RunErrorKind, RunOutput, StreamSink, SuccessKind,
+    ExitStatus, OutputKind, RunError, RunErrorKind, RunOutput, StreamCapture, StreamSink,
+    SuccessKind,
 };
 use crate::cli::hooks::{ArtifactOutput, RenderedOutput, TextOutput};
 use crate::cli::questionnaire::{
@@ -91,19 +92,21 @@ impl App {
         matches: ArgMatches,
         output_mode: OutputMode,
     ) -> crate::cli::CompletedRun {
-        self.collect_run_warnings(|warnings| {
+        let capture = StreamCapture::default();
+        let run = self.collect_run_warnings(|warnings| {
             (
                 self.dispatch_with_target(
                     matches,
                     output_mode,
                     self.process_edge_target(),
                     InputSources::from_process(),
-                    StreamSink::process_stdout(),
+                    StreamSink::new(capture.clone()),
                     warnings,
                 ),
                 output_mode,
             )
-        })
+        });
+        run.with_entries(String::from_utf8_lossy(&capture.take()).into_owned())
     }
 
     fn process_edge_target(&self) -> TargetProperties {
@@ -128,8 +131,28 @@ impl App {
 
         let commands = self.get_commands();
         if let Some(dispatch_fn) = commands.get(&path_str) {
+            let override_path = self.output_file_flag.as_ref().and_then(|_| {
+                matches
+                    .try_get_one::<String>("_output_file_path")
+                    .unwrap_or(None)
+                    .map(PathBuf::from)
+            });
+
+            // A stream's file override takes the whole stream, entries
+            // included, so the sink is retargeted before the handler runs.
             let stream = if output_mode.is_stream() {
-                EntryStream::writing_to(sink)
+                if let Some(path) = &override_path {
+                    match open_output_file(path) {
+                        Ok(file) => sink.redirect(file),
+                        Err(e) => {
+                            return DispatchResult::Error(RunError::new(
+                                format!("Error writing output: {}", e),
+                                RunErrorKind::FinalWrite(OutputKind::Text),
+                            ))
+                        }
+                    }
+                }
+                EntryStream::writing_to(sink.clone())
             } else {
                 EntryStream::discarding()
             };
@@ -187,13 +210,6 @@ impl App {
                 output
             };
 
-            let override_path = self.output_file_flag.as_ref().and_then(|_| {
-                matches
-                    .try_get_one::<String>("_output_file_path")
-                    .unwrap_or(None)
-                    .map(PathBuf::from)
-            });
-
             if let RenderedOutput::Artifact(artifact) = final_output {
                 // The artifact path renders its report inside `complete_artifact`,
                 // so the strict gate lives there, after that render and before any
@@ -212,6 +228,18 @@ impl App {
                 let dest = OutputDestination::File(path);
 
                 match &final_output {
+                    RenderedOutput::Text(t) if output_mode.is_stream() => {
+                        let written = sink.with_writer(|file| {
+                            writeln!(file, "{}", t.raw).and_then(|()| file.flush())
+                        });
+                        if let Err(e) = written {
+                            return DispatchResult::Error(RunError::new(
+                                format!("Error writing output: {}", e),
+                                RunErrorKind::FinalWrite(OutputKind::Text),
+                            ));
+                        }
+                        final_output = RenderedOutput::Silent;
+                    }
                     RenderedOutput::Text(t) => {
                         if let Err(e) = write_output(&t.raw, &dest) {
                             return DispatchResult::Error(RunError::new(
@@ -392,9 +420,11 @@ impl App {
         let mut target = TargetProperties::detect();
         target.ambiguous_width = self.ambiguous_width;
         let sources = InputSources::from_process();
-        let result = self.run_with(cmd, args, target, sources);
+        let sink = StreamSink::process_stdout();
+        let result = self.run_with_sink(cmd, args, target, sources, sink.clone());
         let primary_status = result.exit_status();
         let warnings = result.warnings().to_vec();
+        let output_mode = result.output_mode();
 
         let paged = match result.outcome() {
             crate::cli::DispatchResult::Handled(output)
@@ -405,16 +435,24 @@ impl App {
             _ => false,
         };
 
-        let stdout = std::io::stdout();
         let stderr = std::io::stderr();
-        let mut stdout = stdout.lock();
         let mut stderr = stderr.lock();
         let (handled, mut final_write_failure) = if paged {
             (true, None)
+        } else if output_mode.is_stream() {
+            let emitted = sink.with_writer(|stdout| {
+                crate::cli::emit_run_result(result.outcome(), output_mode, stdout, &mut stderr)
+            });
+            match emitted {
+                Ok(handled) => (handled, None),
+                Err(failure) => (true, Some(failure)),
+            }
         } else {
+            let stdout = std::io::stdout();
+            let mut stdout = stdout.lock();
             match crate::cli::emit_run_result(
                 result.outcome(),
-                result.output_mode(),
+                output_mode,
                 &mut stdout,
                 &mut stderr,
             ) {
@@ -422,16 +460,16 @@ impl App {
                 Err(failure) => (true, Some(failure)),
             }
         };
-        if let Err(failure) =
-            crate::cli::emit_warning_entries(&warnings, result.output_mode(), &mut stdout)
-        {
+        let warning_entries = sink.with_writer(|stdout| {
+            crate::cli::emit_warning_entries(result.outcome(), &warnings, output_mode, stdout)
+        });
+        if let Err(failure) = warning_entries {
             let _ = writeln!(stderr, "{}", failure).and_then(|()| stderr.flush());
             final_write_failure.get_or_insert(failure);
         }
-        drop(stdout);
         drop(stderr);
 
-        if !crate::cli::carries_warning_entries(result.output_mode()) {
+        if !crate::cli::carries_warning_entries(result.outcome(), output_mode) {
             standout_render::warnings::flush_to_stderr(
                 &self.theme,
                 result.output_mode(),
@@ -532,6 +570,10 @@ impl App {
         ))
     }
 
+    /// Dispatch without writing either process stream: the outcome, the
+    /// warnings and the `ctx.stream()` entries come back in the
+    /// [`CompletedRun`]. An output file override still writes the file, as
+    /// it does under every entry point.
     pub fn run_with<I, T>(
         &self,
         cmd: Command,
@@ -543,13 +585,17 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        self.run_with_sink(cmd, args, target, sources, StreamSink::process_stdout())
+        let capture = StreamCapture::default();
+        let run = self.run_with_sink(cmd, args, target, sources, StreamSink::new(capture.clone()));
+        run.with_entries(String::from_utf8_lossy(&capture.take()).into_owned())
     }
 
-    /// `run_with` with the destination of `ctx.stream()` entries injected:
-    /// `run_with` streams to the process's stdout, a capture harness passes a
-    /// buffer. Under every mode but `ndjson` the stream discards and `sink`
-    /// is never written.
+    /// `run_with` with the destination of `ctx.stream()` entries injected,
+    /// written as the handler produces them: `run_emitted` passes the process's
+    /// stdout, the test harness its stdout buffer. Under every mode but
+    /// `ndjson` the stream discards and `sink` is never written; under
+    /// `ndjson` an output file override retargets `sink` to the file, and the
+    /// caller writes the result and the warning entries through the same sink.
     pub fn run_with_sink<I, T>(
         &self,
         cmd: Command,
@@ -1628,6 +1674,7 @@ mod tests {
             sub_matches,
             |_m, _ctx| Ok(HandlerOutput::Render(Data { value: 42 })),
             crate::TemplateRef::Inline(("{{ value }}").to_string()),
+            StreamSink::new(Vec::new()),
         );
 
         assert!(result.is_ok());
@@ -1657,6 +1704,7 @@ mod tests {
                 panic!("Handler should not be called");
             },
             crate::TemplateRef::Absent,
+            StreamSink::new(Vec::new()),
         );
 
         assert!(result.is_err());
@@ -1690,6 +1738,7 @@ mod tests {
                 }))
             },
             crate::TemplateRef::Inline(("{{ msg }}").to_string()),
+            StreamSink::new(Vec::new()),
         );
 
         assert!(result.is_ok());
@@ -1712,6 +1761,7 @@ mod tests {
             sub_matches,
             |_m, _ctx| Ok(HandlerOutput::Silent),
             crate::TemplateRef::Absent,
+            StreamSink::new(Vec::new()),
         );
 
         assert!(result.is_ok());
@@ -1746,6 +1796,7 @@ mod tests {
                 })
             },
             crate::TemplateRef::Absent,
+            StreamSink::new(Vec::new()),
         );
 
         assert!(result.is_ok());
@@ -1947,6 +1998,7 @@ mod tests {
             crate::TemplateRef::Inline(
                 ("value={{ value }}, added={{ added_by_hook }}").to_string(),
             ),
+            StreamSink::new(Vec::new()),
         );
 
         assert!(result.is_ok());
@@ -1987,6 +2039,7 @@ mod tests {
             sub_matches,
             |_m, _ctx| Ok(HandlerOutput::Render(Data { valid: false })),
             crate::TemplateRef::Inline(("{{ valid }}").to_string()),
+            StreamSink::new(Vec::new()),
         );
 
         assert!(result.is_err());

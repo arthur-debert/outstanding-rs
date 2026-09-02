@@ -34,7 +34,9 @@ use std::rc::Rc;
 use super::default_command::ParseFailure;
 use super::dispatch::DispatchFn;
 use super::group::CommandRecipe;
-use super::handler::{CommandContext, Extensions, HandlerResult, Output as HandlerOutput};
+use super::handler::{
+    CommandContext, EntryStream, Extensions, HandlerResult, Output as HandlerOutput, StreamSink,
+};
 use super::help::data::{extract_help_data, extract_help_data_with_topics};
 use super::help::{
     default_help_theme, human_help_format, named_or_inline_template, render_via_request,
@@ -1157,21 +1159,35 @@ impl App {
             .unwrap_or(self.output_mode_fallback)
     }
 
+    /// Dispatch one handler by hand, with its hooks and its render, and
+    /// return the output for the caller to write. `sink` is where the
+    /// handler's `ctx.stream()` entries go, as it produces them, when the
+    /// mode `matches` resolves to is `ndjson`; the caller at a process edge
+    /// passes `StreamSink::process_stdout()`, a capture passes a
+    /// `StreamCapture`. Under every other mode the stream discards.
     pub fn run_command<F, T>(
         &self,
         path: &str,
         matches: &ArgMatches,
         handler: F,
         template: crate::TemplateRef,
+        sink: StreamSink,
     ) -> Result<RenderedOutput, HookError>
     where
         F: FnOnce(&ArgMatches, &CommandContext) -> HandlerResult<T>,
         T: Serialize,
     {
+        let output_mode = self.extract_output_mode(matches);
+        let stream = if output_mode.is_stream() {
+            EntryStream::writing_to(sink)
+        } else {
+            EntryStream::discarding()
+        };
         let mut ctx = CommandContext::new(
             path.split('.').map(String::from).collect(),
             self.app_state.clone(),
-        );
+        )
+        .with_stream(stream);
         let warnings = WarningBuffer::new();
         self.seed_startup_warnings(&warnings);
         ctx.extensions.insert(InputSources::from_process());
@@ -1200,7 +1216,7 @@ impl App {
                     data: json_data,
                     template: template.clone(),
                     theme: self.theme.clone(),
-                    format: self.extract_output_mode(matches),
+                    format: output_mode,
                     color_policy: ColorPolicy::Auto,
                     target,
                     engine: self.template_engine.clone(),

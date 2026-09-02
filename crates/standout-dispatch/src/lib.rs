@@ -33,4 +33,4 @@ pub use hooks::{
     ArtifactOutput, HookError, HookPhase, Hooks, PostDispatchFn, PostOutputFn, PreDispatchFn,
     RenderedOutput, TextOutput,
 };
-pub use stream::{EntryStream, StreamError, StreamSink};
+pub use stream::{EntryStream, StreamCapture, StreamError, StreamSink};

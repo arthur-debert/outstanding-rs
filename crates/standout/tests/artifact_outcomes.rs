@@ -565,6 +565,7 @@ fn run_command_hands_back_the_pending_artifact_without_writing() {
                 ))
             },
             standout::TemplateRef::Inline((TEMPLATE).to_string()),
+            standout::cli::StreamSink::new(Vec::new()),
         )
         .unwrap();
 

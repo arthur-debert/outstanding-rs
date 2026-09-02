@@ -2,22 +2,26 @@
 //!
 //! `run_emitted` and `standout-test`'s harness both call [`emit_run_result`],
 //! so what a test observes is what a process writes. The output mode decides
-//! where a failure goes (spec `parity-machine-contract.md`, D2): under `json`,
-//! `yaml`, `csv` and `ndjson` the failure is the stdout document, serialized
-//! from [`RunError::diagnostic`], and stderr carries nothing the framework
-//! wrote for it; under every human mode the failure is prose on stderr. An
-//! `App` or `External` failure writes its verbatim bytes to stderr in every
-//! mode and adds the stdout document in the structured ones. `xml` keeps the
-//! prose path: the mode is scheduled for deletion, not for a document shape.
+//! where a failure goes: under `json`, `yaml`, `csv` and `ndjson` the failure
+//! is the stdout document, serialized from [`RunError::diagnostic`], and
+//! stderr carries nothing the framework wrote for it; under every human mode
+//! the failure is prose on stderr. An `App` or `External` failure writes its
+//! verbatim bytes to stderr in every mode and adds the stdout document in the
+//! structured ones. `xml` keeps the prose path: the mode is scheduled for
+//! deletion, not for a document shape.
 //!
 //! Under `ndjson` the document is one compact line, and it is the only mode
 //! whose warnings are stdout entries too: [`emit_warning_entries`] writes each
 //! as a `severity: warning` diagnostic of kind `framework` after the result or
-//! the failure (D2, D3). The single-document modes keep warnings as stderr
-//! prose, which `standout_render::warnings::flush_to_stderr` owns.
+//! the failure. The single-document modes keep warnings as stderr prose,
+//! which `standout_render::warnings::flush_to_stderr` owns, and so does a
+//! `NoMatch` handoff in every mode, since the framework then owns no stdout.
+//! Both callers write the `ndjson` bytes through the run's `StreamSink`, the
+//! destination the handler's entries already went to, so an output file
+//! override that retargeted the sink receives the whole stream.
 //!
 //! The CSV form of the diagnostic is one row whose `range` is three columns,
-//! `range_filename`, `range_line` and `range_column`, empty when unset (D8).
+//! `range_filename`, `range_line` and `range_column`, empty when unset.
 
 use std::io::Write;
 
@@ -34,7 +38,7 @@ use crate::OutputMode;
 /// command owned the invocation (`false` only for a `NoMatch` handoff);
 /// `Err` is a final-write failure, already reported on stderr, whose status
 /// replaces the run's own.
-pub fn emit_run_result<W: Write, E: Write>(
+pub fn emit_run_result<W: Write + ?Sized, E: Write + ?Sized>(
     result: &DispatchResult,
     output_mode: OutputMode,
     stdout: &mut W,
@@ -72,7 +76,7 @@ pub fn emit_run_result<W: Write, E: Write>(
     }
 }
 
-fn emit_failure<W: Write, E: Write>(
+fn emit_failure<W: Write + ?Sized, E: Write + ?Sized>(
     error: &RunError,
     output_mode: OutputMode,
     stdout: &mut W,
@@ -110,21 +114,23 @@ pub fn carries_diagnostic_document(output_mode: OutputMode) -> bool {
     )
 }
 
-/// The modes whose warnings are stdout entries rather than stderr prose:
-/// `ndjson` alone, whose stream has room for more than one root.
-pub fn carries_warning_entries(output_mode: OutputMode) -> bool {
-    output_mode.is_stream()
+/// Whether the run's warnings are stdout entries rather than stderr prose:
+/// only under `ndjson`, whose stream has room for more than one root, and
+/// never for a `NoMatch` handoff, which owns no stdout to write them to.
+pub fn carries_warning_entries(result: &DispatchResult, output_mode: OutputMode) -> bool {
+    output_mode.is_stream() && !matches!(result, DispatchResult::NoMatch(_))
 }
 
 /// Write each of `warnings` as a `severity: warning` diagnostic entry of kind
-/// `framework`, one line each, when `carries_warning_entries(output_mode)`;
-/// do nothing otherwise. `Err` is a final-write failure on stdout.
-pub fn emit_warning_entries<W: Write>(
+/// `framework`, one line each, when `carries_warning_entries`; do nothing
+/// otherwise. `Err` is a final-write failure on stdout.
+pub fn emit_warning_entries<W: Write + ?Sized>(
+    result: &DispatchResult,
     warnings: &[String],
     output_mode: OutputMode,
     stdout: &mut W,
 ) -> Result<(), RunError> {
-    if !carries_warning_entries(output_mode) || warnings.is_empty() {
+    if !carries_warning_entries(result, output_mode) || warnings.is_empty() {
         return Ok(());
     }
     let written = warnings.iter().try_for_each(|warning| {
@@ -247,7 +253,7 @@ impl DiagnosticRow {
     }
 }
 
-fn emit_artifact<W: Write, E: Write>(
+fn emit_artifact<W: Write + ?Sized, E: Write + ?Sized>(
     run: &ArtifactRun,
     stdout: &mut W,
     stderr: &mut E,
@@ -511,15 +517,16 @@ mod tests {
     #[test]
     fn warnings_are_stdout_entries_under_ndjson_and_nothing_elsewhere() {
         let warnings = vec!["first".to_string(), "second".to_string()];
+        let handled = DispatchResult::Handled(RunOutput::command("{}".to_string()));
         let mut stdout = Vec::new();
-        emit_warning_entries(&warnings, OutputMode::Ndjson, &mut stdout).unwrap();
+        emit_warning_entries(&handled, &warnings, OutputMode::Ndjson, &mut stdout).unwrap();
         let stdout = String::from_utf8(stdout).unwrap();
         assert_eq!(
             stdout,
             "{\"type\":\"diagnostic\",\"schema_version\":1,\"severity\":\"warning\",\"kind\":\"framework\",\"summary\":\"first\",\"detail\":\"\"}\n\
              {\"type\":\"diagnostic\",\"schema_version\":1,\"severity\":\"warning\",\"kind\":\"framework\",\"summary\":\"second\",\"detail\":\"\"}\n"
         );
-        assert!(carries_warning_entries(OutputMode::Ndjson));
+        assert!(carries_warning_entries(&handled, OutputMode::Ndjson));
         for mode in [
             OutputMode::Text,
             OutputMode::Json,
@@ -527,14 +534,25 @@ mod tests {
             OutputMode::Csv,
         ] {
             let mut stdout = Vec::new();
-            emit_warning_entries(&warnings, mode, &mut stdout).unwrap();
+            emit_warning_entries(&handled, &warnings, mode, &mut stdout).unwrap();
             assert!(stdout.is_empty(), "{mode:?}");
-            assert!(!carries_warning_entries(mode), "{mode:?}");
+            assert!(!carries_warning_entries(&handled, mode), "{mode:?}");
         }
         let failure =
-            emit_warning_entries(&warnings, OutputMode::Ndjson, &mut ClosedWriter).unwrap_err();
+            emit_warning_entries(&handled, &warnings, OutputMode::Ndjson, &mut ClosedWriter)
+                .unwrap_err();
         assert_eq!(failure.kind(), RunErrorKind::FinalWrite(OutputKind::Text));
-        emit_warning_entries(&warnings, OutputMode::Ndjson, &mut FailingWriter).unwrap();
+        emit_warning_entries(&handled, &warnings, OutputMode::Ndjson, &mut FailingWriter).unwrap();
+    }
+
+    #[test]
+    fn a_no_match_handoff_writes_no_warning_entries_under_ndjson() {
+        let warnings = vec!["startup".to_string()];
+        let handoff = DispatchResult::NoMatch(clap::ArgMatches::default());
+        assert!(!carries_warning_entries(&handoff, OutputMode::Ndjson));
+        let mut stdout = Vec::new();
+        emit_warning_entries(&handoff, &warnings, OutputMode::Ndjson, &mut stdout).unwrap();
+        assert!(stdout.is_empty());
     }
 
     #[test]

@@ -46,7 +46,9 @@ pub use standout_render::{
     SharedTemplateEngine, TargetProperties, TemplateRef,
 };
 
-pub use standout_render::{write_binary_output, write_output, OutputDestination, OutputMode};
+pub use standout_render::{
+    open_output_file, write_binary_output, write_output, OutputDestination, OutputMode,
+};
 pub use standout_render::{AmbiguousWidth, WidthCalculator};
 pub use standout_render::{
     CsvProjection, CsvProjectionBuilder, ProjectionError, StructuredOutputProjection,

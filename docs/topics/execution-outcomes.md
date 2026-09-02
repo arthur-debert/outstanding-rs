@@ -99,10 +99,14 @@ harness writes its two streams with it, and an adopter that keeps its own
 process edge can too. It returns `Ok(handled)` or the final-write failure whose
 status replaces the run's own. Under `ndjson` the warnings follow through
 `standout::cli::emit_warning_entries`; every other mode flushes them as stderr
-prose. Entries a handler emits through `ctx.stream()` reach stdout while the
-handler runs, before either: `run_with` streams them to the process's stdout,
-and `run_with_sink` takes the destination as an argument, which is how the
-harness captures them.
+prose, and so does a `NoMatch` handoff in every mode, since Standout then owns
+no stdout. Entries a handler emits through `ctx.stream()` reach stdout while
+the handler runs, before either: `run_emitted` calls `run_with_sink` with a
+`StreamSink` over the process's stdout and writes the result and the warning
+entries through the same sink, so a `--output-file-path` that retargeted the
+sink receives the whole stream (entries, result or diagnostic, warnings) and
+stdout nothing. `run_with` captures the entries instead and returns them as
+`CompletedRun::entries()`.
 
 `ProcessOutcome` has two public fields. `handled` is the `bool` that `run`
 returns: `false` only for a `NoMatch` handoff. `status` is the final
@@ -117,7 +121,10 @@ output and the exit.
 ## Capturing typed metadata
 
 `run_with` keeps output in-process and returns `CompletedRun`: the dispatch
-outcome plus any framework warnings collected during the run. `Deref` keeps
+outcome, any framework warnings collected during the run, and under `ndjson`
+the lines the handler streamed (`entries()`, each with its newline), which a
+process would have written before the result. `App::dispatch` captures the
+same way; `run_command` takes the `StreamSink` as a parameter. `Deref` keeps
 string-oriented accessors and typed methods (`exit_status()`, `success_kind()`,
 `error_kind()`) working on the wrapper. Pattern matching needs `outcome()` or
 `into_outcome()`, because `CompletedRun` is not the variant enum.

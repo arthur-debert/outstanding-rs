@@ -71,7 +71,7 @@ pub use handler::{
     CommandContextInput, Diagnostic, DiagnosticKind, DiagnosticPosition, DiagnosticRange,
     DispatchResult, EntryStream, ExitStatus, ExternalFailure, FnHandler, Handler, HandlerResult,
     InvalidAppStatus, InvalidExternalStatus, Output, OutputKind, RunError, RunErrorKind, RunOutput,
-    Severity, StreamError, StreamSink, SuccessKind,
+    Severity, StreamCapture, StreamError, StreamSink, SuccessKind,
 };
 
 pub use emit::{

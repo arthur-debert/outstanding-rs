@@ -358,6 +358,9 @@ Behavior:
 - Text output: written to file, nothing printed to stdout
 - Binary output: written to the requested file instead of stdout
 - Silent output: no-op
+- `ndjson`: the file is the stream. It is opened before the handler runs and
+  receives the handler's entries as they are emitted, then the `result` or
+  `diagnostic` entry, then the warning entries; stdout carries nothing.
 
 After writing to file, stdout output is suppressed to prevent double-printing.
 
