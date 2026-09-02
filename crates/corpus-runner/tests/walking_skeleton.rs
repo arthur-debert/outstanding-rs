@@ -48,6 +48,7 @@ fn smoke_archetype_completes_the_loop() {
             ("sources.docs", "docs/guides/minimal-single-crate.md"),
             ("sources.external", "none"),
             ("confidence", "high"),
+            ("confidence_reason", "Every case passes."),
         ],
         true,
     );

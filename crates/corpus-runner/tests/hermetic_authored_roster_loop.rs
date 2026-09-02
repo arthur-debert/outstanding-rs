@@ -40,6 +40,7 @@ fn authored_archetypes_complete_the_loop_against_a_failing_binary() {
                 ("sources.docs", "docs/index.md"),
                 ("sources.external", "none"),
                 ("confidence", "low"),
+                ("confidence_reason", "The scaffold does not build."),
             ],
             true,
         );

@@ -47,6 +47,7 @@ fn full_loop_completes_hermetically_with_a_fake_build() {
             ("sources.docs", "docs/guides/minimal-single-crate.md"),
             ("sources.external", "none"),
             ("confidence", "high"),
+            ("confidence_reason", "Every case passes."),
         ],
         true,
     );

@@ -102,6 +102,7 @@ fn roster_archetype_completes_the_loop_with_case_results() {
             ("sources.docs", "docs/index.md"),
             ("sources.external", "none"),
             ("confidence", "high"),
+            ("confidence_reason", "Every case passes."),
         ],
         false,
     );

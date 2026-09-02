@@ -592,19 +592,19 @@ name = "application"
 
 [[invariants.command]]
 argv = ["get", "pods"]
-contract = "rendered"
+contract = "either"          # the app may render -o json or write it as an artifact; both conform
 
 [[invariants.command]]
 argv = ["get", "nodes"]
-contract = "rendered"
+contract = "either"
 
 [[invariants.command]]
 argv = ["describe", "pod", "web-1"]
-contract = "rendered"
+contract = "either"
 
 [[invariants.command]]
 argv = ["api-resources"]
-contract = "rendered"
+contract = "either"
 
 [[invariants.command]]
 argv = ["get", "pods", "-o", "name"]

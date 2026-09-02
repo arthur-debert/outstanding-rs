@@ -15,12 +15,12 @@ so a set of pilot reports reproduces the pilot's figures:
   `not-applicable`) that passed, plus the full planned breakdown, so a
   ratio can never improve by shrinking its denominator.
 - workarounds: the items the exit questionnaire's `workarounds` answer
-  lists. Agents list in whichever form they like — `1.`, `a)`, `-`, or a
-  bold lead-in — so an item is any line that starts one, and only at the
-  left margin, where an indented continuation cannot be mistaken for a new
-  item. It counts what the agent listed; whether an item is a workaround or
-  a deliberate application decision is a reading, and readings belong in the
-  scorecard's prose beside the committed answer.
+  lists. Agents list in whichever form they like — `1.`, `a)`, `(1)`,
+  `(a)`, `-`, or a bold lead-in — so an item is any line that starts one,
+  and only at the left margin, where an indented continuation cannot be
+  mistaken for a new item. It counts what the agent listed; whether an item
+  is a workaround or a deliberate application decision is a reading, and
+  readings belong in the scorecard's prose beside the committed answer.
 - the agent: schema 4's `provenance` block. A report written before that
   block existed states none, so the same facts are recovered from the run's
   own two sources by the rule the runner uses — the command the report
@@ -49,7 +49,9 @@ import json
 import pathlib
 import re
 
-LISTED_ITEM = re.compile(r"(?m)^(?:\d+[.)]\s|[a-z][.)]\s|[-*+]\s|\*\*\S)")
+LISTED_ITEM = re.compile(
+    r"(?m)^(?:\d+[.)]\s|[a-z][.)]\s|\(\d+\)\s|\([a-z]\)\s|[-*+]\s|\*\*\S)"
+)
 
 # A hash-shaped value, which a note abbreviates rather than printing whole.
 HASH = re.compile(r"(?:sha256:)?[0-9a-f]{32,}")

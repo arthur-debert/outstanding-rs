@@ -363,6 +363,8 @@ fn listed_items_are_counted_in_every_form_an_agent_has_used() {
     let answer = "1. numbered\n\
                   2) parenthesized\n\
                   a) lettered\n\
+                  (3) paren-numbered\n\
+                  (d) paren-lettered\n\
                   - dashed\n\
                   * starred\n\
                   **bold lead-in.** and its sentence\n\
@@ -386,7 +388,7 @@ fn listed_items_are_counted_in_every_form_an_agent_has_used() {
         .lines()
         .find(|line| line.starts_with("| listlike |"))
         .unwrap_or_else(|| panic!("{table}"));
-    assert!(row.contains("| 6 | 6 |"), "{row}");
+    assert!(row.contains("| 8 | 8 |"), "{row}");
 }
 
 #[test]

@@ -67,6 +67,8 @@ const MATRIX_CHECKS: [&str; 5] = [
     "opaque output preserves text bytes",
 ];
 
+const NO_OUTPUT_FLAG_REASON: &str = "no output flag";
+
 pub fn run_invariants(
     binary: &Path,
     invariants: &Invariants,
@@ -74,6 +76,14 @@ pub fn run_invariants(
     isolation: &workspace::Isolation,
     matrix_root: &Path,
 ) -> Vec<InvariantCell> {
+    if !accepts_output_flag(binary, timeout, isolation, matrix_root) {
+        return sweep_plan(
+            invariants,
+            |_, _, _| ModeRuns::new(),
+            NO_OUTPUT_FLAG_REASON,
+            Some(NO_OUTPUT_FLAG_REASON),
+        );
+    }
     sweep_plan(
         invariants,
         |command, color, theme| {
@@ -106,11 +116,37 @@ pub fn run_invariants(
                 .collect()
         },
         "planned invocation was not executed",
+        None,
     )
 }
 
 pub fn not_run_invariants(invariants: &Invariants, reason: &str) -> Vec<InvariantCell> {
-    sweep_plan(invariants, |_, _, _| ModeRuns::new(), reason)
+    sweep_plan(invariants, |_, _, _| ModeRuns::new(), reason, None)
+}
+
+// Declining `--output` entirely (#461) is a fact about the binary, not one
+// command: probed once, ahead of the matrix, against the binary's own
+// `--help`. A probe that cannot complete (the binary crashes, hangs, or is
+// missing) states nothing about that choice, so the matrix still runs and
+// lets the real invocations report whatever that failure actually is.
+fn accepts_output_flag(
+    binary: &Path,
+    timeout: Duration,
+    isolation: &workspace::Isolation,
+    matrix_root: &Path,
+) -> bool {
+    let home = matrix_root.join("help-probe");
+    match run_binary(
+        binary,
+        &["--help".to_string()],
+        timeout,
+        isolation,
+        &home,
+        &[],
+    ) {
+        Ok((_, page)) => page.contains("--output"),
+        Err(_) => true,
+    }
 }
 
 type ModeRuns = BTreeMap<&'static str, Result<(Option<i32>, String), String>>;
@@ -119,21 +155,36 @@ fn sweep_plan(
     invariants: &Invariants,
     mut mode_runs: impl FnMut(&InvariantCommand, ColorState, &InvariantTheme) -> ModeRuns,
     not_run_reason: &str,
+    force_not_applicable: Option<&str>,
 ) -> Vec<InvariantCell> {
     let mut cells = Vec::new();
     for command in &invariants.commands {
+        // `either` (#467) is resolved once, from the command's first evaluated
+        // cell, and held for the rest of that command's plan.
+        let mut resolved_either: Option<InvariantContract> = None;
         for color in &invariants.colors {
             for theme in &invariants.themes {
                 let runs = mode_runs(command, *color, theme);
+                if command.contract == InvariantContract::Either && resolved_either.is_none() {
+                    resolved_either = Some(resolve_either_contract(&runs));
+                }
+                let contract = match command.contract {
+                    InvariantContract::Either => {
+                        resolved_either.unwrap_or(InvariantContract::Rendered)
+                    }
+                    concrete => concrete,
+                };
                 for mode in &invariants.modes {
                     emit_axis_cells(
                         &mut cells,
                         command,
+                        contract,
                         *mode,
                         *color,
                         &theme.name,
                         &runs,
                         not_run_reason,
+                        force_not_applicable,
                     );
                 }
             }
@@ -142,17 +193,44 @@ fn sweep_plan(
     cells
 }
 
+// Whichever of `rendered` or `opaque-bytes` the binary's first evaluated cell
+// satisfies: JSON-mode output that parses as JSON is rendered; failing that,
+// a non-text mode whose bytes match the text baseline is opaque. Neither
+// signal is available (e.g. the command errored everywhere), defaults to
+// `rendered` so the ambiguity surfaces as ordinary check failures rather
+// than vanishing as not-applicable.
+fn resolve_either_contract(runs: &ModeRuns) -> InvariantContract {
+    if let Some(Ok((_, page))) = runs.get(InvariantMode::Json.as_str()) {
+        if serde_json::from_str::<serde_json::Value>(page).is_ok() {
+            return InvariantContract::Rendered;
+        }
+    }
+    if let Some(Ok((_, text))) = runs.get(InvariantMode::Text.as_str()) {
+        for mode in [InvariantMode::Term, InvariantMode::Json] {
+            if let Some(Ok((_, page))) = runs.get(mode.as_str()) {
+                if page == text {
+                    return InvariantContract::OpaqueBytes;
+                }
+            }
+        }
+    }
+    InvariantContract::Rendered
+}
+
+#[allow(clippy::too_many_arguments)]
 fn emit_axis_cells(
     out: &mut Vec<InvariantCell>,
     command: &InvariantCommand,
+    contract: InvariantContract,
     mode: InvariantMode,
     color: ColorState,
     theme: &str,
     runs: &ModeRuns,
     not_run_reason: &str,
+    force_not_applicable: Option<&str>,
 ) {
     for check in MATRIX_CHECKS {
-        if !check_applies(command.contract, mode, check) {
+        if let Some(reason) = force_not_applicable {
             out.push(matrix_cell(
                 command,
                 mode,
@@ -160,7 +238,24 @@ fn emit_axis_cells(
                 theme,
                 check,
                 InvariantStatus::NotApplicable,
-                Some(applicability_reason(command.contract, mode, check)),
+                Some(reason.to_string()),
+            ));
+            continue;
+        }
+        if !check_applies(contract, mode, check, command.equal_across_modes) {
+            out.push(matrix_cell(
+                command,
+                mode,
+                color,
+                theme,
+                check,
+                InvariantStatus::NotApplicable,
+                Some(applicability_reason(
+                    contract,
+                    mode,
+                    check,
+                    command.equal_across_modes,
+                )),
             ));
             continue;
         }
@@ -237,7 +332,12 @@ fn emit_axis_cells(
     }
 }
 
-fn check_applies(contract: InvariantContract, mode: InvariantMode, check: &str) -> bool {
+fn check_applies(
+    contract: InvariantContract,
+    mode: InvariantMode,
+    check: &str,
+    equal_across_modes: bool,
+) -> bool {
     match check {
         "exits 0" => true,
         "no unresolved tag markers" => {
@@ -247,16 +347,33 @@ fn check_applies(contract: InvariantContract, mode: InvariantMode, check: &str) 
             contract == InvariantContract::Rendered && mode == InvariantMode::Json
         }
         "styling preserves text layout" => {
-            contract == InvariantContract::Rendered && mode == InvariantMode::Term
+            contract == InvariantContract::Rendered
+                && mode == InvariantMode::Term
+                && equal_across_modes
         }
         "opaque output preserves text bytes" => {
-            contract == InvariantContract::OpaqueBytes && mode != InvariantMode::Text
+            contract == InvariantContract::OpaqueBytes
+                && mode != InvariantMode::Text
+                && equal_across_modes
         }
         _ => false,
     }
 }
 
-fn applicability_reason(contract: InvariantContract, mode: InvariantMode, check: &str) -> String {
+fn applicability_reason(
+    contract: InvariantContract,
+    mode: InvariantMode,
+    check: &str,
+    equal_across_modes: bool,
+) -> String {
+    if !equal_across_modes
+        && matches!(
+            check,
+            "styling preserves text layout" | "opaque output preserves text bytes"
+        )
+    {
+        return "command's content varies by output mode".to_string();
+    }
     match (contract, check) {
         (InvariantContract::OpaqueBytes, "stdout parses as JSON") => {
             "opaque-byte command is not structured JSON".to_string()

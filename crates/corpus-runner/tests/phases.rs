@@ -47,6 +47,7 @@ fn filled_sheet() -> String {
     );
     sheet = answer(&sheet, "sources.external", "none");
     sheet = answer(&sheet, "confidence", "high");
+    sheet = answer(&sheet, "confidence_reason", "Every assertion passes.");
     sheet
 }
 
@@ -58,6 +59,7 @@ fn rendered(argv: &[&str]) -> InvariantCommand {
     InvariantCommand {
         argv: argv.iter().map(|s| (*s).to_string()).collect(),
         contract: InvariantContract::Rendered,
+        equal_across_modes: true,
     }
 }
 
@@ -65,6 +67,23 @@ fn opaque(argv: &[&str]) -> InvariantCommand {
     InvariantCommand {
         argv: argv.iter().map(|s| (*s).to_string()).collect(),
         contract: InvariantContract::OpaqueBytes,
+        equal_across_modes: true,
+    }
+}
+
+fn either(argv: &[&str]) -> InvariantCommand {
+    InvariantCommand {
+        argv: argv.iter().map(|s| (*s).to_string()).collect(),
+        contract: InvariantContract::Either,
+        equal_across_modes: true,
+    }
+}
+
+fn rendered_content_varies_by_mode(argv: &[&str]) -> InvariantCommand {
+    InvariantCommand {
+        argv: argv.iter().map(|s| (*s).to_string()).collect(),
+        contract: InvariantContract::Rendered,
+        equal_across_modes: false,
     }
 }
 
@@ -110,8 +129,12 @@ fn filled_sheet_collects_with_answers_and_blindness_record() {
     assert!(!report.answers.contains_key("friction"));
 }
 
+// A rejected field (here, every required field simply unanswered) is a
+// diagnostic on a sheet that was found, not the absence of one: `collected`
+// stays true so a reader can tell "no self-report" apart from "a self-report
+// with gaps" (#462).
 #[test]
-fn unanswered_required_field_is_an_uncollected_report_not_a_panic() {
+fn unanswered_required_field_is_a_collected_report_with_no_answers() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(
         dir.path().join(questionnaire::SHEET_FILENAME),
@@ -120,7 +143,7 @@ fn unanswered_required_field_is_an_uncollected_report_not_a_panic() {
     .unwrap();
 
     let report = questionnaire::collect(dir.path());
-    assert!(!report.collected);
+    assert!(report.collected, "{:?}", report.diagnostics);
     assert!(report.diagnostics.iter().any(|d| d.contains("summary")));
     assert!(report.answers.is_empty());
 }
@@ -131,6 +154,20 @@ fn missing_sheet_is_an_uncollected_report() {
     let report = questionnaire::collect(dir.path());
     assert!(!report.collected);
     assert!(!report.diagnostics.is_empty());
+}
+
+// A sheet whose structure the parser cannot make sense of at all — as
+// opposed to one that parses but has a rejected field — is the other state
+// that means no self-report was collected (#462).
+#[test]
+fn unparseable_sheet_is_an_uncollected_report() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join(questionnaire::SHEET_FILENAME), "garbage").unwrap();
+
+    let report = questionnaire::collect(dir.path());
+    assert!(!report.collected);
+    assert!(!report.diagnostics.is_empty());
+    assert!(report.answers.is_empty());
 }
 
 #[test]
@@ -328,8 +365,22 @@ fn failing_agent_is_recorded_not_fatal() {
     assert_eq!(report.exit_code, Some(3));
 }
 
+// Every script below that accepts `--output` also answers `--help` with a
+// line naming it, which is what the pre-matrix probe (#461) keys on.
+
+// A binary that declines the framework's `--output` flag (#461): `--help`
+// never mentions it.
+const DECLINES_OUTPUT_FLAG: &str = r#"
+if [ "$1" = "--help" ]; then
+  echo 'Usage: fake [--json]'
+  exit 0
+fi
+echo 'irrelevant'
+"#;
+
 // Honors `--output text|term|json`; term adds only ANSI bold.
 const WELL_BEHAVED: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]'; exit 0; fi
 mode=text
 prev=""
 for a in "$@"; do
@@ -345,6 +396,7 @@ esac
 
 // A corrupt binary: term leaks an unresolved tag marker and drifts from text.
 const CORRUPT: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]'; exit 0; fi
 mode=text
 prev=""
 for a in "$@"; do
@@ -359,7 +411,35 @@ esac
 "#;
 
 const OPAQUE: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]'; exit 0; fi
 printf '\001\002opaque\377\n'
+"#;
+
+// Ignores `--output` entirely and always prints the same bytes, the way an
+// application that writes an `Artifact` to stdout does (#467): every mode's
+// content is identical, so it satisfies `opaque-bytes` rather than
+// `rendered` even though it never fails on an unknown flag.
+const ARTIFACT_LIKE: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]'; exit 0; fi
+echo 'kind: Pod  name: web-0'
+"#;
+
+// Its content names the output mode, so term and text diverge by design
+// (#465) even though every other identity in the cell holds: the marker and
+// JSON checks on it pass.
+const CONTENT_NAMES_THE_MODE: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]'; exit 0; fi
+mode=text
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--output" ]; then mode="$a"; fi
+  prev="$a"
+done
+case "$mode" in
+  json) echo '{"term.output": "json"}' ;;
+  term) printf 'term.output = term\n' ;;
+  *) echo 'term.output = text' ;;
+esac
 "#;
 
 #[test]
@@ -516,6 +596,165 @@ fn hanging_binary_times_out_as_a_finding() {
     assert!(exit_cells
         .iter()
         .all(|c| c.detail.as_deref().unwrap().contains("timed out")));
+}
+
+// #461: an app that declines `--output` (`--help` never names it) reads
+// `not-applicable` on every mode cell instead of failing an unknown-flag
+// error on all of them.
+#[test]
+fn binary_declining_the_output_flag_reads_not_applicable_not_failed() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", DECLINES_OUTPUT_FLAG);
+    let invariants = Invariants {
+        commands: vec![rendered(&["greet"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    assert_eq!(cells.len(), 30);
+    assert!(cells
+        .iter()
+        .all(|c| c.status == InvariantStatus::NotApplicable));
+    assert!(cells
+        .iter()
+        .all(|c| c.detail.as_deref() == Some("no output flag")));
+}
+
+// #467: `contract = "either"` resolves to `rendered` when the binary's json
+// mode actually parses as JSON, and scores exactly as a `rendered`
+// declaration would.
+#[test]
+fn either_contract_resolves_to_rendered_for_a_well_behaved_binary() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", WELL_BEHAVED);
+    let invariants = Invariants {
+        commands: vec![either(&["greet"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    assert_eq!(cells.len(), 30);
+    assert!(cells.iter().all(|c| c.status != InvariantStatus::Fail));
+    assert_eq!(
+        cells
+            .iter()
+            .filter(|c| c.status == InvariantStatus::Pass)
+            .count(),
+        14
+    );
+}
+
+// #467: kubelike's shape — an app that writes an `Artifact` to stdout, whose
+// bytes are identical whatever `--output` says. Declared `rendered`
+// spec-first, `contract = "either"` resolves it to `opaque-bytes` instead of
+// failing `stdout parses as JSON` on every cell.
+#[test]
+fn either_contract_resolves_to_opaque_bytes_for_an_artifact_style_binary() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", ARTIFACT_LIKE);
+    let invariants = Invariants {
+        commands: vec![either(&["get", "pods"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    assert_eq!(cells.len(), 30);
+    assert!(cells.iter().all(|c| c.status != InvariantStatus::Fail));
+    assert!(cells
+        .iter()
+        .filter(|c| c.check == "stdout parses as JSON")
+        .all(|c| c.status == InvariantStatus::NotApplicable));
+}
+
+// #465: cargolike's shape — `config list` names the resolved output mode as
+// part of its content, so term and text diverge by design. Default
+// (`equal_across_modes = true`) reports the divergence as a failure.
+#[test]
+fn content_that_names_the_mode_fails_the_cross_mode_check_by_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", CONTENT_NAMES_THE_MODE);
+    let invariants = Invariants {
+        commands: vec![rendered(&["config", "list"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    let failed: Vec<&str> = cells
+        .iter()
+        .filter(|c| c.status == InvariantStatus::Fail)
+        .map(|c| c.check.as_str())
+        .collect();
+    assert_eq!(
+        failed,
+        vec![
+            "styling preserves text layout",
+            "styling preserves text layout"
+        ]
+    );
+}
+
+// #465: `equal_across_modes = false` reads that same divergence as
+// `not-applicable` instead — the identity stays present with a reason,
+// nothing fails, and every other check on the command still runs.
+#[test]
+fn equal_across_modes_false_skips_the_cross_mode_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", CONTENT_NAMES_THE_MODE);
+    let invariants = Invariants {
+        commands: vec![rendered_content_varies_by_mode(&["config", "list"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    assert_eq!(cells.len(), 30);
+    assert!(cells.iter().all(|c| c.status != InvariantStatus::Fail));
+    assert_eq!(
+        cells
+            .iter()
+            .filter(|c| c.status == InvariantStatus::Pass)
+            .count(),
+        12
+    );
+    let styling: Vec<_> = cells
+        .iter()
+        .filter(|c| c.check == "styling preserves text layout")
+        .collect();
+    assert!(styling
+        .iter()
+        .all(|c| c.status == InvariantStatus::NotApplicable));
+    assert!(styling
+        .iter()
+        .all(|c| c.detail.as_deref() == Some("command's content varies by output mode")));
 }
 
 fn test_isolation_record() -> corpus_runner::report::IsolationRecord {

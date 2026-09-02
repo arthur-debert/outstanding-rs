@@ -800,3 +800,4 @@ contract = "rendered"
 [[invariants.command]]
 argv = ["config", "list"]
 contract = "rendered"
+equal_across_modes = false    # the content names the resolved output mode
