@@ -2,7 +2,7 @@
 // made real against a produced binary.
 
 use std::collections::BTreeMap;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -316,6 +316,39 @@ fn normalize_lf(text: &str) -> String {
     text.replace("\r\n", "\n")
 }
 
+/// Reads at most `cap + 1` bytes of a regular, non-symlinked file. The extra
+/// byte lets a caller comparing against a `cap`-byte expectation detect an
+/// oversized file as a mismatch without reading the whole thing.
+fn read_bounded_file(path: &Path, cap: usize) -> Result<Vec<u8>, String> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|err| err.to_string())?;
+    if metadata.file_type().is_symlink() {
+        return Err("refusing to follow a symlink".to_string());
+    }
+    if !metadata.is_file() {
+        return Err("not a regular file".to_string());
+    }
+    let file = open_no_follow(path).map_err(|err| err.to_string())?;
+    let mut buf = Vec::new();
+    Read::take(file, cap as u64 + 1)
+        .read_to_end(&mut buf)
+        .map_err(|err| err.to_string())?;
+    Ok(buf)
+}
+
+#[cfg(unix)]
+fn open_no_follow(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn open_no_follow(path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::File::open(path)
+}
+
 fn evaluate(case: &Case, execution: &Execution, sandbox: &Path) -> (bool, Option<String>) {
     let mut failures = Vec::new();
     if execution.timed_out {
@@ -456,13 +489,11 @@ fn apply_expectations(
     }
     for (rel, want) in &expect.files {
         match sandbox_path(sandbox, rel) {
-            Ok(path) => match std::fs::read_to_string(&path) {
-                Ok(got) => {
-                    let got = normalize_lf(&got);
-                    if &got != want {
-                        failures.push(format!("file {rel:?} content differs from expected"));
-                    }
-                }
+            Ok(path) => match read_bounded_file(&path, want.len()) {
+                Ok(bytes) => match std::str::from_utf8(&bytes) {
+                    Ok(text) if bytes.len() <= want.len() && &normalize_lf(text) == want => {}
+                    _ => failures.push(format!("file {rel:?} content differs from expected")),
+                },
                 Err(err) => failures.push(format!("file {rel:?} could not be read: {err}")),
             },
             Err(err) => failures.push(err),
@@ -471,7 +502,7 @@ fn apply_expectations(
     for rel in &expect.files_absent {
         match sandbox_path(sandbox, rel) {
             Ok(path) => {
-                if path.exists() {
+                if std::fs::symlink_metadata(&path).is_ok() {
                     failures.push(format!("file {rel:?} must not exist"));
                 }
             }

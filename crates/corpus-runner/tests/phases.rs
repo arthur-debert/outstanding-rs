@@ -353,6 +353,33 @@ fn provisioning_reads_docs_from_the_tag_when_the_pin_differs_from_the_checkout()
 }
 
 #[test]
+fn provisioning_leaves_no_extra_tree_in_the_run_artifact() {
+    let archetype = Archetype::load(&corpus_dir().join("archetypes"), "smoke").unwrap();
+    let run_dir = tempfile::tempdir().unwrap();
+    let repo = tempfile::tempdir().unwrap();
+    tagged_docs_repo(repo.path(), "v1.2.3");
+
+    workspace::provision(
+        run_dir.path(),
+        &archetype,
+        &repo.path().join("docs"),
+        "1.2.3",
+    )
+    .unwrap();
+
+    // The tag's whole tree is archived to resolve `docs/crates/*` symlinks
+    // (see `tagged_docs_repo`), but that archive must live in a scratch
+    // directory outside the run artifact and be cleaned up afterward: the
+    // artifact keeps only what `provision` deliberately writes under
+    // `workspace/`.
+    let entries: Vec<_> = fs::read_dir(run_dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(entries, vec![std::ffi::OsString::from("workspace")]);
+}
+
+#[test]
 fn provisioning_refuses_a_pin_with_no_matching_tag() {
     let archetype = Archetype::load(&corpus_dir().join("archetypes"), "smoke").unwrap();
     let run_dir = tempfile::tempdir().unwrap();

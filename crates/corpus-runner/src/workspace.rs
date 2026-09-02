@@ -243,10 +243,12 @@ pub fn provision(
     // D26: a pin other than the checkout's own version reads docs from that
     // version's tag rather than the live checkout, so the agent never sees
     // documentation for a surface its pinned dependency does not have. The
-    // tag's full tree is archived into a scratch directory OUTSIDE `root`
-    // (never admitted into the agent's sandbox) so the same published-docs
-    // filter below can resolve its `docs/crates/*` symlinks exactly as it
-    // does for the live checkout.
+    // tag's full tree is archived into a system temp directory (never
+    // admitted into the agent's sandbox, and never left in the run artifact)
+    // so the same published-docs filter below can resolve its
+    // `docs/crates/*` symlinks exactly as it does for the live checkout;
+    // `_tag_archive_guard` removes it once `provision` returns.
+    let mut _tag_archive_guard = None;
     let (docs_source_dir, docs_filter_root, docs_source, resolved_docs_commit) =
         if framework_version == RUNNER_VERSION {
             (
@@ -258,17 +260,20 @@ pub fn provision(
         } else {
             let tag = format!("v{framework_version}");
             let commit = resolve_tag_commit(&repo_root, &tag)?;
-            let archive_root = run_dir.join(".docs-tag-archive");
-            extract_tag_tree(&repo_root, &tag, &archive_root)?;
+            let archive_dir = tempfile::tempdir().with_context(|| {
+                format!("creating docs archive scratch directory for tag {tag}")
+            })?;
+            extract_tag_tree(&repo_root, &tag, archive_dir.path())?;
             // Canonicalized so `is_published_docs_target`'s `strip_prefix`
             // agrees with the canonicalized symlink targets `copy_recursive`
             // resolves below (macOS's `/var` -> `/private/var`, otherwise).
-            let archive_root = archive_root.canonicalize().with_context(|| {
+            let archive_root = archive_dir.path().canonicalize().with_context(|| {
                 format!(
                     "resolving docs archive scratch directory {}",
-                    archive_root.display()
+                    archive_dir.path().display()
                 )
             })?;
+            _tag_archive_guard = Some(archive_dir);
             (
                 archive_root.join("docs"),
                 archive_root,
