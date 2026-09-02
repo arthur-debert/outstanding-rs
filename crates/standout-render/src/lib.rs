@@ -81,7 +81,8 @@ pub use diagnostics::TagResolution;
 pub use document::{deserialize_document, serialize_document};
 
 pub use util::{
-    csv_records, rgb_to_ansi256, rgb_to_truecolor, truncate_to_width, truncate_to_width_with_policy,
+    csv_records, rgb_to_ansi256, rgb_to_truecolor, truncate_to_width,
+    truncate_to_width_with_policy, write_csv,
 };
 
 pub use file_loader::{

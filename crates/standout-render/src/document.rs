@@ -4,10 +4,10 @@ use serde::Serialize;
 use crate::error::RenderError;
 use crate::output::OutputMode;
 
-/// One value as the whole document of a structured mode, newline-terminated:
-/// pretty JSON, YAML, or CSV under the flat-record rule of
-/// [`crate::csv_records`] (one row for a record, one per element for an
-/// array of records).
+/// One value as the whole document of a structured mode: pretty JSON, YAML,
+/// or CSV under the flat-record rule of [`crate::csv_records`] (one row for a
+/// record, one per element for an array of records). Every line ends in a
+/// newline, so the CSV of an empty array is the empty string.
 pub fn serialize_document<T: Serialize>(
     data: &T,
     output_mode: OutputMode,
