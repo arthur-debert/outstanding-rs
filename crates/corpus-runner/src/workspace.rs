@@ -3,7 +3,7 @@
 // a cargo scaffold pinned to exact-version crates.io dependencies.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use anyhow::{bail, Context};
 use sha2::{Digest, Sha256};
@@ -11,10 +11,18 @@ use sha2::{Digest, Sha256};
 use crate::archetype::Archetype;
 use crate::digest;
 use crate::questionnaire;
-use crate::report::IsolationRecord;
+use crate::report::{DocsSource, IsolationRecord};
 use crate::sandbox::{self, Policy};
 
 const PUBLISHED_DOCS: &[&str] = &["index.md", "intro.md", "guides", "topics", "crates"];
+
+// The version this build of corpus-runner is itself part of — the monorepo
+// keeps every crate's `version` in lockstep, so this is also the checkout's
+// own framework version (D26): `--framework-version` pinning this value
+// means "the checkout's own docs"; any other value means "a published
+// version other than the one checked out", whose docs come from that
+// version's git tag instead (`provision_docs`).
+const RUNNER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // CLAUDE_CODE_TMPDIR is added for the agent phase alone, by `Isolation::apply_agent`.
 pub const ENV_ALLOWLIST: &[&str] = &[
@@ -200,6 +208,10 @@ pub struct Workspace {
     pub root: PathBuf,
     pub app_dir: PathBuf,
     pub docs_sha256: String,
+    /// The commit the docs snapshot came from: the checkout's `HEAD` in
+    /// checkout mode, or the pinned version's tag commit in tag mode (D26).
+    pub docs_commit: String,
+    pub docs_source: DocsSource,
     pub isolation: Isolation,
 }
 
@@ -227,12 +239,49 @@ pub fn provision(
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_default();
+
+    // D26: a pin other than the checkout's own version reads docs from that
+    // version's tag rather than the live checkout, so the agent never sees
+    // documentation for a surface its pinned dependency does not have. The
+    // tag's full tree is archived into a scratch directory OUTSIDE `root`
+    // (never admitted into the agent's sandbox) so the same published-docs
+    // filter below can resolve its `docs/crates/*` symlinks exactly as it
+    // does for the live checkout.
+    let (docs_source_dir, docs_filter_root, docs_source, resolved_docs_commit) =
+        if framework_version == RUNNER_VERSION {
+            (
+                docs_dir.to_path_buf(),
+                repo_root.clone(),
+                DocsSource::Checkout,
+                docs_commit(docs_dir),
+            )
+        } else {
+            let tag = format!("v{framework_version}");
+            let commit = resolve_tag_commit(&repo_root, &tag)?;
+            let archive_root = run_dir.join(".docs-tag-archive");
+            extract_tag_tree(&repo_root, &tag, &archive_root)?;
+            // Canonicalized so `is_published_docs_target`'s `strip_prefix`
+            // agrees with the canonicalized symlink targets `copy_recursive`
+            // resolves below (macOS's `/var` -> `/private/var`, otherwise).
+            let archive_root = archive_root.canonicalize().with_context(|| {
+                format!(
+                    "resolving docs archive scratch directory {}",
+                    archive_root.display()
+                )
+            })?;
+            (
+                archive_root.join("docs"),
+                archive_root,
+                DocsSource::Tag,
+                commit,
+            )
+        };
     for entry in PUBLISHED_DOCS {
-        let src = docs_dir.join(entry);
+        let src = docs_source_dir.join(entry);
         if !src.exists() {
             continue;
         }
-        copy_recursive(&src, &docs_dest.join(entry), &repo_root)
+        copy_recursive(&src, &docs_dest.join(entry), &docs_filter_root)
             .with_context(|| format!("snapshotting docs entry {}", src.display()))?;
     }
     let docs_sha256 = docs_digest(&docs_dest)?;
@@ -253,8 +302,66 @@ pub fn provision(
         root,
         app_dir,
         docs_sha256,
+        docs_commit: resolved_docs_commit,
+        docs_source,
         isolation,
     })
+}
+
+/// The tag's commit sha, and a check that the tag exists — a missing tag
+/// (D26) is refused here, before the agent phase starts.
+fn resolve_tag_commit(repo_root: &Path, tag: &str) -> anyhow::Result<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["rev-parse", "--verify", &format!("{tag}^{{commit}}")])
+        .output()
+        .with_context(|| format!("resolving tag {tag} in {}", repo_root.display()))?;
+    if !output.status.success() {
+        bail!(
+            "framework version pin {tag} has no matching tag in the checkout's repository \
+             {} (docs cannot be sourced for it)",
+            repo_root.display()
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Extracts the tag's whole tree into `extract_root`, so relative symlinks
+/// under `docs/crates/*` (into `crates/<name>/docs`) resolve exactly as
+/// they do in the live checkout.
+fn extract_tag_tree(repo_root: &Path, tag: &str, extract_root: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(extract_root).with_context(|| {
+        format!(
+            "creating docs archive scratch directory {}",
+            extract_root.display()
+        )
+    })?;
+    let mut archive = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["archive", "--format=tar", tag])
+        .stdout(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("spawning git archive for tag {tag}"))?;
+    let stdout = archive.stdout.take().expect("piped stdout");
+    let tar_status = Command::new("tar")
+        .arg("-x")
+        .arg("-C")
+        .arg(extract_root)
+        .stdin(stdout)
+        .status()
+        .with_context(|| format!("extracting archive for tag {tag}"))?;
+    let archive_status = archive
+        .wait()
+        .with_context(|| format!("waiting for git archive of tag {tag}"))?;
+    if !archive_status.success() {
+        bail!("git archive {tag} exited with {archive_status}");
+    }
+    if !tar_status.success() {
+        bail!("extracting tag {tag} archive exited with {tar_status}");
+    }
+    Ok(())
 }
 
 pub fn docs_digest(docs_root: &Path) -> anyhow::Result<String> {

@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RunReport {
@@ -55,8 +55,28 @@ pub struct Pins {
     pub framework_version: String,
     pub docs_commit: String,
     pub docs_sha256: String,
+    /// Where the docs snapshot came from (D26, schema 5): `checkout` when
+    /// `framework_version` is the runner's own version, `tag` when
+    /// `provision` archived it from that version's git tag. Before this
+    /// field existed the runner always snapshotted the live checkout
+    /// regardless of the pin (#451), so a report written before schema 5
+    /// reads as `checkout` — an accurate record of what the runner did,
+    /// not a claim that the pin and the docs necessarily agreed.
+    #[serde(default = "default_docs_source")]
+    pub docs_source: DocsSource,
     pub acceptance_sha256: String,
     pub questionnaire_fingerprint: String,
+}
+
+fn default_docs_source() -> DocsSource {
+    DocsSource::Checkout
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DocsSource {
+    Checkout,
+    Tag,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -135,6 +155,10 @@ pub enum CaseOutcome {
     Fail,
     ExpectedFail,
     UnexpectedPass,
+    /// A gap case passed, but the produced app's `Cargo.toml` lacks the
+    /// crate its manifest names as evidence (D17): the gap was rebuilt by
+    /// hand rather than closed by the framework.
+    HandRolledPass,
 }
 
 impl CaseOutcome {

@@ -1,6 +1,7 @@
 // Roster-case execution: the run semantics `corpus/README.md` documents,
 // made real against a produced binary.
 
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -8,14 +9,22 @@ use std::time::Duration;
 
 use crate::archetype::{Case, CaseExpect, Expected, TtyStream};
 use crate::exec;
+use crate::manifest::GapEntry;
 use crate::report::{AcceptanceReport, CaseOutcome, CaseResult};
 use crate::workspace;
 
+/// Runs every case in `cases` against `binary`. `gaps` is the archetype
+/// manifest's `[gaps]` table (D17): a gap case that passes is reported
+/// `hand-rolled-pass` rather than `unexpected-pass` when its evidence claim
+/// names a crate `app_cargo_toml` (the produced app's `Cargo.toml`, when
+/// readable) does not depend on.
 pub fn run_cases(
     binary: &Path,
     cases: &[Case],
     cases_dir: &Path,
     isolation: &workspace::Isolation,
+    gaps: &BTreeMap<String, GapEntry>,
+    app_cargo_toml: Option<&str>,
 ) -> AcceptanceReport {
     let results = cases
         .iter()
@@ -23,12 +32,27 @@ pub fn run_cases(
             let sandbox = cases_dir.join(&case.name);
             let (outcome, detail) = match execute(binary, case, &sandbox, isolation) {
                 Ok(execution) => {
-                    let (raw_pass, detail) = evaluate(case, &execution);
+                    let (raw_pass, detail) = evaluate(case, &execution, &sandbox);
                     let outcome = match (case.expected, raw_pass) {
                         (Expected::Pass, true) => CaseOutcome::Pass,
                         (Expected::Pass, false) => CaseOutcome::Fail,
                         (Expected::Fail, false) => CaseOutcome::ExpectedFail,
-                        (Expected::Fail, true) => CaseOutcome::UnexpectedPass,
+                        (Expected::Fail, true) => {
+                            let evidence_absent = case
+                                .gap
+                                .as_deref()
+                                .and_then(|gap| gaps.get(gap))
+                                .and_then(GapEntry::evidence)
+                                .zip(app_cargo_toml)
+                                .is_some_and(|(evidence, cargo_toml)| {
+                                    !evidence.satisfied_by(cargo_toml)
+                                });
+                            if evidence_absent {
+                                CaseOutcome::HandRolledPass
+                            } else {
+                                CaseOutcome::UnexpectedPass
+                            }
+                        }
                     };
                     (outcome, detail)
                 }
@@ -292,7 +316,7 @@ fn normalize_lf(text: &str) -> String {
     text.replace("\r\n", "\n")
 }
 
-fn evaluate(case: &Case, execution: &Execution) -> (bool, Option<String>) {
+fn evaluate(case: &Case, execution: &Execution, sandbox: &Path) -> (bool, Option<String>) {
     let mut failures = Vec::new();
     if execution.timed_out {
         failures.push(format!(
@@ -300,7 +324,7 @@ fn evaluate(case: &Case, execution: &Execution) -> (bool, Option<String>) {
             case.run.timeout_seconds
         ));
     } else {
-        apply_expectations(&case.expect, execution, &mut failures);
+        apply_expectations(&case.expect, execution, sandbox, &mut failures);
     }
     if failures.is_empty() {
         (true, None)
@@ -313,7 +337,12 @@ fn evaluate(case: &Case, execution: &Execution) -> (bool, Option<String>) {
     }
 }
 
-fn apply_expectations(expect: &CaseExpect, execution: &Execution, failures: &mut Vec<String>) {
+fn apply_expectations(
+    expect: &CaseExpect,
+    execution: &Execution,
+    sandbox: &Path,
+    failures: &mut Vec<String>,
+) {
     if let Some(code) = expect.exit_code {
         if execution.exit_code != Some(code) {
             failures.push(format!(
@@ -423,6 +452,30 @@ fn apply_expectations(expect: &CaseExpect, execution: &Execution, failures: &mut
             failures.push(format!(
                 "expected exactly one non-empty stdout line ending with {suffix:?}, got {count}"
             ));
+        }
+    }
+    for (rel, want) in &expect.files {
+        match sandbox_path(sandbox, rel) {
+            Ok(path) => match std::fs::read_to_string(&path) {
+                Ok(got) => {
+                    let got = normalize_lf(&got);
+                    if &got != want {
+                        failures.push(format!("file {rel:?} content differs from expected"));
+                    }
+                }
+                Err(err) => failures.push(format!("file {rel:?} could not be read: {err}")),
+            },
+            Err(err) => failures.push(err),
+        }
+    }
+    for rel in &expect.files_absent {
+        match sandbox_path(sandbox, rel) {
+            Ok(path) => {
+                if path.exists() {
+                    failures.push(format!("file {rel:?} must not exist"));
+                }
+            }
+            Err(err) => failures.push(err),
         }
     }
 }

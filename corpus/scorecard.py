@@ -11,6 +11,12 @@ so a set of pilot reports reproduces the pilot's figures:
 - acceptance: cases whose outcome is `pass`, over every case in the suite;
   the other outcomes are spelled out rather than folded in, because
   `unexpected-pass` is news about a gap and not a passing case.
+- hand_rolled_passes: gap cases whose outcome is `hand-rolled-pass` — a
+  passing gap case whose manifest names evidence (`uses-crate:<name>`) the
+  produced app's `Cargo.toml` lacks, so the pass was rebuilt by hand rather
+  than closed by the framework. Counted separately from `acceptance`'s
+  `unexpected-pass` tally, which the evidence check does not otherwise
+  distinguish.
 - invariants: applicable identities (every planned identity that is not
   `not-applicable`) that passed, plus the full planned breakdown, so a
   ratio can never improve by shrinking its denominator.
@@ -110,6 +116,11 @@ def acceptance(report):
     cell = ratio(passed, len(cases))
     rest = ", ".join(f"{count} {outcome}" for outcome, count in sorted(tally.items()))
     return f"{cell}; {rest}" if rest else cell
+
+
+def hand_rolled_passes(report):
+    cases = report["acceptance"].get("cases", [])
+    return sum(1 for case in cases if case["outcome"] == "hand-rolled-pass")
 
 
 def invariants(report):
@@ -412,6 +423,7 @@ def read_runs(label: str, runs_dir: pathlib.Path) -> list[dict]:
                 "schema_version": report["schema_version"],
                 "framework": report["pins"]["framework_version"],
                 "acceptance": acceptance(report),
+                "hand_rolled_passes": hand_rolled_passes(report),
                 "invariants": invariants(report),
                 "workarounds": workarounds(report),
                 "frictions": frictions(report),
@@ -430,6 +442,7 @@ COLUMNS = (
     ("set", "Run"),
     ("framework", "Standout"),
     ("acceptance", "Acceptance"),
+    ("hand_rolled_passes", "Hand-rolled passes"),
     ("invariants", "ROB01 invariants"),
     ("workarounds", "Workarounds listed"),
     ("frictions", "Frictions listed"),

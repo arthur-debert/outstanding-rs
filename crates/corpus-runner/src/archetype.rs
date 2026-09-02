@@ -9,12 +9,16 @@ use anyhow::{bail, Context};
 use serde::Deserialize;
 
 use crate::digest;
+use crate::manifest::{GapEntry, Manifest};
 
 #[derive(Debug)]
 pub struct Archetype {
     pub name: String,
     pub spec: String,
     pub suite: CaseSuite,
+    /// The manifest's `[gaps]` table (D17), keyed by gap id. Empty for
+    /// `smoke`, which carries no manifest.
+    pub gaps: BTreeMap<String, GapEntry>,
     acceptance_sha256: String,
 }
 
@@ -200,6 +204,14 @@ pub struct CaseExpect {
     pub stderr_not_contains: Vec<String>,
     #[serde(default)]
     pub stdout_lines_end_with_once: Vec<String>,
+    /// Post-run sandbox assertions (D25): path (relative to the case
+    /// sandbox) to exact content, LF-normalized like `stdout`/`stderr`.
+    #[serde(default)]
+    pub files: BTreeMap<String, String>,
+    /// Post-run sandbox assertions (D25): paths that must not exist after
+    /// the process exits.
+    #[serde(default)]
+    pub files_absent: Vec<String>,
 }
 
 impl CaseExpect {
@@ -216,6 +228,8 @@ impl CaseExpect {
             && self.stdout_not_contains.is_empty()
             && self.stderr_not_contains.is_empty()
             && self.stdout_lines_end_with_once.is_empty()
+            && self.files.is_empty()
+            && self.files_absent.is_empty()
     }
 }
 
@@ -229,12 +243,21 @@ impl Archetype {
         let acceptance_text = std::fs::read_to_string(&acceptance_path)
             .with_context(|| format!("reading {}", acceptance_path.display()))?;
         let suite = CaseSuite::parse(&acceptance_text, name, &acceptance_path)?;
+        let gaps = Manifest::load_optional(archetypes_dir, name)?
+            .map(|manifest| manifest.gaps)
+            .unwrap_or_default();
         Ok(Self {
             name: name.to_string(),
             spec,
             suite,
+            gaps,
             acceptance_sha256: digest::sha256_hex(&acceptance_text),
         })
+    }
+
+    /// The evidence claim (D17) a gap case's `gap` id names, if any.
+    pub fn gap_evidence(&self, gap: &str) -> Option<crate::manifest::Evidence<'_>> {
+        self.gaps.get(gap).and_then(GapEntry::evidence)
     }
 
     pub fn binary(&self) -> &str {
@@ -344,6 +367,7 @@ fn validate_case_suite(suite: &CaseSuite, name: &str, path: &Path) -> anyhow::Re
                 "stdout_lines_end_with_once",
                 &case.expect.stdout_lines_end_with_once,
             ),
+            ("files_absent", &case.expect.files_absent),
         ] {
             if entries.iter().any(|entry| entry.is_empty()) {
                 bail!(
@@ -352,6 +376,13 @@ fn validate_case_suite(suite: &CaseSuite, name: &str, path: &Path) -> anyhow::Re
                     case.name
                 );
             }
+        }
+        if case.expect.files.keys().any(|key| key.is_empty()) {
+            bail!(
+                "{}: case {:?} — files keys must be non-empty",
+                path.display(),
+                case.name
+            );
         }
         for (key, semantic) in [
             ("stdout_json", case.expect.stdout_json.is_some()),
@@ -543,6 +574,7 @@ exit_code = 0
             "stdout_not_contains",
             "stderr_not_contains",
             "stdout_lines_end_with_once",
+            "files_absent",
         ] {
             let err = parse(&suite(
                 &VALID_CASE.replace("exit_code = 0", &format!("{key} = [\"\"]")),
@@ -596,6 +628,28 @@ exit_code = 0
         ))
         .unwrap();
         assert_eq!(suite.cases.len(), 1);
+    }
+
+    #[test]
+    fn files_and_files_absent_count_as_assertions() {
+        let suite = parse(&suite(&VALID_CASE.replace(
+            "exit_code = 0",
+            "files_absent = [\"conf/staging\"]\n[case.expect.files]\n\"conf/default\" = \"a\\n\"",
+        )))
+        .unwrap();
+        assert_eq!(suite.cases.len(), 1);
+        let expect = &suite.cases[0].expect;
+        assert_eq!(expect.files.get("conf/default"), Some(&"a\n".to_string()));
+        assert_eq!(expect.files_absent, vec!["conf/staging".to_string()]);
+    }
+
+    #[test]
+    fn empty_files_key_is_rejected() {
+        let err = parse(&suite(
+            &VALID_CASE.replace("exit_code = 0", "[case.expect.files]\n\"\" = \"a\""),
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("files keys"), "{err:#}");
     }
 
     #[test]

@@ -695,7 +695,7 @@ stderr = ""
 [[case]]
 name = "set-property-writes-the-active-set"
 group = "store-mutation"
-stresses = "the write path reports on stderr and leaves stdout empty"
+stresses = "the write path reports on stderr, leaves stdout empty, and actually writes the active set's file"
 expected = "fail"
 gap = "PAR05"
 reason = "named configuration sets are specced past current framework capability (docs/spec/parity-named-config-sets.md, PAR05)"
@@ -707,6 +707,9 @@ timeout_seconds = 10
 exit_code = 0
 stdout = ""
 stderr = "Updated property [core/project].\n"
+files_absent = ["conf/configurations/config_staging"]
+[case.expect.files]
+"conf/configurations/config_default" = "[core]\nproject = alpha-proj\n"
 
 [[case]]
 name = "create-configuration-reports-on-stderr"
