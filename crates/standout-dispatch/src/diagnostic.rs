@@ -1,5 +1,5 @@
 //! The diagnostic document: the one shape a failure takes on stdout under a
-//! structured output mode (`docs/spec/parity-machine-contract.md`, D1).
+//! structured output mode.
 //!
 //! A handler returns a [`Diagnostic`] as its error when it has a `detail` or a
 //! source `range` to report; any other error type reaches the document with
@@ -7,11 +7,10 @@
 //! [`DiagnosticKind`] projected from the [`RunErrorKind`] the framework
 //! assigned when the error crossed the dispatch boundary, so a value a handler
 //! constructs carries a placeholder that the framework overwrites. The wire
-//! vocabulary is D1's, fixed by the tflike gap suite: every `FinalWrite`
-//! payload is the one `final-write`, while hook phases stay distinct.
-//! `framework` is the one kind outside that projection: a `severity:
-//! warning` entry the framework raises on its own account under `ndjson`
-//! (D2), which no run failure classifies.
+//! vocabulary is fixed: every `FinalWrite` payload is the one `final-write`,
+//! while hook phases stay distinct. `framework` is the one kind outside that
+//! projection: a `severity: warning` entry the framework raises on its own
+//! account under `ndjson`, which no run failure classifies.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;

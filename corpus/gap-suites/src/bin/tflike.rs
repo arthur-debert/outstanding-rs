@@ -1,11 +1,12 @@
 //! The in-repo `tflike` archetype (`corpus/archetypes/tflike/spec.md`): the
 //! binary `tests/tflike_diagnostic.rs` and `tests/tflike_progress.rs` run
-//! against. It has what PAR02's WS02 delivers and nothing later, so the
-//! assertions the later workstreams and epics own keep failing against it:
-//! the plan and its diagnostics ride the `ndjson` stream; `-detailed-exitcode`
-//! is accepted but declares no exit status (WS04); `apply` emits no lifecycle
-//! events and reports each completed step as stderr prose in every mode,
-//! there being no progress seam yet (PAR03).
+//! against. It carries exactly the capability the framework has, so the
+//! assertions still wrapped in `expect_gap` keep failing against it: the plan
+//! and its diagnostics ride the `ndjson` stream; `-detailed-exitcode` is
+//! accepted but declares no exit status, there being no way for a handler to
+//! declare one; `apply` emits no lifecycle events and reports each completed
+//! step as stderr prose in every mode, there being no progress seam. The
+//! README beside this package maps each of those to the work that closes it.
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use serde::Serialize;
