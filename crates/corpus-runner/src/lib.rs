@@ -3,6 +3,7 @@
 
 pub mod acceptance;
 pub mod archetype;
+pub mod batch;
 pub mod broker;
 pub mod cases;
 mod digest;
@@ -50,6 +51,7 @@ pub struct ReevaluationConfig {
     pub timeouts: Timeouts,
 }
 
+#[derive(Clone, Copy)]
 pub struct Timeouts {
     pub agent: Duration,
     pub build: Duration,

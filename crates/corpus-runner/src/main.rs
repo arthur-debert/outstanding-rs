@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 
+use corpus_runner::batch::{batch, BatchConfig};
 use corpus_runner::broker::{BrokerConfig, Credential};
 use corpus_runner::{
     absolute, print_summary, reevaluate, run, session, ReevaluationConfig, RunConfig, Timeouts,
@@ -94,6 +95,82 @@ enum Commands {
         #[arg(long)]
         check_timeout: Option<u64>,
     },
+    /// Run a set of archetypes through the full loop in order, sanitize
+    /// each run's evidence outside the checkout, and write both scorecards
+    /// under `--out`. Exits non-zero if any archetype's run failed to
+    /// complete.
+    Batch {
+        /// Archetype names to run, in order.
+        #[arg(required = true)]
+        archetypes: Vec<String>,
+        /// The corpus directory (holding archetypes/, sanitize-run.py and
+        /// scorecard.py).
+        #[arg(long, default_value = "corpus")]
+        corpus_dir: PathBuf,
+        /// External directory for untrusted run workspaces, sanitized away
+        /// once each run completes. It must not live beneath the framework
+        /// checkout.
+        #[arg(long)]
+        runs_dir: Option<PathBuf>,
+        /// The docs directory the published snapshot is copied from.
+        #[arg(long, default_value = "docs")]
+        docs_dir: PathBuf,
+        /// Shell command implementing the session (default: a
+        /// non-interactive Claude Code session over INSTRUCTIONS.md).
+        #[arg(long)]
+        agent_cmd: Option<String>,
+        /// Authenticate every agent session through the run-credential
+        /// broker; see `run --help`.
+        #[arg(long)]
+        broker: bool,
+        /// Exact crates.io framework version every blind scaffold pins.
+        #[arg(long, default_value = env!("CARGO_PKG_VERSION"))]
+        framework_version: String,
+        /// Seconds before an agent session is killed.
+        #[arg(long)]
+        agent_timeout: Option<u64>,
+        /// Seconds before a produced app's build is killed.
+        #[arg(long)]
+        build_timeout: Option<u64>,
+        /// Seconds before each invariant invocation is killed.
+        #[arg(long)]
+        check_timeout: Option<u64>,
+        /// Directory the sanitized run evidence and both scorecards land
+        /// under: one `<run-id>/` per archetype, plus `scorecard.json` and
+        /// `scorecard.md`.
+        #[arg(long)]
+        out: PathBuf,
+        /// Host account name to scrub from sanitized transcripts (forwarded
+        /// to `sanitize-run.py --account`).
+        #[arg(long)]
+        account: Option<String>,
+    },
+}
+
+fn resolve_broker(broker: bool) -> anyhow::Result<Option<BrokerConfig>> {
+    if !broker {
+        return Ok(None);
+    }
+    let credential = Credential::from_host_store()?;
+    eprintln!(
+        "[corpus] brokering the credential from {}",
+        credential.source()
+    );
+    Ok(Some(BrokerConfig::for_host(credential)))
+}
+
+fn resolve_timeouts(agent: Option<u64>, build: Option<u64>, check: Option<u64>) -> Timeouts {
+    let mut timeouts = Timeouts::default();
+    if let Some(secs) = agent {
+        timeouts.agent = Duration::from_secs(secs);
+    }
+    if let Some(secs) = build {
+        timeouts.build = Duration::from_secs(secs);
+    }
+    if let Some(secs) = check {
+        timeouts.check = Duration::from_secs(secs);
+    }
+    timeouts
 }
 
 fn main() -> ExitCode {
@@ -112,33 +189,14 @@ fn main() -> ExitCode {
             check_timeout,
         } => {
             let corpus_dir = absolute(&corpus_dir);
-            let broker = if broker {
-                match Credential::from_host_store() {
-                    Ok(credential) => {
-                        eprintln!(
-                            "[corpus] brokering the credential from {}",
-                            credential.source()
-                        );
-                        Some(BrokerConfig::for_host(credential))
-                    }
-                    Err(err) => {
-                        eprintln!("[corpus] runner error: {err:#}");
-                        return ExitCode::FAILURE;
-                    }
+            let broker = match resolve_broker(broker) {
+                Ok(broker) => broker,
+                Err(err) => {
+                    eprintln!("[corpus] runner error: {err:#}");
+                    return ExitCode::FAILURE;
                 }
-            } else {
-                None
             };
-            let mut timeouts = Timeouts::default();
-            if let Some(secs) = agent_timeout {
-                timeouts.agent = Duration::from_secs(secs);
-            }
-            if let Some(secs) = build_timeout {
-                timeouts.build = Duration::from_secs(secs);
-            }
-            if let Some(secs) = check_timeout {
-                timeouts.check = Duration::from_secs(secs);
-            }
+            let timeouts = resolve_timeouts(agent_timeout, build_timeout, check_timeout);
             let config = RunConfig {
                 archetype,
                 archetypes_dir: corpus_dir.join("archetypes"),
@@ -173,13 +231,7 @@ fn main() -> ExitCode {
             build_timeout,
             check_timeout,
         } => {
-            let mut timeouts = Timeouts::default();
-            if let Some(secs) = build_timeout {
-                timeouts.build = Duration::from_secs(secs);
-            }
-            if let Some(secs) = check_timeout {
-                timeouts.check = Duration::from_secs(secs);
-            }
+            let timeouts = resolve_timeouts(None, build_timeout, check_timeout);
             let config = ReevaluationConfig {
                 archetype,
                 archetypes_dir: absolute(&corpus_dir).join("archetypes"),
@@ -197,6 +249,73 @@ fn main() -> ExitCode {
                 }
                 Err(err) => {
                     eprintln!("[corpus] re-evaluation error: {err:#}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Commands::Batch {
+            archetypes,
+            corpus_dir,
+            runs_dir,
+            docs_dir,
+            agent_cmd,
+            broker,
+            framework_version,
+            agent_timeout,
+            build_timeout,
+            check_timeout,
+            out,
+            account,
+        } => {
+            let corpus_dir = absolute(&corpus_dir);
+            let broker = match resolve_broker(broker) {
+                Ok(broker) => broker,
+                Err(err) => {
+                    eprintln!("[corpus] batch error: {err:#}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let timeouts = resolve_timeouts(agent_timeout, build_timeout, check_timeout);
+            let config = BatchConfig {
+                archetypes,
+                archetypes_dir: corpus_dir.join("archetypes"),
+                docs_dir: absolute(&docs_dir),
+                runs_dir: runs_dir
+                    .map(|path| absolute(&path))
+                    .unwrap_or_else(|| std::env::temp_dir().join("standout-corpus-runs")),
+                out_dir: absolute(&out),
+                agent_cmd: agent_cmd.unwrap_or_else(session::default_agent_cmd),
+                broker,
+                framework_version,
+                timeouts,
+                sanitize_script: corpus_dir.join("sanitize-run.py"),
+                scorecard_script: corpus_dir.join("scorecard.py"),
+                account,
+            };
+            match batch(&config) {
+                Ok(outcomes) => {
+                    let mut failed = 0;
+                    for (archetype, outcome) in &outcomes {
+                        match outcome {
+                            Ok(run_id) => eprintln!("[corpus] batch: {archetype} -> {run_id}"),
+                            Err(detail) => {
+                                failed += 1;
+                                eprintln!("[corpus] batch: {archetype} FAILED: {detail}");
+                            }
+                        }
+                    }
+                    if failed > 0 {
+                        eprintln!(
+                            "[corpus] batch: {failed} of {} archetype run(s) failed to complete",
+                            outcomes.len()
+                        );
+                        ExitCode::FAILURE
+                    } else {
+                        ExitCode::SUCCESS
+                    }
+                }
+                Err(err) => {
+                    eprintln!("[corpus] batch error: {err:#}");
                     ExitCode::FAILURE
                 }
             }
