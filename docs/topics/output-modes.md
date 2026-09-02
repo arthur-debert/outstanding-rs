@@ -14,7 +14,6 @@ pub enum OutputMode {
     TermDebug,  // Keep style tags as [name]...[/name]
     Json,       // Serialize as JSON (skip template)
     Yaml,       // Serialize as YAML (skip template)
-    Xml,        // Serialize as XML (skip template)
     Csv,        // Serialize as CSV (skip template)
     Ndjson,     // One JSON object per line: a stream, not a document
 }
@@ -26,9 +25,12 @@ Three categories:
 
 **Debug mode** (TermDebug): Render the template, keep tags as literals for inspection.
 
-**Structured modes** (Json, Yaml, Xml, Csv, Ndjson): Skip the template entirely,
+**Structured modes** (Json, Yaml, Csv, Ndjson): Skip the template entirely,
 serialize handler data directly. `Ndjson` is the one stream mode among them,
 [below](#ndjson-mode).
+
+There is no XML mode. `--output xml` is a clap usage error like any other
+value the flag does not accept, exit `2`.
 
 ## Auto Mode
 
@@ -63,7 +65,6 @@ myapp list --output=text        # Force plain text
 myapp list --output=term-debug  # Show style tags
 myapp list --output=json        # JSON serialization
 myapp list --output=yaml        # YAML serialization
-myapp list --output=xml         # XML serialization
 myapp list --output=csv         # CSV serialization
 myapp list --output=ndjson      # Newline-delimited JSON stream
 ```
@@ -179,10 +180,11 @@ Same handler, same types—different output format. This enables:
 
 ### Key ordering
 
-JSON, YAML, XML and NDJSON emit object keys in the order the handler declared
+JSON, YAML, CSV and NDJSON emit object keys in the order the handler declared
 them, not alphabetically. In the example above, a reader sees `items` before `total`
 because the struct lists `items` first. Field order in your `#[derive(Serialize)]`
-struct — or key order in a `json!({ ... })` literal — is the output order.
+struct — or key order in a `json!({ ... })` literal — is the output order, and
+in CSV it is the column order.
 
 This holds because Standout builds serde_json's `Value` with the `preserve_order`
 feature on, so the intermediate map keeps insertion order instead of sorting. The
@@ -196,9 +198,36 @@ order-preserving map type (for example `indexmap::IndexMap`); reach for a raw
 
 ### CSV Output
 
-Normal `App` dispatch flattens the serializable handler data automatically for
-CSV. That is the same handler data used by the other structured modes; handlers
-should not inspect the requested mode or return a CSV-specific shape.
+CSV takes flat records only. A flat record is a map whose values are scalars
+(strings, numbers, booleans, null); the handler data must be one flat record or
+an array of flat records. Each record is a row, the columns are the records'
+keys in first-seen order, and a key a record lacks — or maps to null — is an
+empty cell.
+
+```rust
+#[derive(Serialize)]
+struct Row { name: String, count: usize }
+
+// One row per element:   name,count
+Ok(Output::Render(vec![Row { .. }, Row { .. }]))
+```
+
+Any nested value — an array or object inside a record, or a document that is
+not a record at all — is a render error, exit `1`, whose message names the
+value and points at `CsvProjection`:
+
+```text
+CSV output takes a flat record or an array of flat records, and `items` is an
+array; declare the columns with a CsvProjection
+```
+
+Under `--output csv` that error is the stdout diagnostic document, kind
+`render` ([Execution Outcomes](./execution-outcomes.md#failures-under-a-structured-mode)).
+Nothing is flattened: there are no `items.0.name` columns and no JSON blobs in
+cells. A command whose canonical response nests its rows declares the columns
+with a `CsvProjection`, below. That is the same handler data used by the other
+structured modes; handlers should not inspect the requested mode or return a
+CSV-specific shape.
 
 The standalone rendering API also supports direct `FlatDataSpec` rendering when
 a caller needs explicit columns and headers:
@@ -260,8 +289,15 @@ columns receive both the current row and the root response. Synthetic-row
 callbacks receive the root response and run in registration order. Column
 ordering, headers, and `null_repr` use the existing `FlatDataSpec` behavior.
 
+The row source is a dot path into the response, or `.` for the response
+itself. An array there is one row per element; a single record is one row,
+which is how the framework's own diagnostic document becomes a CSV row: a
+`CsvProjection` over `.` whose optional `range` is three columns,
+`range_filename`, `range_line` and `range_column`, with `null_repr("")` so
+they are empty when no range is set.
+
 The projection applies only to CSV. Text and terminal modes still use the
-template, while JSON, YAML, and XML serialize the canonical response. In the
+template, while JSON and YAML serialize the canonical response. In the
 pipeline, post-dispatch hooks run before projection and post-output hooks run
 after it; `run`, `run_with`, output-file handling, and final emission
 therefore all observe the same projected CSV.

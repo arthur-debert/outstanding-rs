@@ -122,21 +122,72 @@ impl Default for CommandContext {
 pub enum Output<T: Serialize> {
     Render(T),
     Silent,
-    Binary { data: Vec<u8>, filename: String },
+    Binary {
+        data: Vec<u8>,
+        filename: String,
+    },
     Artifact(Artifact<T>),
+    /// A successful output whose process exit status the handler chose:
+    /// the run emits `output` exactly as it would alone and exits with
+    /// `status`, written verbatim. Built by [`Output::with_exit_status`].
+    WithStatus {
+        output: Box<Output<T>>,
+        status: ExitStatus,
+    },
 }
 impl<T: Serialize> Output<T> {
+    /// Declare the exit status of this successful output. A status is a
+    /// signal beside the result, never a failure: nothing becomes a
+    /// diagnostic and the document still goes to stdout. Calling it again
+    /// replaces the earlier status.
+    pub fn with_exit_status(self, status: ExitStatus) -> Self {
+        let (output, _) = self.split_exit_status();
+        Output::WithStatus {
+            output: Box::new(output),
+            status,
+        }
+    }
+    /// The output and the status it declares, `SUCCESS` when it declares none.
+    pub fn split_exit_status(self) -> (Self, ExitStatus) {
+        match self {
+            Output::WithStatus { output, status } => (output.split_exit_status().0, status),
+            other => (other, ExitStatus::SUCCESS),
+        }
+    }
+    pub fn exit_status(&self) -> ExitStatus {
+        match self {
+            Output::WithStatus { status, .. } => *status,
+            _ => ExitStatus::SUCCESS,
+        }
+    }
+    /// Apply `f` to the rendered value, through a declared status.
+    pub fn map_render(self, f: impl FnOnce(T) -> T) -> Self {
+        match self {
+            Output::Render(data) => Output::Render(f(data)),
+            Output::WithStatus { output, status } => Output::WithStatus {
+                output: Box::new(output.map_render(f)),
+                status,
+            },
+            other => other,
+        }
+    }
+    fn declared(&self) -> &Self {
+        match self {
+            Output::WithStatus { output, .. } => output.declared(),
+            other => other,
+        }
+    }
     pub fn is_render(&self) -> bool {
-        matches!(self, Output::Render(_))
+        matches!(self.declared(), Output::Render(_))
     }
     pub fn is_silent(&self) -> bool {
-        matches!(self, Output::Silent)
+        matches!(self.declared(), Output::Silent)
     }
     pub fn is_binary(&self) -> bool {
-        matches!(self, Output::Binary { .. })
+        matches!(self.declared(), Output::Binary { .. })
     }
     pub fn is_artifact(&self) -> bool {
-        matches!(self, Output::Artifact(_))
+        matches!(self.declared(), Output::Artifact(_))
     }
 }
 pub type HandlerResult<T> = Result<Output<T>, anyhow::Error>;
@@ -165,6 +216,11 @@ impl ExitStatus {
     pub const USAGE_ERROR: Self = Self(2);
     pub const fn code(self) -> u8 {
         self.0
+    }
+}
+impl From<u8> for ExitStatus {
+    fn from(code: u8) -> Self {
+        Self(code)
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -290,37 +346,41 @@ pub enum RunErrorKind {
 pub struct RunOutput {
     text: String,
     kind: SuccessKind,
+    status: ExitStatus,
 }
 impl RunOutput {
     pub fn command(text: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-            kind: SuccessKind::Command,
-        }
+        Self::new(text, SuccessKind::Command)
     }
     pub fn clap_help(text: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-            kind: SuccessKind::ClapHelp,
-        }
+        Self::new(text, SuccessKind::ClapHelp)
     }
     pub fn paged_help(text: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-            kind: SuccessKind::PagedHelp,
-        }
+        Self::new(text, SuccessKind::PagedHelp)
     }
     pub fn clap_version(text: impl Into<String>) -> Self {
+        Self::new(text, SuccessKind::ClapVersion)
+    }
+    fn new(text: impl Into<String>, kind: SuccessKind) -> Self {
         Self {
             text: text.into(),
-            kind: SuccessKind::ClapVersion,
+            kind,
+            status: ExitStatus::SUCCESS,
         }
+    }
+    /// The status the handler declared through [`Output::with_exit_status`].
+    pub fn with_exit_status(mut self, status: ExitStatus) -> Self {
+        self.status = status;
+        self
     }
     pub fn as_str(&self) -> &str {
         &self.text
     }
     pub const fn kind(&self) -> SuccessKind {
         self.kind
+    }
+    pub const fn exit_status(&self) -> ExitStatus {
+        self.status
     }
     pub fn into_string(self) -> String {
         self.text
@@ -579,10 +639,10 @@ impl DispatchResult {
     }
     pub fn exit_status(&self) -> Option<ExitStatus> {
         match self {
-            DispatchResult::Handled(_)
-            | DispatchResult::Binary(_, _)
-            | DispatchResult::Artifact(_)
-            | DispatchResult::Silent => Some(ExitStatus::SUCCESS),
+            DispatchResult::Handled(output) => Some(output.exit_status()),
+            DispatchResult::Binary(_, _) | DispatchResult::Artifact(_) | DispatchResult::Silent => {
+                Some(ExitStatus::SUCCESS)
+            }
             DispatchResult::Error(error) => Some(error.exit_status()),
             DispatchResult::NoMatch(_) => None,
         }
@@ -959,6 +1019,40 @@ mod tests {
         assert!(!output.is_render());
         assert!(output.is_silent());
         assert!(!output.is_binary());
+    }
+    #[test]
+    fn a_declared_status_rides_beside_the_output_and_the_last_one_wins() {
+        let plain: Output<String> = Output::Render("found nothing".into());
+        assert_eq!(plain.exit_status(), ExitStatus::SUCCESS);
+
+        let signalled = Output::Render(String::from("changes"))
+            .with_exit_status(ExitStatus::from(3))
+            .with_exit_status(ExitStatus::from(2));
+        assert_eq!(signalled.exit_status(), ExitStatus::from(2));
+        assert!(signalled.is_render());
+        assert!(!signalled.is_silent());
+
+        let stamped = signalled.map_render(|text| format!("{text}!"));
+        let (output, status) = stamped.split_exit_status();
+        assert_eq!(status, ExitStatus::from(2));
+        assert!(matches!(output, Output::Render(ref text) if text == "changes!"));
+
+        let silent: Output<()> = Output::Silent.with_exit_status(ExitStatus::from(4));
+        assert!(silent.is_silent());
+        assert_eq!(silent.split_exit_status().1, ExitStatus::from(4));
+    }
+    #[test]
+    fn a_handled_run_reports_the_status_its_output_declared() {
+        let handled = DispatchResult::Handled(
+            RunOutput::command("plan").with_exit_status(ExitStatus::from(2)),
+        );
+        assert_eq!(handled.exit_status(), Some(ExitStatus::from(2)));
+        assert_eq!(handled.success_kind(), Some(SuccessKind::Command));
+        assert!(!handled.is_error());
+        assert_eq!(
+            DispatchResult::Handled(RunOutput::command("plan")).exit_status(),
+            Some(ExitStatus::SUCCESS)
+        );
     }
     #[test]
     fn test_output_binary() {

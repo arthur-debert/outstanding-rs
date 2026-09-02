@@ -42,13 +42,16 @@ chain:
 | `.total_count(n)` | Records the unfiltered total, for a "showing X of Y" summary |
 | `.filter_summary(text)` | A human-readable description of the active filter |
 | `.tabular_spec(spec)` | Attaches a `TabularSpec` directly (usually left to `#[dispatch(list_view, item_type = "...")]` instead) |
+| `.empty_exit_status(n)` | The exit status a successful run declares when `items` is empty; see [Empty lists](#empty-lists-and-the-exit-status) |
 | `.build()` | Consumes the builder and returns a `ListViewResult<T>` |
+| `.output()` | `.build().into_output()`: the `Output::Render` a handler returns, with the empty-list status applied |
 
 ## The result
 
 ```rust
 pub struct ListViewResult<T> {
     pub items: Vec<T>,
+    pub empty_exit_status: Option<ExitStatus>,   // not serialized
     pub intro: Option<String>,
     pub ending: Option<String>,
     pub messages: Vec<Message>,
@@ -69,6 +72,24 @@ is itself a valid handler return type: a handler can return
 other structured output. See
 [Handler Contract](../crates/dispatch/topics/handler-contract.md) for the
 `Output` enum and the render pipeline it feeds.
+
+## Empty lists and the exit status
+
+An empty list is a successful run. A command whose callers want to tell "found
+nothing" from "found something" without parsing output declares the status it
+exits with in that case; the framework names no code for it:
+
+```rust,ignore
+Ok(list_view(matches).empty_exit_status(3).output())
+```
+
+`ListViewResult::into_output` (which `.output()` calls) returns
+`Output::Render(list)`, and when `items` is empty and a status was declared,
+`Output::Render(list).with_exit_status(status)`. The list still renders — the
+template's "No items found" branch, or `{"items":[]}` under `--output json` —
+and the process exits with the declared status. See [Execution
+Outcomes](./execution-outcomes.md#status-and-streams) for what a declared
+status is and is not.
 
 ## Connecting to `#[dispatch(list_view)]`
 

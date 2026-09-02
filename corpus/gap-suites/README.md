@@ -15,9 +15,8 @@ rewrites — and the form that runs today under plain `pixi run test`.
 epics close:
 
 - `tests/tflike_diagnostic.rs` — gates **PAR02** (machine contract,
-  `docs/spec/parity-machine-contract.md`). PAR02 is done when this group turns green.
-  Six of its seven assertions are promoted (PAR02 WS02); `-detailed-exitcode`'s
-  exit 2 on a changed plan stays wrapped until WS04.
+  `docs/spec/parity-machine-contract.md`). All seven assertions are promoted and the
+  gate reads `closed`; the group runs green against the in-repo fixture.
 - `tests/tflike_progress.rs` — gates **PAR03** (terminal citizenship,
   `docs/spec/parity-terminal-citizenship.md`). PAR03 is done when this group turns green.
 - `tests/jjlike.rs` — gates the future runtime-templates parity epic, whose code is not
@@ -86,8 +85,7 @@ The harness library links nothing; the fixture is the one target in this package
 built on standout.
 
 The fixture carries exactly the capability its epics have landed, so the assertions
-still wrapped keep failing against it: `-detailed-exitcode` is accepted but declares
-no exit status (PAR02 WS04), `apply` emits no lifecycle events and reports its steps
-as stderr prose in every mode (PAR03). A promoted assertion resolves the binary with
+still wrapped keep failing against it: `apply` emits no lifecycle events and reports
+its steps as stderr prose in every mode (PAR03). A promoted assertion resolves the binary with
 `corpus_gap_suites::required_binary`, which panics — a broken suite — rather than
 skipping when the variable names nothing.

@@ -153,7 +153,7 @@ OPTIONS
   -c, --color <BOOL>  Enable ANSI color
   --output            Output format
                       default: auto
-                      possible values: auto, term, text, term-debug, json, yaml, xml, csv
+                      possible values: auto, term, text, term-debug, json, yaml, csv
   --output-file-path  Write output to file instead of stdout
 ```
 
@@ -229,7 +229,7 @@ COMMANDS
 OPTIONS
   --output      Output format
                 default: auto
-                possible values: auto, term, text, term-debug, json, yaml, xml, csv
+                possible values: auto, term, text, term-debug, json, yaml, csv
   -h, --help    Print help
 ```
 
@@ -527,4 +527,4 @@ myapp --help --output text
 
 Without the flag, every form renders in the app's [output-mode fallback](./app-configuration.md#output-mode-fallback), which is `Auto` — styling for the terminal it finds — unless the app set another one.
 
-The structured modes (`json`, `yaml`, `xml`, `csv`) strip the tags exactly as `Text` does. None of them serializes `HelpData`, so help is themed prose in every mode, not a machine-readable document. If you need help as data, render it yourself: `HelpData` is what a [custom template](#custom-templates) receives, and a template that emits JSON is the seam for it.
+The structured modes (`json`, `yaml`, `csv`) strip the tags exactly as `Text` does. None of them serializes `HelpData`, so help is themed prose in every mode, not a machine-readable document. If you need help as data, render it yourself: `HelpData` is what a [custom template](#custom-templates) receives, and a template that emits JSON is the seam for it.

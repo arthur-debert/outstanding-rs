@@ -147,7 +147,7 @@ fn option_rows_carry_defaults_and_possible_values() {
 
     assert!(output.contains("default: auto"), "{output}");
     assert!(
-        output.contains("possible values: auto, term, text, term-debug, json, yaml, xml, csv"),
+        output.contains("possible values: auto, term, text, term-debug, json, yaml, csv"),
         "{output}"
     );
 }

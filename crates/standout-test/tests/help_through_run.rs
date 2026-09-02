@@ -126,7 +126,7 @@ fn the_help_word_honours_the_output_flag_through_run() {
     tagged.assert_success();
     tagged.assert_stdout_contains("[header]USAGE[/header]");
     drop(tagged);
-    for mode in ["json", "yaml", "csv", "xml"] {
+    for mode in ["json", "yaml", "csv"] {
         let result = TestHarness::new().run(
             fixture.app(),
             fixture.command(),

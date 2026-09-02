@@ -616,7 +616,7 @@ THEME: Rendering
 
 	render_auto(template, data, theme, mode) -> Result<String>
 	  - Smart dispatch: structured modes skip templating entirely.
-	  - JSON/YAML/XML/CSV: serializes data directly, template ignored.
+	  - JSON/YAML/CSV: serializes data directly, template ignored.
 	  - Term/Text/Auto: normal two-pass rendering.
 	  - Use as the default for CLI commands with --output support.
 
@@ -806,14 +806,14 @@ THEME: Rendering
 
 32. How do structured output modes work?
 
-	Structured modes (Json, Yaml, Xml, Csv) bypass template rendering entirely.
+	Structured modes (Json, Yaml, Csv) bypass template rendering entirely.
 	The handler's data is serialized directly.
 
 	render_auto() implements this dispatch:
 		OutputMode::Json  -> serde_json::to_string_pretty(data)
 		OutputMode::Yaml  -> serde_yaml::to_string(data)
-		OutputMode::Xml   -> quick_xml::se::to_string(data)
-		OutputMode::Csv   -> flatten and format as CSV
+		OutputMode::Csv   -> one row per flat record; a nested value is a
+		                     render error naming CsvProjection
 	:: text ::
 
 	This means:
@@ -1109,7 +1109,6 @@ THEME: Output Modes
 		    TermDebug,  // Keep style tags as [name]...[/name]
 		    Json,       // Serialize as JSON (skip template)
 		    Yaml,       // Serialize as YAML (skip template)
-		    Xml,        // Serialize as XML (skip template)
 		    Csv,        // Serialize as CSV (skip template)
 		}
 	:: rust ::
@@ -1117,7 +1116,7 @@ THEME: Output Modes
 	Three categories:
 	  - Templated: Auto, Term, Text (render template, vary ANSI handling)
 	  - Debug: TermDebug (template rendered, tags kept as literals)
-	  - Structured: Json, Yaml, Xml, Csv (skip template, serialize directly)
+	  - Structured: Json, Yaml, Csv (skip template, serialize directly)
 
 
 46. How does Auto mode resolve?
@@ -1142,7 +1141,6 @@ THEME: Output Modes
 		--output=term-debug  -> OutputMode::TermDebug
 		--output=json        -> OutputMode::Json
 		--output=yaml        -> OutputMode::Yaml
-		--output=xml         -> OutputMode::Xml
 		--output=csv         -> OutputMode::Csv
 	:: text ::
 
@@ -1220,7 +1218,7 @@ THEME: Output Modes
 	:: text ::
 
 	is_structured() - Returns true if template should be skipped:
-		Json, Yaml, Xml, Csv -> true
+		Json, Yaml, Csv -> true
 		All others -> false
 	:: text ::
 

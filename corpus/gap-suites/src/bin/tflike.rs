@@ -2,15 +2,17 @@
 //! binary `tests/tflike_diagnostic.rs` and `tests/tflike_progress.rs` run
 //! against. It carries exactly the capability the framework has, so the
 //! assertions still wrapped in `expect_gap` keep failing against it: the plan
-//! and its diagnostics ride the `ndjson` stream; `-detailed-exitcode` is
-//! accepted but declares no exit status, there being no way for a handler to
-//! declare one; `apply` emits no lifecycle events and reports each completed
-//! step as stderr prose in every mode, there being no progress seam. The
-//! README beside this package maps each of those to the work that closes it.
+//! and its diagnostics ride the `ndjson` stream and `-detailed-exitcode`
+//! declares exit 2 on a changed plan through `Output::with_exit_status`;
+//! `apply` emits no lifecycle events and reports each completed step as
+//! stderr prose in every mode, there being no progress seam. The README
+//! beside this package maps that to the work that closes it.
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use serde::Serialize;
-use standout::cli::{App, CommandContext, Diagnostic, FnHandler, HandlerResult, Output};
+use standout::cli::{
+    App, CommandContext, Diagnostic, ExitStatus, FnHandler, HandlerResult, Output,
+};
 use standout::EmbeddedTemplates;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -184,10 +186,16 @@ fn plan(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Plan> {
         add: plan.add,
         remove: plan.remove,
     })?;
-    Ok(if stream.is_live() {
+    let changed = matches.get_flag("detailed-exitcode") && !plan.changes.is_empty();
+    let output = if stream.is_live() {
         Output::Silent
     } else {
         Output::Render(plan)
+    };
+    Ok(if changed {
+        output.with_exit_status(ExitStatus::from(2))
+    } else {
+        output
     })
 }
 

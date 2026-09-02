@@ -48,7 +48,7 @@ things that come from having one:
   resolve, by design, not by omission.
 - No render pass, so no theme, no style tags, no `Tabular` columns.
 - No structured output modes. `Output::Render` is what `--output json` (and
-  `yaml`/`xml`/`csv`) serializes; a passthrough handler never produces an
+  `yaml`/`csv`) serializes; a passthrough handler never produces an
   `Output` value, so those modes have nothing to act on.
 - No post-dispatch hooks. The passthrough dispatch closure is handed the
   command's `Hooks` and ignores them, so nothing runs between the handler

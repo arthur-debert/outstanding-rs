@@ -212,7 +212,6 @@ mod tests {
             OutputMode::Json,
             OutputMode::Yaml,
             OutputMode::Csv,
-            OutputMode::Xml,
             OutputMode::Ndjson,
         ] {
             let output = render_help(
@@ -270,7 +269,6 @@ mod tests {
         assert_eq!(human_help_format(OutputMode::Json), OutputMode::Auto);
         assert_eq!(human_help_format(OutputMode::Yaml), OutputMode::Auto);
         assert_eq!(human_help_format(OutputMode::Csv), OutputMode::Auto);
-        assert_eq!(human_help_format(OutputMode::Xml), OutputMode::Auto);
         assert_eq!(human_help_format(OutputMode::Ndjson), OutputMode::Auto);
         assert_eq!(human_help_format(OutputMode::Term), OutputMode::Term);
         assert_eq!(human_help_format(OutputMode::Text), OutputMode::Text);

@@ -11,8 +11,7 @@ Output Modes:
   - TermDebug: Debug mode with visible style tags [name]text[/name]
   - Json: Structured JSON output (skips templating)
   - Yaml: Structured YAML output
-  - Xml: Structured XML output
-  - Csv: Flat CSV output
+  - Csv: Flat CSV output (flat records only; nested data needs a CsvProjection)
 
 Color Mode:
   - Light/Dark mode adaptation
@@ -52,7 +51,7 @@ Templates:
   - Double-pass render (template then style)
   - Auto detection and handling of plain text degradation
   - Debug mode for verbatim styling
-  - Structured output (json, csv, yaml, xml)
+  - Structured output (json, csv, yaml)
 
 MiniJinja Engine:
   - {{ variable }} syntax

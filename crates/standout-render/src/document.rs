@@ -4,9 +4,11 @@ use serde::Serialize;
 use crate::error::RenderError;
 use crate::output::OutputMode;
 
-/// One value as the whole document of a structured mode, newline-terminated:
-/// pretty JSON, YAML, one compact JSON line for `ndjson`, or — for a flat
-/// record — one CSV row under its header.
+/// One value as the whole document of a structured mode: pretty JSON, YAML,
+/// one compact JSON line for `ndjson`, or CSV under the flat-record rule of
+/// [`crate::csv_records`] (one row for a record, one per element for an array
+/// of records). Every line ends in a newline, so the CSV of an empty array is
+/// the empty string.
 pub fn serialize_document<T: Serialize>(
     data: &T,
     output_mode: OutputMode,
@@ -24,11 +26,7 @@ pub fn serialize_document<T: Serialize>(
             }
             Ok(yaml)
         }
-        OutputMode::Csv => {
-            let mut writer = csv::Writer::from_writer(Vec::new());
-            writer.serialize(data)?;
-            Ok(String::from_utf8(writer.into_inner()?)?)
-        }
+        OutputMode::Csv => crate::util::write_csv(&serde_json::to_value(data)?),
         OutputMode::Ndjson => {
             let mut line = serde_json::to_string(data)?;
             line.push('\n');

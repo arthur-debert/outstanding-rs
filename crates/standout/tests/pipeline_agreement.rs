@@ -49,16 +49,7 @@ fn greet_command_with_output() -> Command {
             .long("output")
             .value_name("MODE")
             .global(true)
-            .value_parser([
-                "auto",
-                "term",
-                "text",
-                "term-debug",
-                "json",
-                "yaml",
-                "xml",
-                "csv",
-            ])
+            .value_parser(["auto", "term", "text", "term-debug", "json", "yaml", "csv"])
             .default_value("auto"),
     )
 }
@@ -331,7 +322,7 @@ fn help_path_agrees_byte_for_byte_and_stays_human_under_structured_output() {
         "app help-path must render human help:\n{auto}"
     );
 
-    for mode in ["json", "yaml", "csv", "xml"] {
+    for mode in ["json", "yaml", "csv"] {
         let structured = help_page(
             &app,
             help_command(),
@@ -361,12 +352,7 @@ fn help_path_agrees_byte_for_byte_and_stays_human_under_structured_output() {
     );
 
     let mut standalone_pages = Vec::new();
-    for mode in [
-        OutputMode::Json,
-        OutputMode::Yaml,
-        OutputMode::Csv,
-        OutputMode::Xml,
-    ] {
+    for mode in [OutputMode::Json, OutputMode::Yaml, OutputMode::Csv] {
         let structured = render_help(
             &help_command(),
             Some(HelpConfig {

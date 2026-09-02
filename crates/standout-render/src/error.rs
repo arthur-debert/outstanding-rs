@@ -52,12 +52,6 @@ impl From<serde_yaml::Error> for RenderError {
     }
 }
 
-impl From<quick_xml::DeError> for RenderError {
-    fn from(err: quick_xml::DeError) -> Self {
-        RenderError::SerializationError(err.to_string())
-    }
-}
-
 impl From<csv::Error> for RenderError {
     fn from(err: csv::Error) -> Self {
         RenderError::SerializationError(err.to_string())
@@ -219,13 +213,6 @@ mod tests {
     #[test]
     fn test_from_serde_yaml_error() {
         let parse_err = serde_yaml::from_str::<serde_yaml::Value>("a:\n\tb: 1").unwrap_err();
-        let render_err: RenderError = parse_err.into();
-        assert!(matches!(render_err, RenderError::SerializationError(_)));
-    }
-
-    #[test]
-    fn test_from_quick_xml_de_error() {
-        let parse_err = quick_xml::de::from_str::<serde_json::Value>("<unclosed").unwrap_err();
         let render_err: RenderError = parse_err.into();
         assert!(matches!(render_err, RenderError::SerializationError(_)));
     }

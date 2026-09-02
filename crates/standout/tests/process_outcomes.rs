@@ -145,6 +145,19 @@ fn real_process_status_and_stream_matrix() {
     assert!(handler.stdout.is_empty());
     assert!(String::from_utf8_lossy(&handler.stderr).contains("fixture handler failed"));
 
+    let signal = run(&binary, &["signal"]);
+    assert_eq!(signal.status.code(), Some(2));
+    assert_eq!(signal.stdout, b"changes\n");
+    assert!(signal.stderr.is_empty());
+
+    let signal_json = run(&binary, &["signal", "--output", "json"]);
+    assert_eq!(signal_json.status.code(), Some(2));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&signal_json.stdout).unwrap(),
+        serde_json::json!({ "message": "changes" })
+    );
+    assert!(signal_json.stderr.is_empty());
+
     let external = run(&binary, &["external"]);
     assert_eq!(external.status.code(), Some(128));
     assert!(external.stdout.is_empty());

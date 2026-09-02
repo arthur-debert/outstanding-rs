@@ -31,7 +31,7 @@ Common copied examples can target older APIs. Confirm these current contracts:
 - `#[handler]` preserves the typed function and generates `name__handler`; wire the wrapper and unit-test the original.
 - `#[derive(Dispatch)]` maps to `handlers::name`; add `#[dispatch(pure)]` for a `#[handler]`-generated wrapper.
 - `TestHarness` mutations are process-global; every harness test is serial.
-- Structured output bypasses templates, so template fixes cannot change JSON/YAML/XML/CSV.
+- Structured output bypasses templates, so template fixes cannot change JSON/YAML/CSV.
 - Domain serialization and CLI structured output are separate interfaces. Map
   domain values into CLI-owned view DTOs rather than serializing persistence
   types directly.

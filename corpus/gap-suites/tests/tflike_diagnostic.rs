@@ -3,18 +3,13 @@
 //! turns green; the progress milestone in `tflike_progress.rs` belongs to PAR03, not
 //! here. Behavior under test: `corpus/archetypes/tflike/spec.md`. Every assertion is
 //! black-box against the binary named by `CORPUS_TFLIKE_BIN`, which `.cargo/config.toml`
-//! points at the in-repo fixture (`src/bin/tflike.rs`). The stream and diagnostic
-//! assertions are plain requirements, as are the `-detailed-exitcode` cases whose
-//! status the framework already has (0 for an empty plan, 1 on error); the changed
-//! plan's exit 2 still runs with expected-fail semantics
-//! (`corpus_gap_suites::expect_gap`) until WS04 lands `Output::with_exit_status`.
+//! points at the in-repo fixture (`src/bin/tflike.rs`). Every assertion is a plain
+//! requirement: the gate is closed in `gaps.toml`.
 
 use std::path::Path;
 
-use corpus_gap_suites::{expect_gap, parse_ndjson, required_binary, run, Output};
+use corpus_gap_suites::{parse_ndjson, required_binary, run, Output};
 
-/// Milestone group and owning epic, printed with every outcome.
-const GATE: &str = "tflike/diagnostic -> PAR02 (machine contract)";
 /// Env var locating the produced archetype binary.
 const BIN: &str = "CORPUS_TFLIKE_BIN";
 
@@ -196,21 +191,20 @@ fn detailed_exitcode_returns_zero_with_no_changes() {
 }
 
 #[test]
-fn expected_fail_detailed_exitcode_returns_two_with_changes() {
-    expect_gap(
-        GATE,
-        BIN,
-        "no empty/changed/failed exit-code vocabulary",
-        |binary| {
-            let out = plan_in_tempdir(binary, CONFIG_TWO_CHANGES, None, &["-detailed-exitcode"])?;
-            if out.code != Some(2) {
-                return Err(format!(
-                    "a changed plan should exit 2, exited {:?}",
-                    out.code
-                ));
-            }
-            Ok(())
-        },
+fn detailed_exitcode_returns_two_with_changes() {
+    let binary = required_binary(BIN);
+    let out = plan_in_tempdir(&binary, CONFIG_TWO_CHANGES, None, &["-detailed-exitcode"]).unwrap();
+    assert_eq!(
+        out.code,
+        Some(2),
+        "a changed plan should exit 2; stderr: {}",
+        out.stderr
+    );
+    let entries = parse_ndjson(&out.stdout).unwrap();
+    assert!(
+        entries.iter().any(|e| e["type"] == "change_summary"),
+        "the plan must still ride the stream: {}",
+        out.stdout
     );
 }
 

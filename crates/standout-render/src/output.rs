@@ -1,5 +1,5 @@
 //! [`OutputMode`] controls how rendering behaves, from terminal colors to
-//! structured serialization (JSON/YAML/XML/CSV/NDJSON, which skip template
+//! structured serialization (JSON/YAML/CSV/NDJSON, which skip template
 //! rendering entirely). `Ndjson` is the one stream mode: stdout is a sequence
 //! of one-line JSON entries rather than a single document. `Auto` is resolved
 //! from the request ([`crate::ColorPolicy::Auto`] plus stdout capability on
@@ -70,7 +70,6 @@ pub enum OutputMode {
     TermDebug,
     Json,
     Yaml,
-    Xml,
     Csv,
     Ndjson,
 }
@@ -87,11 +86,7 @@ impl OutputMode {
     pub fn is_structured(&self) -> bool {
         matches!(
             self,
-            OutputMode::Json
-                | OutputMode::Yaml
-                | OutputMode::Xml
-                | OutputMode::Csv
-                | OutputMode::Ndjson
+            OutputMode::Json | OutputMode::Yaml | OutputMode::Csv | OutputMode::Ndjson
         )
     }
 
@@ -158,7 +153,6 @@ mod tests {
             OutputMode::TermDebug,
             OutputMode::Json,
             OutputMode::Yaml,
-            OutputMode::Xml,
             OutputMode::Csv,
         ] {
             assert!(!mode.is_stream(), "{mode:?}");
