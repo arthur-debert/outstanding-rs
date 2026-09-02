@@ -184,20 +184,17 @@ fn sweep_plan(
     let mut cells = Vec::new();
     for command in &invariants.commands {
         // `either` (#467) is resolved once, from the command's first cell
-        // whose runs actually executed, and held for the rest of that
-        // command's plan. A cell that never ran (spawn error, timeout) says
-        // nothing about the binary's behavior, so it locks in no contract;
-        // if every cell fails to run, no contract is ever locked and each
-        // cell's checks fail on their own errors instead.
+        // that actually settles it, and held for the rest of that command's
+        // plan. A cell that gives no real evidence either way — some or all
+        // of its modes never ran (spawn error, timeout) — locks in no
+        // contract; if no cell ever settles it, no contract is ever locked
+        // and each cell's checks fail on their own errors instead.
         let mut resolved_either: Option<InvariantContract> = None;
         for color in &invariants.colors {
             for theme in &invariants.themes {
                 let runs = mode_runs(command, *color, theme);
-                if command.contract == InvariantContract::Either
-                    && resolved_either.is_none()
-                    && runs.values().any(|run| run.is_ok())
-                {
-                    resolved_either = Some(resolve_either_contract(&runs));
+                if command.contract == InvariantContract::Either && resolved_either.is_none() {
+                    resolved_either = resolve_either_contract(&runs);
                 }
                 let contract = match command.contract {
                     InvariantContract::Either => {
@@ -224,28 +221,36 @@ fn sweep_plan(
     cells
 }
 
-// Whichever of `rendered` or `opaque-bytes` the binary's first evaluated cell
-// satisfies: JSON-mode output that parses as JSON is rendered; failing that,
-// a non-text mode whose bytes match the text baseline is opaque. Neither
-// signal is available (e.g. the command errored everywhere), defaults to
-// `rendered` so the ambiguity surfaces as ordinary check failures rather
-// than vanishing as not-applicable.
-fn resolve_either_contract(runs: &ModeRuns) -> InvariantContract {
+// Whichever of `rendered` or `opaque-bytes` a cell's runs positively
+// establish: JSON-mode output that parses as JSON is rendered; failing
+// that, a non-text mode whose bytes match the text baseline is opaque.
+// Either signal, once found, settles it regardless of what else in the cell
+// failed to run. Absent a positive signal, the cell only defaults to
+// `rendered` (surfacing the ambiguity as ordinary check failures rather
+// than vanishing as not-applicable) when every planned mode actually ran —
+// a cell missing some of its modes (spawn error, timeout) gives no real
+// evidence either way, so it settles nothing and `None` lets a later cell
+// decide.
+fn resolve_either_contract(runs: &ModeRuns) -> Option<InvariantContract> {
     if let Some(Ok((_, page))) = runs.get(InvariantMode::Json.as_str()) {
         if serde_json::from_str::<serde_json::Value>(page).is_ok() {
-            return InvariantContract::Rendered;
+            return Some(InvariantContract::Rendered);
         }
     }
     if let Some(Ok((_, text))) = runs.get(InvariantMode::Text.as_str()) {
         for mode in [InvariantMode::Term, InvariantMode::Json] {
             if let Some(Ok((_, page))) = runs.get(mode.as_str()) {
                 if page == text {
-                    return InvariantContract::OpaqueBytes;
+                    return Some(InvariantContract::OpaqueBytes);
                 }
             }
         }
     }
-    InvariantContract::Rendered
+    if runs.values().all(|run| run.is_ok()) {
+        Some(InvariantContract::Rendered)
+    } else {
+        None
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

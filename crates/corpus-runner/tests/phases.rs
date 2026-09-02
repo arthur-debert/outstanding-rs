@@ -494,6 +494,24 @@ if [ -n "$NO_COLOR" ]; then sleep 30; fi
 echo 'kind: Pod  name: web-0'
 "#;
 
+// Artifact-like, but under `NO_COLOR` (the matrix's first color) only its
+// `text`-mode run completes; `term` and `json` hang. That first cell's lone
+// successful run (text) supplies no positive signal either way (no JSON to
+// parse, nothing to compare it against), so it must not settle `either` on
+// its own; the second color's cell runs every mode and reveals the
+// artifact-like, opaque-bytes shape.
+const ARTIFACT_LIKE_ONLY_TEXT_MODE_RUNS_WHEN_COLOR_OFF: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]'; exit 0; fi
+mode=text
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--output" ]; then mode="$a"; fi
+  prev="$a"
+done
+if [ -n "$NO_COLOR" ] && [ "$mode" != "text" ]; then sleep 30; fi
+echo 'kind: Pod  name: web-0'
+"#;
+
 #[test]
 fn invariant_matrix_passes_a_well_behaved_binary() {
     let dir = tempfile::tempdir().unwrap();
@@ -954,6 +972,43 @@ fn applicability_reason_names_the_contract_mismatch_not_mode_variance() {
 fn either_contract_skips_a_first_cell_that_never_ran() {
     let dir = tempfile::tempdir().unwrap();
     let binary = script(dir.path(), "fake", ARTIFACT_LIKE_TIMES_OUT_WHEN_COLOR_OFF);
+    let invariants = Invariants {
+        commands: vec![either(&["get", "pods"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        Duration::from_millis(200),
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    let on_cells: Vec<_> = cells.iter().filter(|c| c.color == "on").collect();
+    assert!(!on_cells.is_empty());
+    assert!(on_cells.iter().all(|c| c.status != InvariantStatus::Fail));
+    assert!(on_cells
+        .iter()
+        .filter(|c| c.check == "stdout parses as JSON")
+        .all(|c| c.status == InvariantStatus::NotApplicable));
+}
+
+// #467: a cell whose lone successful run supplies no positive rendered or
+// opaque-bytes evidence must not settle `either` either — only a cell that
+// actually establishes one of the two may lock it in. The first color's
+// cell here runs only `text` (no JSON to parse, nothing to compare it
+// against); the second color's cell runs every mode and reveals the
+// artifact-like, opaque-bytes shape. A resolver that locked in from any
+// single successful run would default to `rendered` from the first cell
+// and fail "stdout parses as JSON" on the `on` cells instead.
+#[test]
+fn either_contract_waits_for_a_cell_that_actually_settles_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(
+        dir.path(),
+        "fake",
+        ARTIFACT_LIKE_ONLY_TEXT_MODE_RUNS_WHEN_COLOR_OFF,
+    );
     let invariants = Invariants {
         commands: vec![either(&["get", "pods"])],
         ..Invariants::default()
