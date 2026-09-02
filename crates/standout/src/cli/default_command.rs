@@ -12,8 +12,8 @@
 //!
 //! Whether a command was named is decided by clap's own
 //! [`ArgMatches::subcommand`], not a manual scan — so `--`, `--flag=value`,
-//! short clusters, aliases, and global args behave exactly as elsewhere. See
-//! ADR-0018.
+//! short clusters, aliases, and global args behave exactly as elsewhere
+//! (`docs/adr/0018-let-the-parser-classify-the-command-line.md`).
 //!
 //! A resolver naming a command the CLI doesn't have is an application bug,
 //! reported as [`UnknownDefaultCommand`] rather than a panic.

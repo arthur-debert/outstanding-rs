@@ -18,18 +18,16 @@ Error: hook error (pre-dispatch): input `body`: Validation failed: body must not
 
 A hook's own `Display` names its phase, which is why a hook line carries
 `hook error ({phase}):` inside the framing. The wording of these diagnostics is
-internal and may change in any release (ADR-0033); an application that must pin
-its stderr bytes writes them itself through `AppFailure`, below.
+internal, not contract ([What Is Contract](./stability.md#3-exit-statuses)); an
+application that must pin its stderr bytes writes them itself through
+`AppFailure`, below.
 
 ## The diagnostic document
 
 Under `--output json`, `yaml`, `csv` or `ndjson` the framing above does not
-apply: the failure is the stdout document, and stderr carries nothing the
-framework wrote for it; an `AppFailure` or `ExternalFailure` still writes its
-own bytes there, as its section below says.
-Under `ndjson` the document is one line in the stream, written where the run
-failed, after the entries the handler emitted before it. The document
-is `Diagnostic` (`standout::cli::Diagnostic`): `type`, `schema_version`,
+apply: the failure is the stdout document, placed per mode as
+[Execution Outcomes](./execution-outcomes.md#failures-under-a-structured-mode)
+states. The document is `Diagnostic` (`standout::cli::Diagnostic`): `type`, `schema_version`,
 `severity`, `kind`, `summary`, `detail`, and an optional `range`. An ordinary
 error becomes `summary` from its `Display` with an empty `detail`; a handler
 that has more to say returns a `Diagnostic` as its error:
@@ -91,11 +89,6 @@ fn handler(_matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<View> 
 A pre-dispatch guard reaches the same seam through
 `HookError::pre_dispatch_app`. Capture callers see `RunErrorKind::App`.
 
-`AppFailure` carries a status and bytes, and nothing else. Under a structured
-mode the bytes still reach stderr verbatim, and stdout carries a diagnostic of
-kind `app` whose `detail` is the bytes and whose `summary` is their first line
-(ADR-0037).
-
 ## Preserving an authoritative external failure
 
 Use `ExternalFailure` when *another* operation owns the status and diagnostic
@@ -130,8 +123,8 @@ Hooks::new().pre_dispatch(|_matches, _ctx| {
 })
 ```
 
-Under a structured mode an `ExternalFailure` behaves as `AppFailure` does: the
-bytes reach stderr verbatim and stdout carries a diagnostic of kind `external`.
+What either failure writes to each stream under a structured mode is in
+[Execution Outcomes](./execution-outcomes.md#failures-under-a-structured-mode).
 
 Neither escape hatch is an error-mapping registry. Wrapping an ordinary error
 does not change its status, and neither declaration is recognized from

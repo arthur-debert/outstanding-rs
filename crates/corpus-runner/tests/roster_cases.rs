@@ -307,7 +307,6 @@ esac"#,
     assert_eq!(results[2].outcome, CaseOutcome::Fail);
 }
 
-// Rows carry name, constellation, and magnitude together, in text and JSON.
 const ROWS: &str = r#"
 mode=text
 prev=""
@@ -424,8 +423,7 @@ timeout_seconds = 5
 exit_code = 0
 stdout = "canary=unset\nterm=unset\ncase=present\nlang=C.UTF-8\n"
 "#,
-        // `sh` invents TERM for itself when it is unset, so the child's real
-        // environment is probed with printenv rather than shell expansion.
+        // `sh` invents TERM when it is unset, so printenv rather than shell expansion.
         r#"printf 'canary=%s\nterm=%s\ncase=%s\nlang=%s\n' "$(printenv CORPUS_CASE_CANARY || echo unset)" "$(printenv TERM || echo unset)" "$CASE_VAR" "$LANG""#,
     );
     assert_eq!(result.outcome, CaseOutcome::Pass, "{:?}", result.detail);
@@ -450,7 +448,6 @@ timeout_seconds = 5
 exit_code = 0
 stdout = "found\nroot\n"
 "#,
-        // cwd is project/sub; HOME is the sandbox root holding .config.toml.
         r#"cat marker.txt; cat "$HOME/.config.toml""#,
     );
     assert_eq!(result.outcome, CaseOutcome::Pass, "{:?}", result.detail);

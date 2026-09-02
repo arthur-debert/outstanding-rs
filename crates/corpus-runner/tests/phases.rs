@@ -15,8 +15,7 @@ use corpus_runner::{acceptance, questionnaire, session, workspace};
 
 const NO_TIMEOUT: Duration = Duration::from_secs(60);
 
-// Every directory under `corpus/` holding committed run reports. One owner, so
-// a new evidence home is registered for both sweeps below at once.
+// Every directory under `corpus/` holding committed run reports.
 const COMMITTED_RUN_DIRS: &[&str] = &["pilot/runs", "rerun/runs", "completion/runs", "demo"];
 
 fn corpus_dir() -> PathBuf {
@@ -108,7 +107,6 @@ fn filled_sheet_collects_with_answers_and_blindness_record() {
         report.answers.get("confidence").map(String::as_str),
         Some("high")
     );
-    // Blank optional fields are omissions, not entries.
     assert!(!report.answers.contains_key("friction"));
 }
 
@@ -330,8 +328,7 @@ fn failing_agent_is_recorded_not_fatal() {
     assert_eq!(report.exit_code, Some(3));
 }
 
-// A fake produced binary honoring `--output text|term|json`, with identical
-// term/text content (term adds only ANSI bold).
+// Honors `--output text|term|json`; term adds only ANSI bold.
 const WELL_BEHAVED: &str = r#"
 mode=text
 prev=""
@@ -641,10 +638,7 @@ fn committed_historical_reports_still_deserialize() {
         );
         versions.insert(report.schema_version);
     }
-    // Every schema the corpus has evidence in is evidence the historical
-    // path still reads. The pilot runs are version 2 and the validity run is
-    // version 3, so a bump that quietly dropped either would pass a test
-    // that only checked whatever happens to be committed.
+    // The pilot runs are schema 2 and the validity run schema 3; both are still read.
     for older in [2, 3] {
         assert!(
             versions.contains(&older),
@@ -654,10 +648,6 @@ fn committed_historical_reports_still_deserialize() {
     }
 }
 
-/// A provenance block states what it knows. Every field a block omits reads
-/// as unstated rather than refusing the report it belongs to, so one field
-/// missing from otherwise readable evidence costs the run's other facts
-/// nothing.
 #[test]
 fn a_provenance_block_reads_back_without_the_fields_it_does_not_state() {
     use corpus_runner::report::AgentProvenance;
@@ -671,8 +661,6 @@ fn a_provenance_block_reads_back_without_the_fields_it_does_not_state() {
     assert_eq!(backend_only.prompt, None);
 }
 
-/// A schema-4 report states the agent side; the same typed historical path
-/// reads it back, and an older report simply has none to read.
 #[test]
 fn the_historical_path_reads_a_recorded_agent_provenance() {
     use corpus_runner::report::HistoricalRun;

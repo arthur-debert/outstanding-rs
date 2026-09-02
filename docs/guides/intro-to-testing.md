@@ -312,7 +312,7 @@ assert!(result.stdout().contains('\x1b'));    // really styled
 assert_eq!(result.stdout_plain(), expected);  // and strippable
 ```
 
-There is no TTY knob. The harness once offered `.is_tty()` / `.no_tty()`, driving a detector no production code ever read; both are gone, along with `standout_render::detect_is_tty`. Questions that genuinely depend on being (or not being) a terminal belong to a real process — see [`run_process`](#410-running-the-real-binary) — and a future terminal-citizenship seam will be stream-aware rather than a single stdout-wide global. The reasoning is recorded in `docs/adr/0022-delete-the-in-process-tty-seam.md`.
+There is no TTY knob. Questions that genuinely depend on being (or not being) a terminal belong to a real process — see [`run_process`](#410-running-the-real-binary) and [ADR-0022](../adr/0022-delete-the-in-process-tty-seam.md).
 
 ### 4.7 Forcing an output mode
 
@@ -558,7 +558,7 @@ Be honest about the boundaries. There are things you shouldn't try to test in-pr
 
 **Signals.** SIGINT / SIGTERM handling only makes sense against a real process.
 
-**Subprocess fan-out from your app.** If your handler shells out to `git`, `rg`, `$EDITOR`, or any other external program, the harness can't intercept that call. *This is the focus of Phase 3 of the test-tooling work — a `ProcessRunner` abstraction that routes through `CommandContext`, with a mock variant for tests. It's not yet shipped; until it is, shell-outs remain a boundary.* In the meantime, structure handlers so the shell-out is a trait you can swap for a mock in the handler's tests directly.
+**Subprocess fan-out from your app.** If your handler shells out to `git`, `rg`, `$EDITOR`, or any other external program, the harness can't intercept that call. Structure handlers so the shell-out is a trait you can swap for a mock in the handler's tests directly.
 
 **Binary-level concerns.** Linkage, the real exit code, which stream a byte actually went to, behavior that keys off stdout not being a terminal — that's integration-of-the-build. [`run_process()`](#410-running-the-real-binary) covers it from the same builder; reach for `assert_cmd` only if you want its matcher vocabulary.
 
@@ -644,7 +644,7 @@ writers.
 
 ## Appendix: common pitfalls
 
-- **Tests leak state into each other.** Every in-process `run` test must be `#[serial]` while the harness still mutates env/cwd. `serial_test` only orders annotated tests against each other, so an unannotated `run` can race with one that mutates those globals. Detector reasons no longer apply. Parallel execution mixed with process-global mutations is unsupported.
+- **Tests leak state into each other.** Every in-process `run` test must be `#[serial]` while the harness still mutates env/cwd. `serial_test` only orders annotated tests against each other, so an unannotated `run` can race with one that mutates those globals. Parallel execution mixed with process-global mutations is unsupported.
 - **A `TestHarness::new()` without `.run(...)` does nothing.** The harness is `#[must_use]` — inert until you call `.run`.
 - **`output_mode(...)` injects `--output=<mode>` into argv.** If your app uses a different flag name (via `AppBuilder::output_flag(Some("format"))`), set `.output_flag_name("format")`.
 - **Unset destination facts are fixed defaults, not detected.** `$COLUMNS`, `$NERD_FONT`, and the OS appearance setting cannot change an in-process run. Inject `terminal_width` / `color_scheme` / `icon_mode` when a test needs non-default facts.

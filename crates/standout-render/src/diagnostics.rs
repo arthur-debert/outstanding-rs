@@ -138,10 +138,8 @@ pub fn resolve_tags_with(
     output
 }
 
-/// Prefix of the stderr warning [`resolve_tags_with`] pushes when a render
-/// degrades unresolved tags to unstyled text. Exposed so the strict-mode gate
-/// in the CLI layer can drop this warning once it escalates the same tags to a
-/// hard error, keeping the two layers from reporting the degradation twice.
+/// Prefix of the degraded-to-unstyled-text warning, so a strict-mode caller
+/// can drop it after escalating the same tags to an error.
 pub const UNRESOLVED_DEGRADATION_PREFIX: &str =
     "Unresolved style tag(s) degraded to unstyled text: ";
 
@@ -164,16 +162,8 @@ fn warn_unresolved_tags(
     }
 }
 
-/// Unresolved style-tag names left by the current window's *own* render passes,
-/// sorted and deduplicated. Restricted to `nesting_depth() == 0`: passes folded
-/// in from a nested run this window merely enclosed (a handler that drove
-/// another app through `run_to_string`, embedded or discarded) are that run's
-/// diagnostics, not this one's, so they are excluded. Reads the window in place
-/// without draining it, so the batch still publishes to [`take_captured`] when
-/// the window closes. Returns nothing when no window is open.
-///
-/// This is the strict-mode gate's post-render view: `strict_style_tags` fails a
-/// run whose own render left any tag unresolved by naming exactly these tags.
+/// Unresolved tag names from the current window's own (depth-zero) passes,
+/// sorted and deduplicated, read without draining; empty when no window is open.
 pub fn unresolved_in_current_window() -> Vec<String> {
     WINDOWS.with(|windows| {
         let windows = windows.borrow();
@@ -578,16 +568,11 @@ mod tests {
         render_unresolvable("beta");
 
         assert_eq!(unresolved_in_current_window(), ["alpha", "beta"]);
-        // Reading is non-destructive: the passes are still drainable.
         assert_eq!(drain().len(), 3);
     }
 
     #[test]
     fn the_current_window_reader_ignores_folded_nested_passes() {
-        // A nested run this window merely enclosed (embedded or discarded)
-        // folds in at depth >= 1. The reader names only this window's own
-        // depth-zero passes, so a strict outer run cannot fail on tags that a
-        // nested run left unresolved.
         let outer = reset();
 
         let discarded = begin_capture();

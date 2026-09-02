@@ -91,10 +91,7 @@ pub fn run_agent(
     })
 }
 
-/// Find the executable an agent command names, so the runner knows exactly
-/// which program it vouched for when it hands the broker a pid. A bare name
-/// is searched for on the runner's own PATH, the way the shell it replaces
-/// would have.
+// A bare name is searched on the runner's own PATH, as the shell it replaces would.
 fn resolve_program(program: &str) -> anyhow::Result<std::path::PathBuf> {
     let path = std::path::Path::new(program);
     if path.components().count() > 1 {
@@ -114,22 +111,14 @@ fn is_executable(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-// Whatever a shell would do with these, the runner cannot: it spawns one
-// program and hands that pid to the broker.
+// The runner spawns one program and hands that pid to the broker; it cannot do what a shell would.
 const SHELL_STRUCTURE: &[char] = &['|', '&', ';', '<', '>', '(', ')', '\n'];
 
-// A shell would expand these against the filesystem. Unquoted, they would
-// reach the agent as literals here and mean something different from the
-// same command run without a broker, so the difference is refused rather
-// than passed through. Quoted or escaped, they are ordinary characters to a
-// shell too, and survive the split untouched.
+// Unquoted, these would reach the agent as literals and mean something different
+// from the same command run through a shell, so they are refused rather than passed.
 const SHELL_GLOB: &[char] = &['*', '?', '[', ']'];
 
-/// Split an agent command into the program and arguments to spawn, honoring
-/// quotes and backslash escapes but performing no expansion. A command that
-/// would need a shell to mean what it says is refused rather than run
-/// unbrokered: the process the runner spawns has to be the process that
-/// connects to the broker.
+/// Honors quotes and backslash escapes, expands nothing, and refuses a command that needs a shell.
 pub fn direct_argv(agent_cmd: &str) -> anyhow::Result<Vec<String>> {
     let mut argv: Vec<String> = Vec::new();
     let mut word = String::new();
@@ -178,14 +167,9 @@ pub fn direct_argv(agent_cmd: &str) -> anyhow::Result<Vec<String>> {
                 loop {
                     match chars.next() {
                         Some('"') => break,
-                        // The set a shell unescapes inside double quotes. An
-                        // escaped `$` is a literal `$`, not a backslash and a
-                        // dollar, and refusing it as expansion would refuse
-                        // the one spelling that asks for no expansion.
+                        // The set a shell unescapes inside double quotes.
                         Some('\\') => match chars.next() {
                             Some(escaped @ ('"' | '\\' | '$' | '`')) => word.push(escaped),
-                            // A backslash-newline is a line continuation:
-                            // the shell removes both.
                             Some('\n') => {}
                             Some(other) => {
                                 word.push('\\');
@@ -329,28 +313,20 @@ mod tests {
         );
     }
 
-    /// The split has to produce the argv `sh -c` would have produced, or a
-    /// brokered run means something different from an unbrokered one.
     #[test]
     fn escapes_inside_double_quotes_unescape_the_way_a_shell_does() {
-        // An escaped `$` or backtick is the literal character, not a
-        // backslash and the character.
         assert_eq!(
             direct_argv(r#"claude -p "cost is \$5 or \`half\`""#).unwrap(),
             vec!["claude", "-p", "cost is $5 or `half`"]
         );
-        // The rest of the unescaped set, and a backslash before anything
-        // else, which a shell leaves as both characters.
         assert_eq!(
             direct_argv(r#"claude -p "say \"hi\" \\ then \n""#).unwrap(),
             vec!["claude", "-p", r#"say "hi" \ then \n"#]
         );
-        // A backslash-newline is a line continuation: both go.
         assert_eq!(
             direct_argv("claude -p \"one\\\ntwo\"").unwrap(),
             vec!["claude", "-p", "onetwo"]
         );
-        // Unescaped, those two still ask for expansion and are refused.
         assert!(direct_argv(r#"claude -p "cost is $5""#).is_err());
     }
 

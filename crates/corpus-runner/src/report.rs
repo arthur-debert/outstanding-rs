@@ -89,9 +89,7 @@ pub struct AgentProvenance {
     pub model_requested: Option<String>,
     pub model_observed: Option<String>,
     pub prompt: Option<String>,
-    // The five fields above are absent from a block that does not state
-    // them; this one would refuse the whole report instead, which is a
-    // stricter rule than the block it belongs to.
+    // Without the default, an absent list would refuse the whole report.
     #[serde(default)]
     pub settings: Vec<String>,
 }

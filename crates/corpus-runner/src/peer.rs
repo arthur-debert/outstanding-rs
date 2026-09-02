@@ -5,10 +5,9 @@
 //! answers both questions from the OS socket tables: procfs on Linux,
 //! libproc on macOS. Given a connection's two ports, [`ownership`] reports
 //! whether the named process holds that socket and whether its descriptor
-//! is close-on-exec. Both halves are load-bearing for ADR-0023's amendment:
-//! a descriptor that survives exec is an inheritable capability, and the
-//! broker refuses to serve a channel that corpus-authored code could
-//! inherit.
+//! is close-on-exec. A descriptor that survives exec is an inheritable
+//! capability, and the broker refuses to serve a channel that corpus-authored
+//! code could inherit.
 //!
 //! The macOS half decodes a kernel struct this crate declares itself, so
 //! [`self_check`] validates the decoding against the running kernel — the
@@ -18,8 +17,7 @@
 
 use std::net::{TcpListener, TcpStream};
 
-/// A loopback connection identified as its *client* sees it, which is how
-/// the client's own socket table records it.
+/// Identified as the *client* sees it, which is how its socket table records it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClientSocket {
     pub client_port: u16,
@@ -36,8 +34,7 @@ pub enum Ownership {
     Absent,
 }
 
-/// Prove the decoding works on this kernel: connect to a throwaway
-/// listener from this very process and require the tables to name us.
+/// Connects to a throwaway listener from this process and requires the tables to name it.
 pub fn self_check() -> Result<(), String> {
     let listener =
         TcpListener::bind("127.0.0.1:0").map_err(|e| format!("binding a probe listener: {e}"))?;
@@ -82,9 +79,8 @@ mod macos {
     const PROC_FP_CLEXEC: u32 = 2;
     const SOCKINFO_TCP: i32 = 2;
 
-    // sys/proc_info.h, decoded only as far as the TCP ports: everything up
-    // to `socket_info.soi_proto`, then that union's leading two ports,
-    // which `in_sockinfo` (and so `tcp_sockinfo`) starts with.
+    // sys/proc_info.h `socket_fdinfo`, decoded only as far as the two ports
+    // `in_sockinfo` starts with.
     #[repr(C)]
     #[derive(Clone, Copy)]
     struct ProcFileInfo {
@@ -156,8 +152,7 @@ mod macos {
             } else {
                 Ownership::HeldInheritable
             };
-            // An inheritable descriptor decides the answer even when the
-            // process holds a second, close-on-exec one.
+            // An inheritable descriptor decides the answer even beside a close-on-exec one.
             if found == Ownership::HeldInheritable {
                 break;
             }
@@ -287,8 +282,7 @@ mod linux {
         u16::from_str_radix(field.rsplit(':').next()?, 16).ok()
     }
 
-    /// Socket inodes the process holds, each mapped to whether its
-    /// descriptor is close-on-exec.
+    /// Socket inode to whether its descriptor is close-on-exec.
     fn held_descriptors(pid: u32) -> Result<HashMap<u64, bool>, String> {
         let mut held = HashMap::new();
         let dir = format!("/proc/{pid}/fd");
@@ -316,8 +310,7 @@ mod linux {
 
     fn close_on_exec(pid: u32, fd: &str) -> bool {
         let Ok(text) = std::fs::read_to_string(format!("/proc/{pid}/fdinfo/{fd}")) else {
-            // Unreadable descriptor flags are treated as inheritable: the
-            // broker's rule is that anything it cannot attribute is denied.
+            // Unreadable flags count as inheritable: what cannot be attributed is denied.
             return false;
         };
         for line in text.lines() {

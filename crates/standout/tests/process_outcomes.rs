@@ -381,8 +381,7 @@ struct EmittedRun {
     status: u8,
 }
 
-/// Runs the fixture through `run_emitted`; the fixture writes the outcome it
-/// was handed to a file after emission and exits with the reported status.
+/// The fixture writes the outcome it was handed to a file and exits with the reported status.
 fn run_emitted(
     binary: &PathBuf,
     args: &[&str],

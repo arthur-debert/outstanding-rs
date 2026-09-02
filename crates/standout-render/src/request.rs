@@ -30,9 +30,7 @@ use crate::AmbiguousWidth;
 
 pub type SharedTemplateEngine = Rc<RefCell<Box<dyn TemplateEngine>>>;
 
-// Color capability and terminal-ness are per stream because stdout and
-// stderr can differ (piped command, TTY warnings). This type is `Copy`;
-// construct it directly in tests, don't call `detect`.
+// Per stream: stdout and stderr can differ (piped command, TTY warnings).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TargetProperties {
     pub width: Option<usize>,

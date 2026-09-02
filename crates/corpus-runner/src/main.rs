@@ -45,10 +45,9 @@ enum Commands {
         /// Authenticate the agent session through the run-credential
         /// broker: the host Claude subscription credential stays on the
         /// host, and the session reaches the API only through a proxy that
-        /// answers the agent process alone (ADR-0023's amendment). The
-        /// agent command must then be spawnable without a shell. The
-        /// destination is not configurable — a host credential forwards to
-        /// the Anthropic API and nowhere else.
+        /// answers the agent process alone. The agent command must then be
+        /// spawnable without a shell. The destination is not configurable:
+        /// a host credential forwards to the Anthropic API and nowhere else.
         #[arg(long)]
         broker: bool,
         /// Exact crates.io framework version the blind scaffold pins.

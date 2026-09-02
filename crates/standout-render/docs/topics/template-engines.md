@@ -265,21 +265,3 @@ use standout_render::{
     render_auto_with_engine,  // Render with custom engine
 };
 ```
-
----
-
-## Migration Notes
-
-If you're upgrading from a version before pluggable engines:
-
-- **No changes required** - MiniJinja remains the default
-- **Error type changed** - `minijinja::Error` is now `RenderError`
-- **New capability** - You can now inject custom engines via `with_output_and_engine()`
-
-```rust
-// Before
-use minijinja::Error;
-
-// After
-use standout_render::RenderError;
-```

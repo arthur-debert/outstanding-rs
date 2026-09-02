@@ -1,10 +1,6 @@
 // The credential broker's boundary, exercised through the whole runner: the
-// agent session authenticates, and a build script it spawns cannot — not by
-// reading the credential (it is not in the process tree) and not by using
-// the channel (its own connection is attributed to itself, and no broker
-// descriptor survived the exec that started it).
-//
-// Runs in its own test binary because the hermetic build prepends to the
+// agent session authenticates and a build script it spawns cannot. Runs in
+// its own test binary because the hermetic build prepends to the
 // process-wide PATH.
 
 #![cfg(unix)]
@@ -34,8 +30,7 @@ fn a_build_script_spawned_by_the_agent_cannot_use_the_brokered_credential() {
 
     let bin_dir = scratch.path().join("bin");
     common::install_fake_cargo(&bin_dir, "smoke", SMOKE);
-    // The agent sandbox denies reads under the checkout, so the stand-in
-    // agent has to be staged outside it like any other fixture.
+    // The agent sandbox denies reads under the checkout.
     let agent = bin_dir.join("broker_probe");
     std::fs::copy(env!("CARGO_BIN_EXE_broker_probe"), &agent).unwrap();
 
@@ -61,8 +56,6 @@ fn a_build_script_spawned_by_the_agent_cannot_use_the_brokered_credential() {
     )
     .unwrap();
 
-    // The agent's own request went through, and it went through
-    // authenticated: the broker replaced the placeholder it was given.
     assert_eq!(probe["agent"]["status"], "HTTP/1.1 200 OK", "{probe:#}");
     let forwarded = upstream.seen();
     assert_eq!(forwarded.len(), 1, "{forwarded:#?}");
@@ -76,8 +69,6 @@ fn a_build_script_spawned_by_the_agent_cannot_use_the_brokered_credential() {
         "{forwarded:#?}"
     );
 
-    // The build script's own attempt was denied, and nothing of it reached
-    // the upstream.
     let build_script = &probe["build_script"];
     assert!(
         build_script["status"]
@@ -94,16 +85,13 @@ fn a_build_script_spawned_by_the_agent_cannot_use_the_brokered_credential() {
         "{probe:#}"
     );
 
-    // Nor could it reuse the agent's channel: the exec that started it left
-    // no broker descriptor behind.
+    // The exec that started it left no broker descriptor behind.
     assert_eq!(
         build_script["inherited_broker_sockets"],
         serde_json::json!([]),
         "{probe:#}"
     );
 
-    // The credential is not in the process tree at all — what the agent
-    // (and so every descendant) can read is the placeholder.
     let environment = std::fs::read_to_string(workspace.join("agent-environment.txt")).unwrap();
     assert!(!environment.contains(BROKERED_TOKEN), "{environment}");
     assert!(
@@ -111,8 +99,6 @@ fn a_build_script_spawned_by_the_agent_cannot_use_the_brokered_credential() {
         "{environment}"
     );
 
-    // And the run says what it admitted.
-    // Including which environment keys the brokered session actually carried.
     assert!(
         report
             .blindness
@@ -137,8 +123,6 @@ fn a_build_script_spawned_by_the_agent_cannot_use_the_brokered_credential() {
     );
 }
 
-/// The broker configuration every test here uses: a credential the test made
-/// up, which is the only kind allowed to name an upstream of its own.
 fn brokered(upstream: &Upstream, request_timeout: Duration) -> BrokerConfig {
     BrokerConfig::for_test_upstream(
         Credential::new(BROKERED_TOKEN.to_string(), "a test double".to_string()),
@@ -155,8 +139,7 @@ fn an_inheritable_descriptor_is_refused_even_from_the_authorized_process() {
     broker.authorize(std::process::id());
     let authority = broker.base_url().trim_start_matches("http://").to_string();
 
-    // Rust's own sockets are close-on-exec, which is the shape the broker
-    // requires.
+    // Rust's own sockets are close-on-exec.
     let served = ask(TcpStream::connect(&authority).unwrap());
     assert!(
         served.starts_with("HTTP/1.1 200 OK"),
@@ -164,8 +147,7 @@ fn an_inheritable_descriptor_is_refused_even_from_the_authorized_process() {
         broker.denials()
     );
 
-    // The same process, on a descriptor that would survive an exec: the
-    // broker refuses to put a credential behind an inheritable channel.
+    // The same process, on a descriptor that would survive an exec.
     let refused = ask(inheritable_connection(&authority));
     assert!(refused.starts_with("HTTP/1.1 403"), "{refused}");
     assert!(refused.contains("corpus_broker_denied"), "{refused}");
@@ -179,8 +161,7 @@ fn an_inheritable_descriptor_is_refused_even_from_the_authorized_process() {
 #[test]
 fn shutdown_ends_a_request_still_waiting_on_the_upstream() {
     let upstream = Upstream::hanging();
-    // A request timeout far longer than the test would tolerate: what bounds
-    // the shutdown has to be the shutdown, not the timeout expiring.
+    // A request timeout the test cannot outwait: only the shutdown may end the request.
     let mut broker = Broker::start(brokered(&upstream, Duration::from_secs(600))).unwrap();
     broker.authorize(std::process::id());
     let authority = broker.base_url().trim_start_matches("http://").to_string();
@@ -204,8 +185,6 @@ fn shutdown_ends_a_request_still_waiting_on_the_upstream() {
         response
     });
 
-    // The request is genuinely in flight: it was admitted, forwarded, and
-    // the upstream is sitting on it.
     upstream.await_request();
 
     let started = Instant::now();
@@ -216,16 +195,11 @@ fn shutdown_ends_a_request_still_waiting_on_the_upstream() {
         "shutdown waited {took:?} on the upstream instead of ending the request"
     );
 
-    // And the caller is not left holding an open connection either.
     let response = asking.join().unwrap();
     assert!(!response.contains("200 OK"), "{response}");
     assert_eq!(broker.admitted(), 1);
 }
 
-/// A real session sends bodies far larger than one segment, and the caller's
-/// second segment can arrive after the broker has already read the first. The
-/// broker waits for it: the alternative is a request refused for arriving in
-/// pieces, which is how a long agent session dies mid-run.
 #[test]
 fn a_body_that_arrives_in_two_segments_is_forwarded_whole() {
     let upstream = Upstream::start();
@@ -248,13 +222,8 @@ fn a_body_that_arrives_in_two_segments_is_forwarded_whole() {
         )
         .unwrap();
     caller.flush().unwrap();
-    // The tail waits on two observations rather than on a sleep, because a
-    // sleep only makes the ordering likely: miss it under load and both
-    // segments are readable at once, which is the one case a non-blocking
-    // accepted socket also survives.
-    //
-    // First the connection is admitted, which the broker does after
-    // authorizing the caller and before reading a request byte.
+    // Two observations rather than a sleep: under load both segments could become
+    // readable at once, the one case a non-blocking accepted socket also survives.
     let admitted = Instant::now();
     while broker.admitted() == 0 {
         assert!(
@@ -263,10 +232,7 @@ fn a_body_that_arrives_in_two_segments_is_forwarded_whole() {
         );
         std::thread::sleep(Duration::from_millis(5));
     }
-    // Then the broker says nothing while the body is short. A broker that
-    // cannot wait for the rest fails its read at once and answers 400, so an
-    // answer arriving here is the regression itself; silence is the broker
-    // sitting in the read this test is about.
+    // Silence while the body is short is the broker waiting; a 400 here is the regression.
     caller
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
@@ -287,12 +253,7 @@ fn a_body_that_arrives_in_two_segments_is_forwarded_whole() {
     assert_eq!(forwarded[0].body, format!("{head}{tail}"));
 }
 
-/// The broker appends the caller's target to its configured upstream, so a
-/// target that starts an authority rather than a path would carry the
-/// credential to whatever host it names: `@host/v1` demotes the configured
-/// upstream to a userinfo field. The listener standing in for that host is
-/// a real one here, so the assertion is that nothing arrived at it, not
-/// that the URL looked wrong.
+// The other host is a real listener: the assertion is that nothing arrived at it.
 #[test]
 fn a_target_that_names_another_host_reaches_neither_host() {
     let upstream = Upstream::start();
@@ -335,8 +296,7 @@ fn a_target_that_names_another_host_reaches_neither_host() {
     );
     assert_eq!(upstream.seen().len(), 0, "{arrived}");
 
-    // The same broker still serves the target it exists for, so the refusal
-    // is the shape of the target and not the connection.
+    // The refusal was the target's shape, not the connection.
     assert!(ask(TcpStream::connect(&authority).unwrap()).starts_with("HTTP/1.1 200 OK"));
     let forwarded = upstream.seen();
     assert_eq!(
@@ -388,8 +348,6 @@ fn inheritable_connection(authority: &str) -> TcpStream {
     }
 }
 
-/// A stand-in for the API: it answers everything and remembers what it was
-/// asked, so a test can see which requests actually left the host.
 struct Upstream {
     base_url: String,
     seen: Arc<Mutex<Vec<Seen>>>,
@@ -416,8 +374,6 @@ impl Upstream {
         Self::bind(true)
     }
 
-    /// The same double, except it never answers: what a request blocked on an
-    /// unresponsive API looks like from the broker's side.
     fn hanging() -> Self {
         Self::bind(false)
     }
@@ -457,8 +413,6 @@ impl Upstream {
         self.seen.lock().unwrap()
     }
 
-    /// Block until the upstream has read a whole request, so a test acts on
-    /// a request that is genuinely in flight rather than on a race.
     fn await_request(&self) {
         let deadline = Instant::now() + Duration::from_secs(30);
         while self.seen().is_empty() {

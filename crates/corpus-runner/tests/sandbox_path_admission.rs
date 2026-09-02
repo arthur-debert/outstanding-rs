@@ -1,7 +1,5 @@
-// Regression coverage for PATH-directory admission (`sandbox::system_read_roots`):
-// directories prepended to PATH become admitted read roots under the
-// enforced sandbox, on both backends. Runs alone in its own test binary
-// since prepending to PATH is process-wide state.
+// PATH-directory admission (`sandbox::system_read_roots`) on both backends.
+// Runs alone in its own test binary since prepending to PATH is process-wide.
 
 #![cfg(unix)]
 

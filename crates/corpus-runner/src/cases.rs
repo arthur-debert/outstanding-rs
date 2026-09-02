@@ -130,8 +130,7 @@ fn execute(
                 Stdio::piped()
             });
             master = Some(m);
-            // `slave` drops here: the child holds the only remaining slave
-            // fds, so the master read ends when the child exits.
+            // `slave` drops here, so the master read ends when the child exits.
         }
     } else {
         command
@@ -143,17 +142,13 @@ fn execute(
     let mut child = command
         .spawn()
         .map_err(|err| format!("spawning {}: {err}", binary.display()))?;
-    // A `Command` is re-spawnable and retains the slave `Stdio` handles it
-    // was given even after `spawn`; a retained slave fd would keep the
-    // master read from ever seeing EOF.
+    // `Command` retains the slave `Stdio` handles after `spawn`; kept, the master never sees EOF.
     drop(command);
 
     let stdout_capture = child.stdout.take().map(exec::capped_reader);
     let stderr_capture = child.stderr.take().map(exec::capped_reader);
 
-    // The master capture serves every pty-attached output stream; with both
-    // on the pty they interleave exactly as on a user's terminal, and the
-    // capture is attributed to stdout.
+    // Both streams on the pty interleave as on a terminal; the capture is attributed to stdout.
     let master_capture = match (&master, tty_stdout || tty_stderr) {
         (Some(m), true) => Some(exec::capped_reader(std::fs::File::from(
             m.try_clone()
@@ -218,8 +213,7 @@ fn execute(
     })
 }
 
-// Only objects are lenient: they may carry keys the expectation omits. Arrays
-// and scalars must match, so an open envelope cannot hide a wrong payload.
+// Only objects may carry keys the expectation omits; arrays and scalars must match.
 fn json_is_subset(got: &serde_json::Value, want: &serde_json::Value) -> bool {
     match (got, want) {
         (serde_json::Value::Object(got), serde_json::Value::Object(want)) => want

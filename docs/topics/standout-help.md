@@ -23,7 +23,7 @@ With help handling on, standout:
 2. **Keeps** clap's native `--help`/`-h` flag, on purpose: clap's flag short-circuits argument validation, so `myapp build --help` renders even when required arguments are missing
 3. Intercepts all help requests and renders them through a MiniJinja template with style tags — the `help` word, which clap routes like any other subcommand, and clap's `DisplayHelp` (from `--help`/`-h`, at root and subcommand level)
 
-Every form that is available renders the same help, through the same template and theme, and `--output` reaches every form alike: `myapp help --output text` and `myapp --help --output text` both render in text mode. The two are answered differently — the word is a subcommand, so clap parses its line in full, globals included, while `--help` short-circuits inside clap before the parse completes — so the flags take their mode from a scan of the raw argv for the output flag: the last occurrence wins, `--output text` and `--output=text` alike, and nothing after `--` counts. A value that is not a mode (`--output txt`) is a clap usage error, exit 2, wherever clap reaches it: after the word, or before `--help` on the line. After `--help` it is never reached, because clap stops at the flag, so `myapp --help --output txt` renders the page in the fallback mode.
+Every form that is available renders the same help, through the same template and theme, and `--output` reaches every form alike: `myapp help --output text` and `myapp --help --output text` both render in text mode. The two are answered differently — the word is a subcommand, so clap parses its line in full, globals included, while `--help` short-circuits inside clap before the parse completes — so the flags take their mode from the [argv scan](./execution-outcomes.md#failures-under-a-structured-mode) every pre-parse outcome uses. A value that is not a mode (`--output txt`) is a clap usage error, exit 2, wherever clap reaches it: after the word, or before `--help` on the line. After `--help` it is never reached, so `myapp --help --output txt` renders the page in the fallback mode.
 
 Subcommand-level help (e.g. `myapp build --help`) also works, rendering that subcommand's help through standout.
 
@@ -103,9 +103,9 @@ Unaffected: a `help` deeper in the tree (`myapp db help` is yours, at a path the
 
 ### Why the word is reachable at all
 
-On a flat CLI whose root arguments are required, an injected `help` subcommand used to be advertised in help output and impossible to run: clap validates the root's requirements before routing, so `myapp help` failed with "the following required arguments were not provided" instead of printing help.
+On a flat CLI whose root arguments are required, clap validates those requirements before routing, so an injected `help` subcommand alone would be advertised and impossible to run: `myapp help` would fail with "the following required arguments were not provided".
 
-The fix is a declaration, not a parser of standout's own. Where standout installs the word, it also sets clap's `subcommand_negates_reqs`, which suspends the root's requirements once a command is named — so `myapp help` routes to the word, while `myapp` on its own still reports its missing arguments and `myapp <RANGE>` still parses as data. The word's arguments (`myapp help topics`, `myapp help --page`, `myapp help --output text`) are clap's to parse, like any other subcommand's.
+The answer is a declaration, not a parser of standout's own. Where standout installs the word, it also sets clap's `subcommand_negates_reqs`, which suspends the root's requirements once a command is named — so `myapp help` routes to the word, while `myapp` on its own still reports its missing arguments and `myapp <RANGE>` still parses as data. The word's arguments (`myapp help topics`, `myapp help --page`, `myapp help --output text`) are clap's to parse, like any other subcommand's.
 
 The cost is worth naming: `subcommand_negates_reqs` applies to *your* subcommands too, so a root that declares required arguments stops requiring them once any command is named. That is why standout sets it only where it installs the word, and never on a CLI that did not get one. See [ADR-0018](../adr/0018-let-the-parser-classify-the-command-line.md).
 
@@ -461,7 +461,7 @@ Two properties of that filter are the point of doing it this way. It measures
 *display* width, so a CJK name counts the terminal columns it really occupies
 and the style tags around it count for nothing — byte length gets both wrong.
 And it never truncates: a name wider than the column keeps its full text and
-its separator, which is the failure the fixed-width column used to produce.
+its separator.
 
 The widths themselves are resolved from the data, as a `Width::Bounded` column
 that is at least 12 columns wide and otherwise as wide as the section's longest
@@ -514,7 +514,7 @@ Each argument and option entry has:
 {%- endfor %}
 ```
 
-Style tags like `[header]...[/header]` are resolved against the theme. A tag the resolved theme does not define degrades to unstyled text and raises a stderr warning; it is never shown with a `?` marker.
+Style tags like `[header]...[/header]` are resolved against the theme; a tag it does not define is handled as [Unknown Style Tags](../crates/render/topics/styling-system.md#unknown-style-tags) says.
 
 ## Output Modes
 

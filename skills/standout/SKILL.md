@@ -19,7 +19,7 @@ into serializable CLI view models.
 
 ## Invariants
 
-- Do not print, render, or emit ANSI from handlers. Return `Output::Render(data)`, `Output::Silent`, or `Output::Binary { ... }`.
+- Do not print, render, or emit ANSI from handlers. Return an `Output` (`Render`, `Silent`, `Binary`, `Artifact`).
 - Do not depend on Clap, Standout, `CommandContext`, `Output`, view DTOs,
   templates, styles, environment lookup, or app construction from a reusable
   library. Keep those in the CLI package.

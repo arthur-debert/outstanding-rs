@@ -9,8 +9,7 @@ use crate::report::QuestionnaireReport;
 
 pub const SHEET_FILENAME: &str = "QUESTIONNAIRE.md";
 
-// Kept next to `definition` so answer extraction and the definition cannot
-// drift silently — a test pins them to each other.
+// A test pins these to `definition`.
 pub const FIELD_IDS: &[&str] = &[
     "summary",
     "sources.docs",
@@ -113,13 +112,8 @@ pub fn collect(workspace: &Path) -> QuestionnaireReport {
                 })
                 .collect(),
         },
-        // One field the agent answered in an unexpected shape is a
-        // diagnostic about that field, not a reason to forget the rest: the
-        // two sources answers are how ADR-0023 records blindness, and a run
-        // whose self-report is discarded cannot say how blind it was. The
-        // field that failed is dropped rather than published, so nothing
-        // reading a single answer sees a value the questionnaire rejected,
-        // and the report says `collected: false` either way.
+        // One malformed field is dropped, the rest kept: a run whose self-report is
+        // discarded cannot say how blind it was.
         Err(diagnostics) => {
             let rejected: Vec<&str> = diagnostics
                 .iter()
@@ -174,7 +168,6 @@ mod tests {
         assert!(collected.collected, "{:?}", collected.diagnostics);
         assert_eq!(collected.answers.get("sources.external").unwrap(), "none");
 
-        // The same sheet, with reasoning trailing the choice answer.
         std::fs::write(
             dir.path().join(SHEET_FILENAME),
             sheet("high\n\nEvery assertion passes."),

@@ -138,10 +138,6 @@ the template needs *two* trailing newlines. Every editor that adds a final
 newline on save is therefore invisible here, which is the reason the rule is
 worth stating.
 
-`standout-render/tests/trailing_newline.rs` pins the engine half;
-`final_emission_routes_success_and_diagnostics_to_distinct_streams` in
-`standout/src/cli/builder/execution.rs` pins the process half.
-
 ---
 
 ## Style Tags
@@ -259,12 +255,9 @@ let output = render_with_output(template, &data, &theme, OutputMode::Auto)?;
 
 ### Auto Mode
 
-`OutputMode::Auto` detects the appropriate mode:
-
-- If stdout is a TTY with color support → `Term`
-- If stdout is a pipe or redirect → `Text`
-
-> **For standout framework users:** The framework's `--output` CLI flag automatically sets the output mode. See standout documentation for details.
+`OutputMode::Auto` resolves to `Term` or `Text` from the destination's color
+capability; the rule is in
+[Output Modes](../../../topics/output-modes.md#auto-mode).
 
 ---
 
@@ -448,19 +441,10 @@ Check templates for unknown style tags before deploying:
 ```rust
 use standout_render::validate_template;
 
-let errors = validate_template(template, &sample_data, &theme);
-if !errors.is_empty() {
-    for error in &errors {
-        eprintln!("Unknown style tag: [{}]", error.tag_name);
-    }
-}
+validate_template(template, &sample_data, &theme)?;
 ```
 
-Validation catches:
-
-- Misspelled style names
-- References to undefined styles
-- Mismatched opening/closing tags
+The error lists every unknown or unbalanced tag.
 
 ---
 

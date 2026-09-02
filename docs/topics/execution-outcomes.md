@@ -45,9 +45,9 @@ Ok(list_view(items).empty_exit_status(3).output())
 `Output::with_exit_status(ExitStatus)` is the general form and applies to
 `Output::Render` and `Output::Silent`; calling it again replaces the status. A
 status declared on `Output::Binary` or `Output::Artifact` is a render error
-(`1`), since those outcomes carry no status of their own. `ListViewBuilder::
-empty_exit_status(n)` is the list case: `ListViewResult::into_output` (or the
-builder's `output()`) applies the status only when `items` is empty. The
+(`1`), since those outcomes carry no status of their own.
+`ListViewBuilder::empty_exit_status(n)` is the list case
+([List View](./list-view.md#empty-lists-and-the-exit-status)). The
 capture API (`App::run_command`) returns rendered output with no status (it
 still reports the binary and artifact case as an error), so a declared status
 is visible through `run`, `run_emitted`, `dispatch`, `run_with` and the test
@@ -57,12 +57,9 @@ The failure rows describe the human modes (`auto`, `term`, `text` and
 `term-debug`); under a structured mode a failure is the stdout document
 instead, [below](#failures-under-a-structured-mode).
 
-Framework warning flushing happens after the primary output and does not replace
-its status. Warnings cover non-fatal framework-owned setup, resource-loading,
-and accepted-input diagnostics, including answer-sheet parse warnings that do
-not reject a questionnaire submission. A final text or binary write failure does
-replace a successful status with `1`, except that `BrokenPipe` while writing
-final rendered command text to stdout is successful early consumer termination.
+Framework warnings flush after the primary output and do not change its
+status. A final write failure does replace a successful status with `1`
+([below](#framework-owned-final-writes)).
 
 ## Failures under a structured mode
 
@@ -73,8 +70,9 @@ document per run; under `ndjson` the diagnostic is one compact line at the
 point in the stream where the run failed, after the entries the handler already
 wrote ([Output Modes](./output-modes.md#ndjson-mode)). Statuses do not change.
 An `App` or `External` failure still writes its verbatim bytes to stderr
-(ADR-0035) and adds the stdout document, kind `app` or `external`, with the
-bytes as `detail`. Warnings stay prose on stderr in the single-document modes,
+and adds the stdout document, kind `app` or `external`, with the bytes as
+`detail` and their first line as `summary`. Warnings stay prose on stderr in
+the single-document modes,
 because the document has one root; under `ndjson` each is a `severity:
 warning` diagnostic entry of kind `framework` on stdout, after the result or
 the failure.
@@ -101,16 +99,17 @@ warning entry, which no run failure produces. In `csv` the
 document is one row whose header ends in `range_filename`, `range_line` and
 `range_column`, empty when there is no range. `RunError::diagnostic()` is the
 value, `emit_run_result` writes it, and `standout::cli::parse_diagnostic` reads
-it back (under `ndjson`, out of the whole stream), which is what
-`TestResult::diagnostic()` does. How an error fills
-`summary` and `detail` is in [Error Handling](./error-handling.md#the-diagnostic-document).
+it back (under `ndjson`, out of the whole stream), as `TestResult::diagnostic()`
+does. How an error fills `summary` and `detail` is in
+[Error Handling](./error-handling.md#the-diagnostic-document).
 
 A failure clap reports before a parse completes — an unknown flag, a
 default-command miss, `--help` — takes its mode from a scan of the raw argv for
 the output flag: the last occurrence wins, `--output json` and `--output=json`
 alike, and nothing after `--` counts. A value that is not a mode
-(`--output jsn`) is a clap usage error as prose on stderr, exit 2: the mode is
-the thing that is unknown, so there is nothing to serialize the diagnostic in.
+(`--output jsn`) scans as no mode at all, so the run stays in the fallback
+mode: when the parse reaches the value, clap reports it as a usage error, prose
+on stderr, exit 2.
 
 ## Emitting without exiting
 
@@ -143,11 +142,10 @@ stdout nothing. `run_with` captures the entries instead and returns them as
 
 `ProcessOutcome` has two public fields. `handled` is the `bool` that `run`
 returns: `false` only for a `NoMatch` handoff. `status` is the final
-`ExitStatus` after output errors, the one `run` would have exited with: a final
-write failure has already replaced a successful status, `BrokenPipe` on final
-rendered text has already been accepted as success, and a `NoMatch` handoff
-reports `ExitStatus::SUCCESS` because Standout emitted nothing. Everything has
-been written when the call returns, so a process-lifetime resource — a span
+`ExitStatus` after output errors, the one `run` would have exited with
+([final writes](#framework-owned-final-writes)); a `NoMatch` handoff reports
+`ExitStatus::SUCCESS` because Standout emitted nothing. Everything has been
+written when the call returns, so a process-lifetime resource — a span
 exporter, an audit log, a buffered writer — can close between the last byte of
 output and the exit.
 
@@ -275,21 +273,13 @@ is part of dispatch and therefore reports typed `FinalWrite` failures directly.
 External failures are never redirected to an output file: they remain stderr
 diagnostics when `run()` performs the final write.
 
-Capture-mode runs drain framework warnings instead of rendering them. The raw
-capture path stores the batch in `standout-render`'s warning collector, and
-`standout-test::TestHarness` exposes the batch through `TestResult::warnings()`
-so tests can assert warning content deterministically.
+Capture APIs return the run's warnings instead of rendering them
+(`CompletedRun::warnings()`, `TestResult::warnings()`).
 
 ## Compound artifacts
 
 `Output::Artifact` extends the framework-owned write to commands that also have
-something to say about it. The application returns bytes, an optional suggested
-destination, and an optional report; Standout selects the destination, writes,
-and only then renders the report with a receipt naming where the bytes landed.
-Ordering is the guarantee: a failed write produces `FinalWrite(Artifact)` and no
-report at all, so a success message can never promise a file that never
-appeared.
-
-See [Handler Contract](../crates/dispatch/topics/handler-contract.md) for the
-destination policy, the report envelope, and the artifact-to-stdout report
-channel.
+something to say about it: Standout selects the destination, writes the bytes,
+and emits the report; a failed write produces `FinalWrite(Artifact)` and no
+report at all. The destination policy, the report envelope and the report
+channel are in [Handler Contract](../crates/dispatch/topics/handler-contract.md#outputartifact).

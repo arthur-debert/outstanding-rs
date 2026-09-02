@@ -15,8 +15,7 @@ fn questionnaire() -> Questionnaire {
     .unwrap()
 }
 
-/// The sheet `formlike`'s own spec defines: question lines carrying the stable
-/// tag, answers beneath, and no framework preamble.
+/// No framework preamble: a tagged question line, the answer beneath.
 const SPEC_SHEET: &str = "Your name <id:name>\nada\n\nWhich region? <id:region>\neu\n";
 
 struct SpecSheet;

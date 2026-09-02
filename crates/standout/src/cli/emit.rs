@@ -36,11 +36,8 @@ use crate::cli::handler::{
 use crate::tabular::{Column, Width};
 use crate::{CsvProjection, OutputMode};
 
-/// Write `result` to the two streams the way `run` does, honoring
-/// `output_mode` for failures. `Ok(handled)` reports whether a registered
-/// command owned the invocation (`false` only for a `NoMatch` handoff);
-/// `Err` is a final-write failure, already reported on stderr, whose status
-/// replaces the run's own.
+/// `Ok(false)` only for a `NoMatch` handoff; `Err` is a final-write failure whose
+/// status replaces the run's own.
 pub fn emit_run_result<W: Write + ?Sized, E: Write + ?Sized>(
     result: &DispatchResult,
     output_mode: OutputMode,
@@ -117,16 +114,12 @@ pub fn carries_diagnostic_document(output_mode: OutputMode) -> bool {
     )
 }
 
-/// Whether the run's warnings are stdout entries rather than stderr prose:
-/// only under `ndjson`, whose stream has room for more than one root, and
-/// never for a `NoMatch` handoff, which owns no stdout to write them to.
+/// Only under `ndjson`, and never for a `NoMatch` handoff.
 pub fn carries_warning_entries(result: &DispatchResult, output_mode: OutputMode) -> bool {
     output_mode.is_stream() && !matches!(result, DispatchResult::NoMatch(_))
 }
 
-/// Write each of `warnings` as a `severity: warning` diagnostic entry of kind
-/// `framework`, one line each, when `carries_warning_entries`; do nothing
-/// otherwise. `Err` is a final-write failure on stdout.
+/// A no-op unless `carries_warning_entries`; `Err` is a final-write failure on stdout.
 pub fn emit_warning_entries<W: Write + ?Sized>(
     result: &DispatchResult,
     warnings: &[String],
@@ -151,9 +144,7 @@ pub fn emit_warning_entries<W: Write + ?Sized>(
     }
 }
 
-/// The diagnostic document in `output_mode`, newline-terminated. Panics on a
-/// mode `carries_diagnostic_document` rejects: there is no document shape for
-/// it to render.
+/// Newline-terminated; panics on a mode `carries_diagnostic_document` rejects.
 pub fn render_diagnostic(diagnostic: &Diagnostic, output_mode: OutputMode) -> String {
     let rendered = if output_mode == OutputMode::Csv {
         serde_json::to_value(diagnostic)
@@ -170,8 +161,6 @@ pub fn render_diagnostic(diagnostic: &Diagnostic, output_mode: OutputMode) -> St
     rendered.unwrap_or_else(|error| panic!("{output_mode:?} has no diagnostic document: {error}"))
 }
 
-/// The diagnostic's CSV row: the document itself is the row source, and the
-/// optional `range` becomes three columns that are empty when it is unset.
 fn diagnostic_csv_projection() -> CsvProjection {
     let column = |key: &str, header: &str| {
         Column::new(Width::default())
@@ -196,11 +185,7 @@ fn diagnostic_csv_projection() -> CsvProjection {
 #[error("{0}")]
 pub struct DiagnosticDocumentError(String);
 
-/// Read a diagnostic document back from `text`, the inverse of
-/// [`render_diagnostic`] for the same `output_mode`. Under `ndjson`, `text`
-/// is the whole stream and the document is its first error-severity
-/// diagnostic entry; the handler's own entries and warning entries are
-/// skipped.
+/// The inverse of [`render_diagnostic`]; under `ndjson`, the stream's first error-severity entry.
 pub fn parse_diagnostic(
     output_mode: OutputMode,
     text: &str,
@@ -227,7 +212,6 @@ pub fn parse_diagnostic(
     }
 }
 
-/// The CSV row read back, the inverse of [`diagnostic_csv_projection`].
 #[derive(Debug, Deserialize)]
 struct DiagnosticRow {
     #[serde(rename = "type")]

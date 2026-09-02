@@ -38,8 +38,7 @@ impl StreamSink {
         *self.0.borrow_mut() = Box::new(writer);
     }
 
-    /// Write through the sink directly, for the bytes that follow the
-    /// handler's entries on the same stream.
+    /// For the bytes that follow the handler's entries on the same stream.
     pub fn with_writer<R>(&self, write: impl FnOnce(&mut dyn Write) -> R) -> R {
         write(&mut **self.0.borrow_mut())
     }
@@ -53,7 +52,6 @@ impl StreamSink {
     }
 }
 
-/// An in-memory sink destination whose bytes are read back with `take`.
 #[derive(Clone, Debug, Default)]
 pub struct StreamCapture(Rc<RefCell<Vec<u8>>>);
 
@@ -94,16 +92,12 @@ impl EntryStream {
         Self { sink: Some(sink) }
     }
 
-    /// Whether `emit` writes: true only under `ndjson`, so a handler that
-    /// streams its result as entries can return `Output::Silent` here and
-    /// `Output::Render` elsewhere.
+    /// True only under `ndjson`.
     pub fn is_live(&self) -> bool {
         self.sink.is_some()
     }
 
-    /// Write `entry` as one JSON line, or do nothing on a discarding stream.
-    /// Fails when the value does not serialize or the line cannot be
-    /// written; a handler propagates the error and the run fails with it.
+    /// A no-op on a discarding stream; fails when the value does not serialize or the write fails.
     pub fn emit<T: Serialize + ?Sized>(&self, entry: &T) -> Result<(), StreamError> {
         let Some(sink) = &self.sink else {
             return Ok(());

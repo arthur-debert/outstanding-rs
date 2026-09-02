@@ -18,15 +18,12 @@ use super::document::HelpDocument;
 
 pub(crate) const DEFAULT_HELP_TEMPLATE: &str = include_str!("template.txt");
 
-/// Under a single-document mode help is data, not the page: `json` and
-/// `yaml` serialize the document, and `csv`, which has no help projection,
-/// is a render error.
+/// `csv` has no help projection and is a render error.
 pub(crate) fn help_is_a_document(mode: OutputMode) -> bool {
     matches!(mode, OutputMode::Json | OutputMode::Yaml | OutputMode::Csv)
 }
 
-/// The mode the human help page renders in: a structured mode that carries
-/// no help document falls back to the terminal's own resolution.
+/// A structured mode with no help document falls back to the terminal's resolution.
 pub(crate) fn human_help_format(mode: OutputMode) -> OutputMode {
     if mode.is_structured() {
         OutputMode::Auto
@@ -35,9 +32,7 @@ pub(crate) fn human_help_format(mode: OutputMode) -> OutputMode {
     }
 }
 
-/// The help document at `path` under `root` in `mode`, without the newline
-/// the process edge appends; `None` when no command sits at that path. `csv`
-/// has no help projection, so it is a render error.
+/// Without the newline the process edge appends; `None` when no command sits at `path`.
 pub(crate) fn render_help_document(
     root: &Command,
     path: &[&str],

@@ -209,17 +209,12 @@ fn only_the_help_word(subs: &[&Command]) -> bool {
     matches!(subs, [single] if single.get_name() == "help")
 }
 
-/// Whether `sub` is the `help` word clap adds in `build()` rather than a
-/// destination the application declared. Clap appends it to any command that
-/// has not called `disable_help_subcommand`, and rejects an application
-/// declaring its own `help` alongside it as a duplicate name — so the parent's
-/// setting decides the provenance, whatever build state the caller handed us.
+/// The parent's `disable_help_subcommand` setting decides, whatever build state it is in.
 fn is_clap_generated_help_subcommand(parent: &Command, sub: &Command) -> bool {
     sub.get_name() == "help" && !parent.is_disable_help_subcommand_set()
 }
 
-/// The help model for the command reached from `root` by the subcommand
-/// names in `path` (empty for the root); `None` when no command sits there.
+/// `None` when no command sits at `path` (empty for the root).
 pub(crate) fn extract_help_data(
     root: &Command,
     path: &[&str],
@@ -241,9 +236,7 @@ pub(crate) fn extract_help_data_with_topics(
     extract(root, path, command_groups, length, Some(registry), target)
 }
 
-/// Clap materialises `-h/--help` and `-V/--version` in `build()`, and only a
-/// build from the root gives a subcommand its parents' names for its usage
-/// line, so the declared tree is not the tree clap parses and prints.
+/// Only a `build()` from the root gives a subcommand its `-h`/`-V` and its parents' usage names.
 pub(super) fn build_root(root: &Command) -> Command {
     let mut built = root.clone();
     built.build();

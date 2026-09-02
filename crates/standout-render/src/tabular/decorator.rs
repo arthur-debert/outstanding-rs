@@ -230,8 +230,7 @@ impl Table {
         self
     }
 
-    /// Resizes every `Bounded` column to the widest cell `data` holds for it,
-    /// the whole-table measurement `resolve_widths_from_data` performs.
+    /// Resizes every `Bounded` column to the widest cell `data` holds for it.
     pub(crate) fn sized_to_data<S: AsRef<str>>(mut self, data: &[Vec<S>]) -> Self {
         let policy = self.formatter.ambiguous_width();
         self.data_widths = Some(self.spec.measure_columns(data, policy));

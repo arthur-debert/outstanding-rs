@@ -33,19 +33,15 @@ pub fn truncate_to_width_with_policy(
     policy: crate::AmbiguousWidth,
 ) -> String {
     let calculator = crate::WidthCalculator::new(policy);
-    // Zero width still yields a lone ellipsis rather than an empty string, for
-    // backward compatibility with this function's original behavior.
     if max_width == 0 && calculator.visible_width(s) > 0 {
         return "…".to_string();
     }
     calculator.truncate_visible(s, max_width, "…", crate::width::VisibleTruncateAt::End)
 }
 
-/// The header and rows of a CSV document. `value` is one flat record (a map
-/// whose values are scalars) or an array of flat records; anything else is a
-/// [`RenderError`] naming `CsvProjection` as the way to declare columns.
-/// Columns are the records' keys in first-seen order; a key a record lacks,
-/// or maps to null, is an empty cell.
+/// `value` is one flat record (scalar values) or an array of them; anything
+/// else is a [`RenderError`] pointing at `CsvProjection`. Columns are the keys
+/// in first-seen order; a missing or null key is an empty cell.
 pub fn csv_records(value: &Value) -> Result<(Vec<String>, Vec<Vec<String>>), RenderError> {
     let records = match value {
         Value::Array(items) => items

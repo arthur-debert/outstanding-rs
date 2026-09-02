@@ -1,11 +1,8 @@
-//! The stand-in agent for the credential broker's negative test: it does
-//! what a real session does — reach the API through `ANTHROPIC_BASE_URL` —
-//! and then what a real session's build script would do, which is try the
-//! same thing on a connection of its own and enumerate what it inherited.
-//!
-//! It is a test fixture, not a runner feature. It exists as a binary
-//! because the broker answers a *process*, so the caller has to be a real
-//! exec'd program rather than a shell or a thread.
+//! The stand-in agent for the credential broker's negative test: it reaches
+//! the API through `ANTHROPIC_BASE_URL`, then does what a build script would
+//! do — try the same on a connection of its own and enumerate what it
+//! inherited. A binary rather than a thread because the broker answers a
+//! process.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -30,8 +27,7 @@ fn main() {
     let session = request(&base_url, r#"{"from":"agent session"}"#);
     std::fs::write("agent-environment.txt", environment_dump()).expect("dumping the environment");
 
-    // A build script is not the agent: cargo execs it, so it starts from a
-    // fresh descriptor table and its own pid.
+    // Exec'd, as cargo would: a fresh descriptor table and its own pid.
     let build_script = std::process::Command::new(std::env::current_exe().unwrap())
         .arg("build-script")
         .output()
@@ -104,8 +100,6 @@ fn broker_port(base_url: &str) -> u16 {
         .unwrap_or_default()
 }
 
-/// Descriptors this process inherited that are already connected to the
-/// broker — a channel it could use without being attributed at accept time.
 fn inherited_broker_sockets(broker_port: u16) -> Vec<i32> {
     let mut inherited = Vec::new();
     for fd in 0..1024 {

@@ -1,9 +1,6 @@
 // The scorecard script, checked against the figures the pilot scorecard
-// published. Scorecard v2 compares the re-run with the pilot, and that
-// comparison is only worth reading if both sides are counted the same way and
-// were asked the same question — so the script that counts them has to
-// reproduce the pilot's numbers from the pilot's own committed reports, and
-// has to say so when a row's pins or agent make it something else.
+// published: it has to reproduce them from the committed reports, and say so
+// when a row's pins or agent make it a different question.
 
 #![cfg(unix)]
 
@@ -31,9 +28,7 @@ fn scorecard(sets: &[&str]) -> String {
     String::from_utf8(output.stdout).unwrap()
 }
 
-/// One committed run as the script reads it: the fields every row needs, plus
-/// the pins, the provenance block and the recorded command a test varies. A
-/// null provenance writes a report from before schema 4, which states none.
+// A null provenance writes a report from before schema 4.
 fn write_report(
     runs_dir: &Path,
     run_id: &str,
@@ -72,10 +67,7 @@ fn archetype_row<'a>(table: &'a str, archetype: &str) -> &'a str {
         .unwrap_or_else(|| panic!("no row for {archetype} in:\n{table}"))
 }
 
-/// Commands whose splitting the two implementations have to agree on,
-/// including the ones both refuse. Quoting is the whole point of most of
-/// them: a `$`, a pipe or a glob inside quotes is an ordinary character to a
-/// shell and to the runner, and only an unquoted one refuses the command.
+// Commands the runner's splitter and the scorecard's have to agree on, refusals included.
 const SPLIT_ALIKE: &[&str] = &[
     "claude -p hello",
     "claude --model claude-opus-5 -p 'the cost is $5'",
@@ -83,9 +75,7 @@ const SPLIT_ALIKE: &[&str] = &[
     r#"claude -p "a \"quoted\" word, a \$ and a literal \\""#,
     "/opt/agents/claude --dangerously-skip-permissions -p go",
     "claude\t-p\tgo",
-    // Refused by both: a pipeline, a redirection, an expansion, an unquoted
-    // glob, a word-leading tilde, an unclosed quote, a dangling escape, and
-    // a command with no program at all.
+    // Refused by both.
     "printf x | claude -p go",
     "claude -p go > out.txt",
     "claude -p $HOME",
@@ -96,12 +86,6 @@ const SPLIT_ALIKE: &[&str] = &[
     "   ",
 ];
 
-/// The runner splits the command it spawns; the scorecard splits the command
-/// a report recorded, to recover the provenance a pre-schema-4 run states
-/// nowhere else. Two splitters, so one table goes through both: a command
-/// the runner would have refused never ran, and reading an agent out of it
-/// would invent one, while a command the runner accepts has to recover
-/// rather than read as a run that stated no agent.
 #[test]
 fn the_scorecard_splits_a_recorded_command_the_way_the_runner_does() {
     const PROGRAM: &str = "import json, sys; sys.path.insert(0, 'corpus'); \
@@ -112,8 +96,7 @@ fn the_scorecard_splits_a_recorded_command_the_way_the_runner_does() {
         .arg(PROGRAM)
         .args(SPLIT_ALIKE)
         .current_dir(repo())
-        // Importing the script would otherwise leave a `__pycache__` beside
-        // the corpus's committed evidence.
+        // Otherwise a `__pycache__` lands beside the committed evidence.
         .env("PYTHONDONTWRITEBYTECODE", "1")
         .output()
         .unwrap();
@@ -125,17 +108,13 @@ fn the_scorecard_splits_a_recorded_command_the_way_the_runner_does() {
     let scorecard_side: Vec<Vec<String>> = serde_json::from_slice(&output.stdout).unwrap();
 
     for (command, scorecard_argv) in SPLIT_ALIKE.iter().zip(&scorecard_side) {
-        // The runner refuses with an error where the scorecard recovers
-        // nothing; both mean the same thing about the same command.
         let runner_argv = corpus_runner::session::direct_argv(command).unwrap_or_default();
         assert_eq!(&runner_argv, scorecard_argv, "disagreed on {command:?}");
     }
 }
 
-/// Each row as `corpus/pilot/scorecard.md` published it: the acceptance
-/// ratio, the invariant ratio with its full planned breakdown, and the
-/// workaround count its prose reports (`gitlike`'s fifth listed item is the
-/// deliberate direct-write path v1 counts as "4 workarounds plus one").
+// As `corpus/pilot/scorecard.md` published them; `gitlike`'s fifth item is the
+// deliberate direct-write path counted as "4 workarounds plus one".
 const PILOT_FIGURES: &[(&str, &str, &str, &str)] = &[
     (
         "formlike",
@@ -177,9 +156,6 @@ fn the_script_reproduces_the_pilot_scorecards_published_figures() {
     }
 }
 
-/// The pilot reports predate the provenance block, so the script recovers
-/// what ran them from the run's own two sources — and says that it did,
-/// rather than presenting a recovered fact as a recorded one.
 #[test]
 fn a_report_without_a_provenance_block_names_its_agent_from_the_run_record() {
     let table = scorecard(&["pilot=corpus/pilot/runs"]);
@@ -191,10 +167,6 @@ fn a_report_without_a_provenance_block_names_its_agent_from_the_run_record() {
     }
 }
 
-/// The recovery reaches every provenance field, not only the three the cell
-/// prints: the pilot's recorded command states the prompt, the settings and
-/// whether a model was asked for, and the comparison needs them to say the
-/// re-run asked the same question.
 #[test]
 fn recovery_reads_the_prompt_and_settings_from_the_recorded_command() {
     let rows: serde_json::Value =
@@ -222,8 +194,7 @@ fn recovery_reads_the_prompt_and_settings_from_the_recorded_command() {
             .contains(&serde_json::json!("--dangerously-skip-permissions")),
         "{row}"
     );
-    // No `--model` in the command: the run took the backend's default, which
-    // is not the same fact as a model asked for and unrecorded.
+    // No `--model`: the backend's default, not a model asked for and unrecorded.
     assert_eq!(
         provenance["model_requested"],
         serde_json::Value::Null,
@@ -231,11 +202,6 @@ fn recovery_reads_the_prompt_and_settings_from_the_recorded_command() {
     );
 }
 
-/// Recovery reads the transcript's head, not the session: a committed
-/// transcript is megabytes of what the agent did after it announced itself,
-/// and the runner stops at the same budget. A record that straddles the end
-/// of the budget is still read whole, because half a record announces
-/// nothing.
 #[test]
 fn recovery_reads_the_transcripts_head_rather_than_the_whole_session() {
     let temp = tempfile::tempdir().unwrap();
@@ -249,8 +215,8 @@ fn recovery_reads_the_transcripts_head_rather_than_the_whole_session() {
         json!(null),
         "claude -p go",
     );
-    // An init record that alone exceeds the head budget, and a second
-    // announcement far past it that a bounded read must never reach.
+    // An init record larger than the head budget, then a second announcement a
+    // bounded read must never reach.
     let init = format!(
         concat!(
             r#"{{"type":"system","subtype":"init","model":"claude-opus-5[1m]","#,
@@ -275,9 +241,6 @@ fn recovery_reads_the_transcripts_head_rather_than_the_whole_session() {
     assert!(!row.contains("never-read"), "{row}");
 }
 
-/// A run that states no provenance, records no command the script can split,
-/// and has no transcript beside it names no agent — the cell says so instead
-/// of presenting the runner's usual backend as this run's.
 #[test]
 fn a_run_that_states_no_agent_is_reported_unrecorded() {
     let temp = tempfile::tempdir().unwrap();
@@ -295,10 +258,6 @@ fn a_run_that_states_no_agent_is_reported_unrecorded() {
     assert!(row.contains("| unrecorded |"), "{row}");
 }
 
-/// The suite that judged a run is what its acceptance figures mean. A re-run
-/// against an edited suite is measuring a different question, and a scorecard
-/// that prints the two ratios side by side has to say so — the improvement
-/// otherwise reads as the framework's.
 #[test]
 fn a_row_judged_by_a_different_suite_is_marked_not_comparable() {
     let temp = tempfile::tempdir().unwrap();
@@ -343,10 +302,6 @@ fn a_row_judged_by_a_different_suite_is_marked_not_comparable() {
     );
 }
 
-/// The agent comparison is the whole provenance block, not the three fields
-/// the cell prints. A run asked for a different model, or handed a different
-/// prompt or setting, is not the same question even when what answered — and
-/// what the table shows — is identical.
 #[test]
 fn an_agent_that_differs_only_in_unprinted_fields_is_still_a_difference() {
     let temp = tempfile::tempdir().unwrap();
@@ -381,8 +336,6 @@ fn an_agent_that_differs_only_in_unprinted_fields_is_still_a_difference() {
         .lines()
         .filter(|line| line.starts_with("| agentlike |"))
         .collect();
-    // The printed cell is identical on both rows, and the rows are still not
-    // the same question.
     assert!(
         rows[0].contains("claude 2.1.252, claude-opus-5[1m]"),
         "{table}"
@@ -401,10 +354,7 @@ fn an_agent_that_differs_only_in_unprinted_fields_is_still_a_difference() {
     }
 }
 
-/// Agents list their workarounds in whichever markdown form they reach for,
-/// and the count has to be of items rather than of one favoured syntax — the
-/// pilot numbered them, the re-run used bullets, bold lead-ins and letters.
-/// Continuation lines are indented, and indented lines are not items.
+// Indented lines are continuations, not items.
 #[test]
 fn listed_items_are_counted_in_every_form_an_agent_has_used() {
     let temp = tempfile::tempdir().unwrap();
@@ -439,8 +389,6 @@ fn listed_items_are_counted_in_every_form_an_agent_has_used() {
     assert!(row.contains("| 6 | 6 |"), "{row}");
 }
 
-/// Two run sets land in one table, grouped by archetype: that side-by-side
-/// is what a scorecard comparison reads.
 #[test]
 fn runs_from_two_sets_sit_beside_each_other_under_their_archetype() {
     let table = scorecard(&["pilot=corpus/pilot/runs", "again=corpus/pilot/runs"]);

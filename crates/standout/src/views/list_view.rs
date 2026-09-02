@@ -84,8 +84,7 @@ impl<T> ListViewResult<T> {
 }
 
 impl<T: Serialize> ListViewResult<T> {
-    /// The handler output for this list: `Output::Render(self)`, carrying
-    /// `empty_exit_status` when the list is empty and one was declared.
+    /// `Output::Render(self)`, carrying `empty_exit_status` when the list is empty.
     pub fn into_output(self) -> Output<Self> {
         match self.empty_exit_status.filter(|_| self.items.is_empty()) {
             Some(status) => Output::Render(self).with_exit_status(status),
@@ -126,9 +125,7 @@ impl<T> ListViewBuilder<T> {
         }
     }
 
-    /// The exit status a successful run declares when the list is empty; the
-    /// list still renders and is not a failure. Applied by
-    /// [`ListViewResult::into_output`].
+    /// The list still renders; the status is a signal, not a failure.
     pub fn empty_exit_status(mut self, status: impl Into<ExitStatus>) -> Self {
         self.empty_exit_status = Some(status.into());
         self
@@ -195,8 +192,7 @@ impl<T> ListViewBuilder<T> {
 }
 
 impl<T: Serialize> ListViewBuilder<T> {
-    /// Consume the builder into `Output::Render`, with the empty-list status
-    /// applied: `list_view(items).build().into_output()` in one step.
+    /// `build().into_output()` in one step.
     pub fn output(self) -> Output<ListViewResult<T>> {
         self.build().into_output()
     }

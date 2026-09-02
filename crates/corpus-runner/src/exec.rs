@@ -24,10 +24,7 @@ pub fn run(command: &mut Command, deadline: Duration, capture: bool) -> Result<O
     run_watched(command, deadline, capture, |_| {})
 }
 
-/// `on_spawn` receives the child's pid the moment the child exists and
-/// before any of its output is read. The credential broker needs it that
-/// early: the agent can connect as soon as it runs, and a connection the
-/// broker cannot attribute is denied.
+/// `on_spawn` runs before any output is read: the broker needs the pid before the agent connects.
 pub fn run_watched(
     command: &mut Command,
     deadline: Duration,

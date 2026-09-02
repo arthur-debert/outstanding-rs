@@ -139,10 +139,8 @@ fn bare_environment_plus_register_filters() {
     );
 }
 
-/// The one spelling standout cannot reach: `~` formats its operands inside
-/// minijinja's evaluator, which exposes no hook. Pinned so the limitation is a
-/// tested fact rather than a silent gap — if a future minijinja makes this
-/// `xtrue`, this test says so.
+/// `~` formats its operands inside minijinja's evaluator, which exposes no
+/// hook; pinned so a minijinja change that closes the gap is noticed.
 #[test]
 fn concatenation_operator_is_a_known_gap() {
     let concatenated = render("{{ 'x' ~ flag }}");

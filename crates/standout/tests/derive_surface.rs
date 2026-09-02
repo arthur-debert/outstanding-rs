@@ -68,8 +68,6 @@ fn handler_function_drives_a_questionnaire_command() {
     assert_eq!(result.stdout(), "db-1:basic");
 }
 
-/// `r#Move` / `r#move` / `r#type` reach the derives as raw identifiers; the
-/// names they register and read are the unraw'd ones, so `move --type` runs.
 #[test]
 fn handler_function_runs_under_a_keyword_named_variant() {
     let builder = Commands::dispatch_config()(GroupBuilder::new());

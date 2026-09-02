@@ -1,7 +1,6 @@
 // The full `run()` orchestration over a fixture archetype, hermetically,
-// exercising the expected-fail mapping (the same fake-`cargo` seam as
-// `hermetic_loop.rs`). Runs in its own test binary because it prepends to
-// the process-wide PATH.
+// exercising the expected-fail mapping. Runs in its own test binary because
+// it prepends to the process-wide PATH.
 
 #![cfg(unix)]
 

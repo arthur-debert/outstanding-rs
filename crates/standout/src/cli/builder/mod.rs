@@ -324,15 +324,10 @@ pub(crate) enum HookRegistrationSource {
     CommandConfig,
 }
 
-/// Environment variable that forces [`AppBuilder::strict_style_tags`] on,
-/// letting a dev shell, CI job, or test run opt into the hard failure without a
-/// code change. Read once at [`AppBuilder::build`]; a truthy value wins over the
-/// builder setting, and it can only turn strict mode on, never off.
+/// Read once at [`AppBuilder::build`]; a truthy value turns strict mode on and never off.
 pub const STRICT_STYLE_TAGS_ENV: &str = "STANDOUT_STRICT_STYLE_TAGS";
 
-/// Whether the environment value enables strict mode. `1`, `true`, `yes`, and
-/// `on` (any case) enable it; anything else — including an unset variable — does
-/// not. Kept pure so the parsing is testable without touching process state.
+/// `1`, `true`, `yes` and `on` (any case) enable; anything else, including unset, does not.
 fn strict_style_tags_from_env(value: Option<std::ffi::OsString>) -> bool {
     let Some(value) = value else {
         return false;
@@ -949,9 +944,7 @@ impl App {
         )
     }
 
-    /// The versioned help document for the command at `path`,
-    /// never paged; a `csv` request is the render error the mode has no
-    /// projection for.
+    /// Never paged; `csv` has no help projection and is a render error.
     fn help_document(
         &self,
         cmd: &Command,
@@ -1172,8 +1165,7 @@ impl App {
             return self.output_mode_fallback;
         }
         match matches.try_get_one::<String>("_output_mode") {
-            // The flag carries the fallback as clap's default, so a
-            // `DefaultValue` source means the user never typed `--output`.
+            // A `DefaultValue` source means the user never typed `--output`.
             Ok(Some(value))
                 if matches.value_source("_output_mode") != Some(ValueSource::DefaultValue) =>
             {
@@ -1195,8 +1187,7 @@ impl App {
             .unwrap_or(self.output_mode_fallback)
     }
 
-    /// Dispatch one handler by hand, hooks and render included, and return the
-    /// output for the caller to write; `sink` takes `ctx.stream()` entries under `ndjson`.
+    /// One handler, hooks and render included; `sink` takes `ctx.stream()` entries under `ndjson`.
     pub fn run_command<F, T>(
         &self,
         path: &str,

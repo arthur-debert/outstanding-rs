@@ -51,9 +51,7 @@ impl ContractSurface for HelpDocument {
 }
 
 impl HelpDocument {
-    /// The document for the command reached from `root` by the subcommand
-    /// names in `path` (empty for the root itself); `None` when no command
-    /// sits at that path.
+    /// `None` when no command sits at `path` (empty for the root).
     pub fn extract(root: &Command, path: &[&str], length: HelpLength) -> Option<Self> {
         let built = build_root(root);
         let mut cmd = &built;
