@@ -174,7 +174,7 @@ fn a_report_without_a_provenance_block_names_its_agent_from_the_run_record() {
 }
 
 // Not the fixtures: the real committed pilot reports, whose transcripts are
-// deleted (D28). Their `recovered_provenance` block has to carry what a
+// deleted. Their `recovered_provenance` block has to carry what a
 // transcript read would have, or this documented command
 // (`pilot=corpus/pilot/runs`) degrades silently to "version unstated, model
 // unstated" the moment the fixtures stop standing in for it.

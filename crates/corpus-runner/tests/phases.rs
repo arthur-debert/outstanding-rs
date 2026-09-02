@@ -6,15 +6,20 @@ mod common;
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Duration;
 
 use common::script;
 use corpus_runner::archetype::{Archetype, InvariantCommand, InvariantContract, Invariants};
-use corpus_runner::report::{InvariantStatus, QuestionnaireReport, RunReport};
+use corpus_runner::report::{DocsSource, InvariantStatus, QuestionnaireReport, RunReport};
 use corpus_runner::{acceptance, questionnaire, session, workspace};
 use sha2::{Digest, Sha256};
 
 const NO_TIMEOUT: Duration = Duration::from_secs(60);
+
+// This build's own version — matches the checkout, so `provision` reads
+// docs from it directly (checkout mode) rather than archiving a tag.
+const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // Every directory under `corpus/` holding committed run reports.
 const COMMITTED_RUN_DIRS: &[&str] = &["pilot/runs", "rerun/runs", "completion/runs", "demo"];
@@ -190,7 +195,8 @@ fn provisioned_workspace_is_blind() {
     let run_dir = tempfile::tempdir().unwrap();
     let docs_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs");
 
-    let ws = workspace::provision(run_dir.path(), &archetype, &docs_dir, "8.1.1").unwrap();
+    let ws = workspace::provision(run_dir.path(), &archetype, &docs_dir, CURRENT_VERSION).unwrap();
+    assert_eq!(ws.docs_source, DocsSource::Checkout);
 
     for file in ["SPEC.md", "INSTRUCTIONS.md", "QUESTIONNAIRE.md"] {
         assert!(ws.root.join(file).is_file(), "missing {file}");
@@ -214,7 +220,7 @@ fn provisioned_workspace_is_blind() {
     assert!(!ws.root.join("crates").exists());
 
     let manifest = fs::read_to_string(ws.app_dir.join("Cargo.toml")).unwrap();
-    assert!(manifest.contains("standout = \"=8.1.1\""));
+    assert!(manifest.contains(&format!("standout = \"={CURRENT_VERSION}\"")));
     assert!(!manifest.contains("path"));
     assert!(!manifest.contains("git"));
     assert!(manifest.contains("[workspace]"));
@@ -226,7 +232,7 @@ fn provisioning_records_the_docs_snapshot_digest() {
     let run_dir = tempfile::tempdir().unwrap();
     let docs_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs");
 
-    let ws = workspace::provision(run_dir.path(), &archetype, &docs_dir, "8.1.1").unwrap();
+    let ws = workspace::provision(run_dir.path(), &archetype, &docs_dir, CURRENT_VERSION).unwrap();
 
     assert_eq!(ws.docs_sha256.len(), 64);
     assert_eq!(
@@ -248,7 +254,8 @@ fn provisioning_refuses_symlinks_in_the_docs_source() {
     fs::write(docs_dir.join("index.md"), "index").unwrap();
     std::os::unix::fs::symlink(&outside, docs_dir.join("guides/leak.md")).unwrap();
 
-    let err = workspace::provision(run_dir.path(), &archetype, &docs_dir, "8.1.1").unwrap_err();
+    let err =
+        workspace::provision(run_dir.path(), &archetype, &docs_dir, CURRENT_VERSION).unwrap_err();
     assert!(format!("{err:#}").contains("symlink"), "{err:#}");
 }
 
@@ -268,8 +275,122 @@ fn provisioning_refuses_symlinks_from_a_published_root_into_internal_docs() {
     )
     .unwrap();
 
-    let err = workspace::provision(run_dir.path(), &archetype, &docs_dir, "8.1.1").unwrap_err();
+    let err =
+        workspace::provision(run_dir.path(), &archetype, &docs_dir, CURRENT_VERSION).unwrap_err();
     assert!(format!("{err:#}").contains("symlink"), "{err:#}");
+}
+
+fn git(repo: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .status()
+        .unwrap_or_else(|e| panic!("running git {args:?}: {e}"));
+    assert!(status.success(), "git {args:?} failed");
+}
+
+fn tagged_docs_repo(root: &Path, tag: &str) {
+    fs::create_dir_all(root.join("docs/guides")).unwrap();
+    fs::create_dir_all(root.join("docs/crates")).unwrap();
+    fs::create_dir_all(root.join("crates/widget/docs")).unwrap();
+    fs::write(root.join("docs/index.md"), format!("index at {tag}\n")).unwrap();
+    fs::write(root.join("docs/guides/start.md"), "guide\n").unwrap();
+    fs::write(root.join("crates/widget/docs/index.md"), "widget docs\n").unwrap();
+    std::os::unix::fs::symlink("../../crates/widget/docs", root.join("docs/crates/widget"))
+        .unwrap();
+
+    git(root, &["init", "-q"]);
+    git(root, &["config", "user.email", "corpus@example.test"]);
+    git(root, &["config", "user.name", "corpus"]);
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "tagged docs"]);
+    git(root, &["tag", tag]);
+}
+
+#[test]
+fn provisioning_reads_docs_from_the_tag_when_the_pin_differs_from_the_checkout() {
+    let archetype = Archetype::load(&corpus_dir().join("archetypes"), "smoke").unwrap();
+    let run_dir = tempfile::tempdir().unwrap();
+    let repo = tempfile::tempdir().unwrap();
+    tagged_docs_repo(repo.path(), "v1.2.3");
+
+    let ws = workspace::provision(
+        run_dir.path(),
+        &archetype,
+        &repo.path().join("docs"),
+        "1.2.3",
+    )
+    .unwrap();
+
+    assert_eq!(ws.docs_source, DocsSource::Tag);
+    assert_eq!(
+        fs::read_to_string(ws.root.join("docs/index.md")).unwrap(),
+        "index at v1.2.3\n"
+    );
+    let widget_docs = ws.root.join("docs/crates/widget");
+    assert!(widget_docs.is_dir());
+    assert!(!fs::symlink_metadata(&widget_docs)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(
+        fs::read_to_string(widget_docs.join("index.md")).unwrap(),
+        "widget docs\n"
+    );
+
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo.path())
+        .args(["rev-parse", "v1.2.3^{commit}"])
+        .output()
+        .unwrap();
+    let expected_commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    assert_eq!(ws.docs_commit, expected_commit);
+}
+
+#[test]
+fn provisioning_leaves_no_extra_tree_in_the_run_artifact() {
+    let archetype = Archetype::load(&corpus_dir().join("archetypes"), "smoke").unwrap();
+    let run_dir = tempfile::tempdir().unwrap();
+    let repo = tempfile::tempdir().unwrap();
+    tagged_docs_repo(repo.path(), "v1.2.3");
+
+    workspace::provision(
+        run_dir.path(),
+        &archetype,
+        &repo.path().join("docs"),
+        "1.2.3",
+    )
+    .unwrap();
+
+    // The tag's whole tree is archived to resolve `docs/crates/*` symlinks
+    // (see `tagged_docs_repo`), but that archive must live in a scratch
+    // directory outside the run artifact and be cleaned up afterward: the
+    // artifact keeps only what `provision` deliberately writes under
+    // `workspace/`.
+    let entries: Vec<_> = fs::read_dir(run_dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(entries, vec![std::ffi::OsString::from("workspace")]);
+}
+
+#[test]
+fn provisioning_refuses_a_pin_with_no_matching_tag() {
+    let archetype = Archetype::load(&corpus_dir().join("archetypes"), "smoke").unwrap();
+    let run_dir = tempfile::tempdir().unwrap();
+    let repo = tempfile::tempdir().unwrap();
+    tagged_docs_repo(repo.path(), "v1.2.3");
+
+    let err = workspace::provision(
+        run_dir.path(),
+        &archetype,
+        &repo.path().join("docs"),
+        "9.9.9",
+    )
+    .unwrap_err();
+    assert!(format!("{err:#}").contains("v9.9.9"), "{err:#}");
 }
 
 #[test]
@@ -1201,6 +1322,7 @@ fn report_round_trips_through_json() {
             framework_version: "8.1.1".into(),
             docs_commit: "deadbeef".into(),
             docs_sha256: "cd".repeat(32),
+            docs_source: corpus_runner::report::DocsSource::Checkout,
             acceptance_sha256: "ef".repeat(32),
             questionnaire_fingerprint: questionnaire::definition().fingerprint().into(),
         },

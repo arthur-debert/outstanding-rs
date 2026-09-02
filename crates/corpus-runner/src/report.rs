@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RunReport {
@@ -55,8 +55,21 @@ pub struct Pins {
     pub framework_version: String,
     pub docs_commit: String,
     pub docs_sha256: String,
+    #[serde(default = "default_docs_source")]
+    pub docs_source: DocsSource,
     pub acceptance_sha256: String,
     pub questionnaire_fingerprint: String,
+}
+
+fn default_docs_source() -> DocsSource {
+    DocsSource::Checkout
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DocsSource {
+    Checkout,
+    Tag,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -138,6 +151,7 @@ pub enum CaseOutcome {
     Fail,
     ExpectedFail,
     UnexpectedPass,
+    HandRolledPass,
 }
 
 impl CaseOutcome {

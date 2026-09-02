@@ -90,8 +90,9 @@ stdout = "ok\n"
 stderr = ""
 
 # --- incomplete app theme × framework help -----------------------------------
-# Unresolved-tag markers that #303 leaked onto a terminal. Help clap facts
-# are Usage plus the command names the page must still present.
+# Unresolved-tag markers that #303 leaked onto a terminal. Help assertions
+# name the command path only (root's subcommands, or the leaf), never the
+# header's casing or the usage line's layout.
 # -h/--help short-circuit before --output, so they render Auto. Color-on
 # flag cases need a stdout PTY plus a capable TERM; color-off flag cases
 # use the same PTY with NO_COLOR so they prove suppression, not the pipe
@@ -110,7 +111,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stderr = ""
-stdout_contains = ["Usage", "show", "early", "late", "nest"]
+stdout_contains = ["show", "early", "late", "nest"]
 stdout_not_contains = [
     "[about?]",
     "[header?]",
@@ -137,7 +138,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stderr = ""
-stdout_contains = ["Usage", "show", "early", "late", "nest"]
+stdout_contains = ["show", "early", "late", "nest"]
 stdout_not_contains = [
     "[about?]",
     "[header?]",
@@ -163,7 +164,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stderr = ""
-stdout_contains = ["Usage", "show", "early", "late", "nest"]
+stdout_contains = ["show", "early", "late", "nest"]
 stdout_not_contains = [
     "[about?]",
     "[header?]",
@@ -190,7 +191,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stderr = ""
-stdout_contains = ["Usage", "show", "early", "late", "nest", "\u001b["]
+stdout_contains = ["show", "early", "late", "nest", "\u001b["]
 stdout_not_contains = [
     "[about?]",
     "[header?]",
@@ -216,7 +217,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stderr = ""
-stdout_contains = ["Usage", "show", "early", "late", "nest", "\u001b["]
+stdout_contains = ["show", "early", "late", "nest", "\u001b["]
 stdout_not_contains = [
     "[about?]",
     "[header?]",
@@ -241,7 +242,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stderr = ""
-stdout_contains = ["Usage", "show", "early", "late", "nest", "\u001b["]
+stdout_contains = ["show", "early", "late", "nest", "\u001b["]
 stdout_not_contains = [
     "[about?]",
     "[header?]",
@@ -266,7 +267,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stderr = ""
-stdout_contains = ["Usage", "show", "early", "late", "nest"]
+stdout_contains = ["show", "early", "late", "nest"]
 stdout_not_contains = [
     "[about?]",
     "[header?]",
@@ -292,7 +293,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stderr = ""
-stdout_contains = ["Usage", "show", "early", "late", "nest"]
+stdout_contains = ["show", "early", "late", "nest"]
 stdout_not_contains = [
     "[about?]",
     "[header?]",
@@ -319,7 +320,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stderr = ""
-stdout_contains = ["Usage", "leaf"]
+stdout_contains = ["leaf"]
 stdout_not_contains = [
     "[about?]",
     "[header?]",
@@ -346,7 +347,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stderr = ""
-stdout_contains = ["Usage", "leaf"]
+stdout_contains = ["leaf"]
 stdout_not_contains = [
     "[about?]",
     "[header?]",
@@ -372,7 +373,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stderr = ""
-stdout_contains = ["Usage", "leaf"]
+stdout_contains = ["leaf"]
 stdout_not_contains = [
     "[about?]",
     "[header?]",
@@ -399,7 +400,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stderr = ""
-stdout_contains = ["Usage", "leaf", "\u001b["]
+stdout_contains = ["leaf", "\u001b["]
 stdout_not_contains = [
     "[about?]",
     "[header?]",
@@ -425,7 +426,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stderr = ""
-stdout_contains = ["Usage", "leaf", "\u001b["]
+stdout_contains = ["leaf", "\u001b["]
 stdout_not_contains = [
     "[about?]",
     "[header?]",
@@ -450,7 +451,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stderr = ""
-stdout_contains = ["Usage", "leaf", "\u001b["]
+stdout_contains = ["leaf", "\u001b["]
 stdout_not_contains = [
     "[about?]",
     "[header?]",
@@ -475,7 +476,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stderr = ""
-stdout_contains = ["Usage", "leaf"]
+stdout_contains = ["leaf"]
 stdout_not_contains = [
     "[about?]",
     "[header?]",
@@ -501,7 +502,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stderr = ""
-stdout_contains = ["Usage", "leaf"]
+stdout_contains = ["leaf"]
 stdout_not_contains = [
     "[about?]",
     "[header?]",

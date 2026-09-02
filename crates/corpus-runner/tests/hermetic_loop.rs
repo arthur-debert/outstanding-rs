@@ -59,7 +59,7 @@ fn full_loop_completes_hermetically_with_a_fake_build() {
         docs_dir: repo.join("docs"),
         agent_cmd: "agent.sh".to_string(),
         broker: None,
-        framework_version: "8.1.1".to_string(),
+        framework_version: env!("CARGO_PKG_VERSION").to_string(),
         timeouts: Timeouts::default(),
     };
 

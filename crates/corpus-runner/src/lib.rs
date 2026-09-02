@@ -7,6 +7,7 @@ pub mod broker;
 pub mod cases;
 mod digest;
 pub mod exec;
+pub mod manifest;
 pub mod peer;
 pub mod provenance;
 pub mod questionnaire;
@@ -173,6 +174,7 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
         &run_dir.join("cases"),
         config.timeouts.check,
         &workspace.isolation,
+        &workspace.app_dir,
     );
 
     let report = RunReport {
@@ -184,8 +186,9 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
         },
         pins: Pins {
             framework_version: config.framework_version.clone(),
-            docs_commit: workspace::docs_commit(&config.docs_dir),
+            docs_commit: workspace.docs_commit.clone(),
             docs_sha256: workspace.docs_sha256.clone(),
+            docs_source: workspace.docs_source,
             acceptance_sha256: archetype.acceptance_sha256().to_string(),
             questionnaire_fingerprint: questionnaire::definition().fingerprint().to_string(),
         },
@@ -290,6 +293,7 @@ pub fn reevaluate(config: &ReevaluationConfig) -> anyhow::Result<RunReport> {
         &config.workspace_root.join(".reevaluation-cases"),
         config.timeouts.check,
         &isolation,
+        &config.workspace_root.join("app"),
     );
 
     // Before schema 4 the recorded command is all that can be said about the agent.
@@ -384,19 +388,38 @@ fn evaluate_binary(
     cases_dir: &Path,
     check_timeout: Duration,
     isolation: &workspace::Isolation,
+    app_dir: &Path,
 ) -> Evaluation {
     match binary {
-        Ok(binary) => Evaluation {
-            acceptance: cases::run_cases(&binary, &archetype.suite.cases, cases_dir, isolation),
-            invariants: acceptance::run_invariants(
-                &binary,
-                archetype.invariants(),
-                check_timeout,
-                isolation,
-                &cases_dir.join("_invariants"),
-            ),
-            binary_sha256: std::fs::read(&binary).map(digest::sha256_hex).ok(),
-        },
+        Ok(binary) => {
+            // Read through the same no-follow, regular-file-only primitive
+            // the sandbox inventory reads case files with: a symlink,
+            // a non-regular file, or a read error is "evidence unknown",
+            // not "evidence absent".
+            let app_cargo_toml = cases::read_regular_file_no_follow(
+                &app_dir.join("Cargo.toml"),
+                cases::MAX_INVENTORIED_BYTES,
+            )
+            .and_then(|bytes| String::from_utf8(bytes).map_err(|err| err.to_string()));
+            Evaluation {
+                acceptance: cases::run_cases(
+                    &binary,
+                    &archetype.suite.cases,
+                    cases_dir,
+                    isolation,
+                    &archetype.gaps,
+                    app_cargo_toml.as_deref().map_err(String::as_str),
+                ),
+                invariants: acceptance::run_invariants(
+                    &binary,
+                    archetype.invariants(),
+                    check_timeout,
+                    isolation,
+                    &cases_dir.join("_invariants"),
+                ),
+                binary_sha256: std::fs::read(&binary).map(digest::sha256_hex).ok(),
+            }
+        }
         Err(detail) => Evaluation {
             acceptance: AcceptanceReport::build_failed(detail.clone()),
             invariants: acceptance::not_run_invariants(archetype.invariants(), &detail),
@@ -446,6 +469,13 @@ pub fn print_summary(report: &RunReport) {
             CaseOutcome::UnexpectedPass => {
                 eprintln!(
                     "[corpus]   UNEXPECTED PASS case: {} (gap {} may be closed)",
+                    case.name,
+                    case.gap.as_deref().unwrap_or("?")
+                );
+            }
+            CaseOutcome::HandRolledPass => {
+                eprintln!(
+                    "[corpus]   hand-rolled pass case: {} (gap {} — evidence crate absent)",
                     case.name,
                     case.gap.as_deref().unwrap_or("?")
                 );

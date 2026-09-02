@@ -162,6 +162,10 @@ fn reevaluation_preserves_history_and_regenerates_objective_sections() {
     assert_eq!(report.run_id, "fake-1700000000");
     assert_eq!(report.pins.framework_version, "8.1.1");
     assert_eq!(report.pins.docs_commit, "cafecafe");
+    assert_eq!(
+        report.pins.docs_source,
+        corpus_runner::report::DocsSource::Checkout
+    );
     assert_eq!(report.session.wall_seconds, 12.5);
     assert_eq!(report.session.turns, Some(3));
     assert_eq!(report.blindness.env_allowlist, vec!["PATH", "HOME"]);

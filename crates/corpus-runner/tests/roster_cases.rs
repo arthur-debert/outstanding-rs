@@ -5,16 +5,31 @@
 
 mod common;
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
 use common::script;
 use corpus_runner::archetype::Archetype;
 use corpus_runner::cases::run_cases;
+use corpus_runner::manifest::{Evidence, GapEntry};
 use corpus_runner::report::{CaseOutcome, CaseResult};
 use corpus_runner::workspace::Isolation;
 
+fn corpus_archetypes_dir() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/archetypes")
+}
+
 fn run_suite(toml: &str, binary_body: &str) -> Vec<CaseResult> {
+    run_suite_with_evidence(toml, binary_body, &BTreeMap::new(), Ok(""))
+}
+
+fn run_suite_with_evidence(
+    toml: &str,
+    binary_body: &str,
+    gaps: &BTreeMap<String, GapEntry>,
+    app_cargo_toml: Result<&str, &str>,
+) -> Vec<CaseResult> {
     let dir = tempfile::tempdir().unwrap();
     let binary = script(dir.path(), "fake", binary_body);
     let archetype_dir = dir.path().join("archetypes/fake");
@@ -36,6 +51,8 @@ fn run_suite(toml: &str, binary_body: &str) -> Vec<CaseResult> {
         &archetype.suite.cases,
         &dir.path().join("cases"),
         &isolation,
+        gaps,
+        app_cargo_toml,
     );
     assert!(report.built);
     report.cases
@@ -725,4 +742,518 @@ exit_code = 0
         "{:?}",
         result.detail
     );
+}
+
+#[test]
+fn files_assertion_reads_the_sandbox_after_the_run() {
+    let results = run_suite(
+        r#"
+[[case]]
+name = "writes-expected-content"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["alpha"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+[case.expect.files]
+"conf/config_default" = "[core]\nproject = alpha\n"
+
+[[case]]
+name = "content-mismatch"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["alpha"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+[case.expect.files]
+"conf/config_default" = "[core]\nproject = wrong\n"
+
+[[case]]
+name = "missing-file"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["alpha"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+[case.expect.files]
+"conf/never-written" = "anything\n"
+"#,
+        r#"mkdir -p conf; printf '[core]\nproject = %s\n' "$1" > conf/config_default"#,
+    );
+    assert_eq!(
+        results[0].outcome,
+        CaseOutcome::Pass,
+        "{:?}",
+        results[0].detail
+    );
+    assert_eq!(results[1].outcome, CaseOutcome::Fail);
+    assert!(
+        results[1]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("content differs"),
+        "{:?}",
+        results[1].detail
+    );
+    assert_eq!(results[2].outcome, CaseOutcome::Fail);
+    assert!(
+        results[2]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("does not exist"),
+        "{:?}",
+        results[2].detail
+    );
+}
+
+#[test]
+fn files_absent_fails_when_the_path_exists() {
+    let results = run_suite(
+        r#"
+[[case]]
+name = "absent-as-expected"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["skip"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+files_absent = ["conf/configurations/config_staging"]
+
+[[case]]
+name = "unexpectedly-present"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["write"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+files_absent = ["conf/configurations/config_staging"]
+"#,
+        r#"if [ "$1" = "write" ]; then mkdir -p conf/configurations; touch conf/configurations/config_staging; fi"#,
+    );
+    assert_eq!(
+        results[0].outcome,
+        CaseOutcome::Pass,
+        "{:?}",
+        results[0].detail
+    );
+    assert_eq!(results[1].outcome, CaseOutcome::Fail);
+    assert!(
+        results[1]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("must not exist"),
+        "{:?}",
+        results[1].detail
+    );
+}
+
+#[test]
+fn files_assertion_refuses_a_symlink_at_the_leaf() {
+    let results = run_suite(
+        r#"
+[[case]]
+name = "symlinked-target"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["alpha"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+[case.expect.files]
+"conf/config_default" = "irrelevant\n"
+"#,
+        r#"mkdir -p conf; echo elsewhere > conf/elsewhere; ln -s elsewhere conf/config_default"#,
+    );
+    assert_eq!(results[0].outcome, CaseOutcome::Fail);
+    assert!(
+        results[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("not a regular file"),
+        "{:?}",
+        results[0].detail
+    );
+}
+
+#[test]
+fn files_assertion_refuses_a_symlinked_parent_directory() {
+    let results = run_suite(
+        r#"
+[[case]]
+name = "symlinked-parent"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["alpha"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+[case.expect.files]
+"conf/config_default" = "irrelevant\n"
+"#,
+        r#"mkdir -p elsewhere; echo elsewhere > elsewhere/config_default; ln -s elsewhere conf"#,
+    );
+    assert_eq!(results[0].outcome, CaseOutcome::Fail);
+    // The inventory records the symlinked `conf` itself and never descends
+    // into it, so nothing under it is ever recorded: the same "does not
+    // exist" a produced app that simply never wrote the file would get.
+    assert!(
+        results[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("does not exist"),
+        "{:?}",
+        results[0].detail
+    );
+}
+
+#[test]
+fn files_assertion_refuses_a_fifo() {
+    let results = run_suite(
+        r#"
+[[case]]
+name = "fifo-target"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["alpha"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+[case.expect.files]
+"conf/config_default" = "irrelevant\n"
+"#,
+        r#"mkdir -p conf; mkfifo conf/config_default"#,
+    );
+    assert_eq!(results[0].outcome, CaseOutcome::Fail);
+    assert!(
+        results[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("not a regular file"),
+        "{:?}",
+        results[0].detail
+    );
+}
+
+#[test]
+fn files_absent_with_a_dangling_symlink_present_fails() {
+    let results = run_suite(
+        r#"
+[[case]]
+name = "dangling-symlink"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["alpha"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+files_absent = ["conf/config_default"]
+"#,
+        r#"mkdir -p conf; ln -s /nonexistent/target conf/config_default"#,
+    );
+    assert_eq!(results[0].outcome, CaseOutcome::Fail);
+    assert!(
+        results[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("must not exist"),
+        "{:?}",
+        results[0].detail
+    );
+}
+
+#[test]
+fn files_absent_ignores_content_behind_a_symlinked_directory() {
+    // A naive symlink-following walk would find `conf/secret.txt` (via
+    // `elsewhere/secret.txt`) and fail this files_absent; the inventory
+    // records the symlinked `conf` as `Other` and never descends into it,
+    // so the case passes.
+    let results = run_suite(
+        r#"
+[[case]]
+name = "symlinked-parent-hides-content"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["alpha"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+files_absent = ["conf/secret.txt"]
+"#,
+        r#"mkdir -p elsewhere; echo leaked > elsewhere/secret.txt; ln -s elsewhere conf"#,
+    );
+    assert_eq!(
+        results[0].outcome,
+        CaseOutcome::Pass,
+        "{:?}",
+        results[0].detail
+    );
+}
+
+#[test]
+fn files_assertion_accepts_a_crlf_file_normalizing_to_the_expectation() {
+    let results = run_suite(
+        r#"
+[[case]]
+name = "crlf-target"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["alpha"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+[case.expect.files]
+"greeting.txt" = "hello\n"
+"#,
+        r#"printf 'hello\r\n' > greeting.txt"#,
+    );
+    assert_eq!(
+        results[0].outcome,
+        CaseOutcome::Pass,
+        "{:?}",
+        results[0].detail
+    );
+}
+
+#[test]
+fn an_over_budget_sandbox_is_a_case_error() {
+    let results = run_suite(
+        r#"
+[[case]]
+name = "oversized-sandbox"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["alpha"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+[case.expect.files]
+"conf/config_default" = "short\n"
+"#,
+        r#"mkdir -p conf; head -c 2000000 /dev/zero | tr '\0' 'x' > conf/config_default"#,
+    );
+    assert_eq!(results[0].outcome, CaseOutcome::Fail);
+    assert!(
+        results[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("inventory budget"),
+        "{:?}",
+        results[0].detail
+    );
+}
+
+#[test]
+fn a_backgrounded_descendant_is_killed_before_assertions_run() {
+    // Inlined rather than run_suite: the sandbox (`dir`) must survive past
+    // the run to prove the write never lands even after the descendant's
+    // sleep would have elapsed, not just that the assertion beat it there.
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(
+        dir.path(),
+        "fake",
+        // Redirected away from the captured pipes: inherited, they would
+        // stay open until the backgrounded job exits on its own, which
+        // would delay case completion until well past its write.
+        r#"(sleep 0.3; echo written > race.txt) >/dev/null 2>&1 &
+exit 0"#,
+    );
+    let archetype_dir = dir.path().join("archetypes/fake");
+    fs::create_dir_all(&archetype_dir).unwrap();
+    fs::write(archetype_dir.join("spec.md"), "spec").unwrap();
+    fs::write(
+        archetype_dir.join("acceptance.toml"),
+        r#"schema = 1
+archetype = "fake"
+
+[[case]]
+name = "background-writer"
+stresses = "process-group reaping before assertions"
+expected = "pass"
+[case.run]
+argv = []
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+files_absent = ["race.txt"]
+"#,
+    )
+    .unwrap();
+    let archetype = Archetype::load(&dir.path().join("archetypes"), "fake").unwrap();
+    let isolation = Isolation::new(
+        dir.path(),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
+    )
+    .unwrap();
+    let report = run_cases(
+        &binary,
+        &archetype.suite.cases,
+        &dir.path().join("cases"),
+        &isolation,
+        &BTreeMap::new(),
+        Ok(""),
+    );
+    assert!(report.built);
+    assert_eq!(
+        report.cases[0].outcome,
+        CaseOutcome::Pass,
+        "{:?}",
+        report.cases[0].detail
+    );
+
+    // Prove the descendant was actually killed, not just outrun by a fast
+    // assertion: wait past its sleep and confirm the write never lands.
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    assert!(
+        !dir.path().join("cases/background-writer/race.txt").exists(),
+        "the backgrounded writer was not killed before it could write"
+    );
+}
+
+#[test]
+fn evidence_absent_reports_hand_rolled_pass() {
+    let mut gaps = BTreeMap::new();
+    gaps.insert(
+        "PAR01".to_string(),
+        GapEntry::Evidenced {
+            text: "named sets are specced past current capability".to_string(),
+            evidence: "uses-crate:clapfig".to_string(),
+        },
+    );
+    let toml = r#"
+[[case]]
+name = "gap-passes-without-the-crate"
+stresses = "hand-rolled pass detection"
+expected = "fail"
+gap = "PAR01"
+reason = "named sets not built yet"
+[case.run]
+argv = []
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+stdout = "hello\n"
+"#;
+
+    let without_crate = run_suite_with_evidence(
+        toml,
+        "echo hello",
+        &gaps,
+        Ok("[dependencies]\nserde = \"1\"\n"),
+    );
+    assert_eq!(without_crate[0].outcome, CaseOutcome::HandRolledPass);
+    assert!(!without_crate[0].outcome.is_expected());
+
+    let with_crate = run_suite_with_evidence(
+        toml,
+        "echo hello",
+        &gaps,
+        Ok("[dependencies]\nclapfig = \"0.24\"\n"),
+    );
+    assert_eq!(with_crate[0].outcome, CaseOutcome::UnexpectedPass);
+
+    // Unreadable, not merely absent: the evidence claim could not be
+    // checked at all, so this must not read as either a framework win
+    // (unexpected-pass) or a hand-rolled one — it's a case error.
+    let unreadable_cargo_toml =
+        run_suite_with_evidence(toml, "echo hello", &gaps, Err("permission denied"));
+    assert_eq!(unreadable_cargo_toml[0].outcome, CaseOutcome::Fail);
+    assert!(
+        unreadable_cargo_toml[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("could not be checked"),
+        "{:?}",
+        unreadable_cargo_toml[0].detail
+    );
+
+    let without_evidence = run_suite(toml, "echo hello");
+    assert_eq!(without_evidence[0].outcome, CaseOutcome::UnexpectedPass);
+}
+
+#[test]
+fn config_layering_gaps_declare_the_clapfig_evidence() {
+    for (archetype_name, gap) in [
+        ("gitlike", "PAR01"),
+        ("cargolike", "PAR01"),
+        ("gcloudlike", "PAR05"),
+    ] {
+        let archetype = Archetype::load(&corpus_archetypes_dir(), archetype_name).unwrap();
+        assert_eq!(
+            archetype.gap_evidence(gap),
+            Some(Evidence::UsesCrate("clapfig")),
+            "{archetype_name}'s {gap} gap must declare uses-crate:clapfig evidence"
+        );
+
+        // The evidence check itself: a passing gap case in a workspace
+        // without clapfig reports hand-rolled-pass, not unexpected-pass.
+        let mut gaps = BTreeMap::new();
+        gaps.insert(
+            gap.to_string(),
+            GapEntry::Evidenced {
+                text: "irrelevant for this check".to_string(),
+                evidence: "uses-crate:clapfig".to_string(),
+            },
+        );
+        let toml = format!(
+            r#"
+[[case]]
+name = "gap-passes-without-clapfig"
+stresses = "hand-rolled pass detection"
+expected = "fail"
+gap = "{gap}"
+reason = "named sets not built yet"
+[case.run]
+argv = []
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+stdout = "hello\n"
+"#
+        );
+        let without_clapfig = run_suite_with_evidence(
+            &toml,
+            "echo hello",
+            &gaps,
+            Ok("[dependencies]\nserde = \"1\"\n"),
+        );
+        assert_eq!(
+            without_clapfig[0].outcome,
+            CaseOutcome::HandRolledPass,
+            "{archetype_name}'s {gap} gap case must report hand-rolled-pass without clapfig"
+        );
+
+        let with_clapfig = run_suite_with_evidence(
+            &toml,
+            "echo hello",
+            &gaps,
+            Ok("[dependencies]\nclapfig = \"0.24\"\n"),
+        );
+        assert_eq!(with_clapfig[0].outcome, CaseOutcome::UnexpectedPass);
+    }
 }

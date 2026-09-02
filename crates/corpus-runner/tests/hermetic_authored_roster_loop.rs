@@ -52,7 +52,7 @@ fn authored_archetypes_complete_the_loop_against_a_failing_binary() {
             docs_dir: repo.join("docs"),
             agent_cmd: "agent.sh".to_string(),
             broker: None,
-            framework_version: "8.1.1".to_string(),
+            framework_version: env!("CARGO_PKG_VERSION").to_string(),
             timeouts: Timeouts::default(),
         };
 

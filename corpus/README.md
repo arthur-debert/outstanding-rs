@@ -181,9 +181,9 @@ Every archetype — `smoke` included — speaks it.
 
 ## Decision: the run-report schema
 
-`report.json`, `schema_version: 4`
+`report.json`, `schema_version: 5`
 ([ADR-0024](../docs/adr/0024-the-corpus-run-report-schema.md)). Committed
-schema-2 and schema-3 evidence still loads, unrewritten, through the typed
+schema-2 through schema-4 evidence still loads, unrewritten, through the typed
 historical-report path re-evaluation uses. Objective results and agent
 self-assessment are deliberately separate sections. The shape:
 
@@ -193,8 +193,12 @@ self-assessment are deliberately separate sections. The shape:
 - `pins` — what makes runs comparable: the crates.io framework version the
   scaffold pinned, the git commit the docs snapshot came from, the sha256 of
   the snapshot's actual bytes (the content-true pin a commit alone cannot
-  give when the tree is dirty), the exact acceptance-suite hash, and the exit
-  questionnaire's semantic fingerprint.
+  give when the tree is dirty), where that snapshot came from
+  (`docs_source`: `checkout` when the pin matches the runner's own version,
+  `tag` when `--framework-version` names another published version and
+  `provision` archived its docs from that version's git tag instead — a
+  missing tag refuses the run before the agent starts), the exact
+  acceptance-suite hash, and the exit questionnaire's semantic fingerprint.
 - `evaluation` — whether this was a full run or an isolated re-evaluation,
   the isolation record of the check boundary (backend, filesystem model,
   and the policy-derived network state: `denied` when the requested denial
@@ -226,15 +230,18 @@ self-assessment are deliberately separate sections. The shape:
   `session.agent_cmd`, and a field neither source states is absent rather
   than guessed: a session spawned through a shell command that names no
   single program records nothing it cannot parse, a scripted agent announces
-  no version or model, and a re-evaluation keeps a schema-4 source's block
+  no version or model, and a re-evaluation keeps a schema-4-or-later source's block
   or, for an older one, states only what the recorded command says. Two runs
   compare as evidence when these match; where they cannot, the comparison
   states the delta and reads as observational.
 - `acceptance` — objective: whether the produced app built, and one entry
   per suite case, each carrying the case's `expected` marker and its
-  `outcome` (`pass`, `fail`, `expected-fail`, or `unexpected-pass`, the
-  news of a gap silently closed) plus the authored `stresses`/`gap`/
-  `reason` context so the report reads without the suite beside it.
+  `outcome` (`pass`, `fail`, `expected-fail`, `unexpected-pass` — the news
+  of a gap silently closed — or `hand-rolled-pass`, the same news with the
+  manifest's `[gaps]` evidence crate absent from the produced app's
+  `Cargo.toml`, so the pass was rebuilt by hand rather than closed by the
+  framework) plus the authored `stresses`/`gap`/`reason` context so the
+  report reads without the suite beside it.
 - `invariants` — objective: the fixed invariant plan (command × output mode ×
   color × compiled theme × check). Every identity has `pass`, `fail`,
   `not-run`, or `not-applicable`; reports never improve a denominator by
@@ -308,7 +315,22 @@ exit_code = 0
 stdout = "exact bytes\n"             # exact match, LF-normalized
 stderr = ""
 stdout_lines_end_with_once = ["<id:name>"] # each suffix ends exactly one non-empty line
+files_absent = ["sub/dir/.gitlike.lock"]   # paths that must not exist after the run
+
+[case.expect.files]                  # sandbox paths read back after the run, exact
+"sub/dir/.gitlike.toml" = "log.limit = 3\n"  # content, LF-normalized like stdout/stderr
 ```
+
+A case is one invocation; `[case.run.files]` seeds a precondition, and
+`[case.expect.files]`/`files_absent` read the sandbox back afterwards — the
+only way a store-mutating command's write path is checked rather than only
+its streams. Both are lookups against one inventory of the sandbox, taken
+after the case's process group is confirmed dead, that never follows a
+symlink, refuses anything but a regular file, and errors the case (naming
+the size) rather than silently truncating a sandbox over its total byte
+budget; `[case.expect.files]` values are exact content, and a key naming a
+path the inventory has no regular-file entry for is a failure, same as a
+`files_absent` path the inventory has any entry for at all.
 
 Besides the cases, a suite may carry a declarative invariants matrix. The global
 axes are the whole plan: every command runs on every global axis
@@ -405,6 +427,8 @@ baseline does not run, the planned identities remain present as `not-run`.
 | `stdout_json_rows` | stdout parses as JSON and every value in each group co-occurs among the scalars of one single JSON array element (numbers match their decimal literal) |
 | `stdout_not_contains`, `stderr_not_contains` | no listed substring occurs in the stream |
 | `stdout_lines_end_with_once` | each suffix terminates exactly one non-empty stdout line |
+| `files` | a table of sandbox path → exact content (LF-normalized), read after the process exits |
+| `files_absent` | sandbox paths that must not exist after the process exits |
 
 Every listed string and every row group must be non-empty: an empty group or
 empty substring matches any output, so it would silently assert nothing —
@@ -450,7 +474,19 @@ cases = ["case-name", "..."]   # acceptance cases that exercise it
 
 [gaps]                          # only for partially-past-capability archetypes
 PAR01 = "what is specced past current capability, and why on purpose"
+# or, with a black-box-checkable evidence claim (D17):
+# PAR01 = { text = "...", evidence = "uses-crate:clapfig" }
 ```
+
+A `[gaps]` entry is prose alone, or prose plus `evidence`: a claim the runner
+can check against the produced workspace rather than trust at face value.
+`uses-crate:<name>` is the only kind today — the runner reads the produced
+app's `Cargo.toml` and, for a gap case that passes, reports `hand-rolled-pass`
+instead of `unexpected-pass` when the named crate is absent from
+`[dependencies]`. A black-box case cannot otherwise tell a framework-supplied
+capability from one the agent rebuilt by hand; `scorecard.py` counts these as
+`hand_rolled_passes`, separate from the ordinary pass/fail/expected-fail/
+unexpected-pass tally.
 
 ### The roster
 

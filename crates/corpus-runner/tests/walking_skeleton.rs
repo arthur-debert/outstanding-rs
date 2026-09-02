@@ -72,6 +72,10 @@ fn smoke_archetype_completes_the_loop() {
     assert_eq!(report.archetype.name, "smoke");
     assert_eq!(report.pins.framework_version, "8.1.1");
     assert_ne!(report.pins.docs_commit, "unknown");
+    assert_eq!(
+        report.pins.docs_source,
+        corpus_runner::report::DocsSource::Tag
+    );
 
     assert_eq!(report.session.exit_code, Some(0));
     assert_eq!(report.session.turns, Some(1));
