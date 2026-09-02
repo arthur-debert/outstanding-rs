@@ -117,10 +117,8 @@ writes literally into the rendered text — the framework does not sanitize
 those bytes and does not promise to. A caller that needs them gone strips
 them itself.
 
-`term-debug` (which shows tags as `[name]...[/name]` rather than resolving
-them) is internal: its tag vocabulary and exact spelling may change in any
-release, so don't build automation against its output the way you might
-against `term` or `text`.
+`term-debug` is internal ([What Is Contract](./stability.md)): do not build
+automation against its output.
 
 ## TermDebug Mode
 
@@ -138,12 +136,10 @@ Use cases:
 - Automated testing of template output
 
 TermDebug keeps every tag as literal text and shows tag placement; it does not
-check whether a tag has a matching style definition. No mode rewrites an
-unknown tag to a `[unknown?]` marker — in `Term` and `Text` an unresolved tag
-degrades to unstyled text and is recorded as a warning; run through `App::run`
-that warning is written to stderr (see [Unknown Style
-Tags](../crates/render/topics/styling-system.md#unknown-style-tags)).
-Use `validate_template` when validation is required.
+check whether a tag has a matching style definition. What the other modes do
+with an unknown tag is in [Unknown Style
+Tags](../crates/render/topics/styling-system.md#unknown-style-tags). Use
+`validate_template` when validation is required.
 
 ## Structured Modes
 
@@ -326,15 +322,12 @@ modes write their document:
 {"type":"result","data":{"items":[...],"total":42}}
 ```
 
-A failure is one `diagnostic` entry — the same flat document `json`, `yaml`
-and `csv` write, [Execution Outcomes](./execution-outcomes.md#failures-under-a-structured-mode)
-— at the point in the stream where the run failed, after whatever the handler
-already emitted, and stderr carries nothing the framework wrote for it (an
-`AppFailure` or `ExternalFailure` still writes its verbatim bytes there). A
-warning is a
-`severity: warning` diagnostic entry of kind `framework` on stdout, after the
-result or the failure, instead of the stderr prose the single-document modes
-keep. `Output::Silent` writes nothing, so a handler whose entries are its whole
+A failure is one `diagnostic` entry at the point in the stream where the run
+failed, after whatever the handler already emitted, and a warning is a
+`severity: warning` diagnostic entry of kind `framework` after the result or
+the failure; the document itself and what each stream carries are in
+[Execution Outcomes](./execution-outcomes.md#failures-under-a-structured-mode).
+`Output::Silent` writes nothing, so a handler whose entries are its whole
 result leaves only those. Binary and artifact output are render errors under
 `ndjson`, decided before anything is written: a stream of JSON lines has no
 room for a payload.
@@ -382,7 +375,7 @@ A handler whose entries *are* its result can skip the `result` line by
 returning `Output::Silent` when the stream is live — `ctx.stream().is_live()`
 is true only under `ndjson` — and `Output::Render` otherwise, so the human
 modes still render their page. That is the one presentation branch a handler
-is meant to take; see [Keep Output Mode Out of Handlers](#keep-output-mode-out-of-handlers).
+is meant to take.
 
 ## File Output
 
@@ -430,11 +423,9 @@ of whether the caller selected terminal, text, or structured output. If a
 command's behavior genuinely differs, model that as an explicit command or
 argument rather than an implicit presentation-mode branch.
 
-The one mode-aware member of the context is `ctx.stream()`, which is live only
-under `ndjson` ([NDJSON Mode](#ndjson-mode)). A handler emits its entries
-unconditionally and lets the stream discard them elsewhere; the only branch it
-takes on `is_live()` is whether to return `Output::Silent` in place of the
-`result` entry.
+The one mode-aware member of the context is `ctx.stream()`, live only under
+`ndjson`; the single branch a handler takes on it is in
+[Handler-emitted entries](#handler-emitted-entries).
 
 ## Rendering Without CLI
 

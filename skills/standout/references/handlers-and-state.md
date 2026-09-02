@@ -58,13 +58,15 @@ filtering rules, and state transitions belong behind the library interface.
 
 ## Output contract
 
-`Output<T>` has exactly these shapes:
+`Output<T>` is non-exhaustive; its shapes:
 
 - `Output::Render(data)` renders a template or serializes `data` in a structured mode.
 - `Output::Silent` completes without output.
 - `Output::Binary { data, filename }` returns bytes and a suggested filename.
+- `Output::Artifact(artifact)` returns bytes the framework writes plus a report rendered after the write.
+- `Output::WithStatus`, built by `with_exit_status`, is a `Render` or `Silent` with a declared exit status.
 
-Do not branch presentation in a handler. `CommandContext` contains `command_path`, `app_state`, and per-dispatch `extensions`; it deliberately does **not** contain `output_mode`.
+Do not branch presentation in a handler. `CommandContext` contains `command_path`, `app_state`, per-dispatch `extensions`, and `stream`; it deliberately does **not** contain `output_mode`.
 
 ## State boundaries
 

@@ -25,19 +25,17 @@ makes runs reproducible and comparable.
   are sanitized before committing: host paths become placeholders, session
   ids are zeroed, and the host's tool/plugin/connector inventory is removed
   from the init event.
-- `pilot/` — the pilot execution's committed artifacts (ROB03-WS04): one
+- `pilot/` — the pilot execution's committed artifacts: one
   `runs/<run-id>/` per pilot run (report + sanitized transcript, demo
   rules), and `scorecard.md` — the per-archetype signals, ranked friction
-  themes, and validity verdict the blessed-surface (ROB05) ADR round
-  consumes. `sanitize-run.py` is the sanitizer every committed run goes
-  through, pilot or not.
-- `rerun/` — the same archetypes run again against the 9.0 release
-  (ROB07-WS02), in the same shape: one `runs/<run-id>/` per run and
-  `scorecard.md`, which is scorecard v2 — the re-run beside the pilot, with
-  the agent delta between them stated.
+  themes, and validity verdict. `sanitize-run.py` is the sanitizer every
+  committed run goes through, pilot or not.
+- `rerun/` — the same archetypes run again against the 9.0 release, in the
+  same shape: one `runs/<run-id>/` per run and `scorecard.md`, which is
+  scorecard v2 — the re-run beside the pilot, with the agent delta between
+  them stated.
 - `completion/` — the completion six's **first** blind runs, against the
-  published 9.0 line (ROB07-WS03a/WS03b, split across the two completion
-  workstreams): one `runs/<run-id>/` per run, same demo rules, and
+  published 9.0 line: one `runs/<run-id>/` per run, same demo rules, and
   `scorecard.md`. These runs have no earlier row to compare against, so that
   scorecard is a first data point rather than a comparison.
 - `scorecard.py` — computes a scorecard's objective table from committed
@@ -57,8 +55,8 @@ makes runs reproducible and comparable.
 
 An implementation that passes its acceptance suite is committed to
 [arthur-debert/standout-corpus](https://github.com/arthur-debert/standout-corpus),
-never here (ADR-0036; the roster's structural test forbids implementation files
-under `archetypes/`). That repository holds them frozen, redirects their
+never here ([ADR-0036](../docs/adr/0036-freeze-accepted-implementations-in-a-built-corpus-repository.md);
+the roster's structural test forbids implementation files under `archetypes/`). That repository holds them frozen, redirects their
 standout dependencies onto a checked-out framework tree, and runs their suites:
 the full roster on a schedule, and a fast subset on every PR here through
 `.github/workflows/corpus.yml`. A red build there is a finding about the
@@ -114,7 +112,6 @@ Every archetype — `smoke` included — speaks it.
 
 ## Decision: the blindness protocol
 
-Recorded here as a decision and minted as
 [ADR-0023](../docs/adr/0023-the-corpus-blindness-protocol.md) (spec:
 "blindness is fragile"; partial blindness is acceptable if it is *known*).
 
@@ -154,7 +151,7 @@ Recorded here as a decision and minted as
    exposing that credential to agent-invoked build scripts.
 
    The one exception, for the agent phase only, is the **run-credential
-   broker** (`--broker`, ADR-0023's ROB07-WS01 amendment): a loopback
+   broker** (`--broker`, an amendment to ADR-0023): a loopback
    forward proxy the runner holds on the host side, outside every sandbox,
    for as long as the agent session runs. It reads the host Claude
    subscription's OAuth token from the host credential store — the runner
@@ -187,16 +184,11 @@ Recorded here as a decision and minted as
 
 ## Decision: the run-report schema
 
-`report.json`, `schema_version: 4` (recorded here and minted as
-[ADR-0024](../docs/adr/0024-the-corpus-run-report-schema.md)). Version 3 was
-one bump carrying every shape change over version 2: it replaced the single
-`isolation_backend` word with a per-capability isolation record, dropped the
-producerless `session.attempts` counter, and removed the retired check
-schema's parallel `checks` vector. Version 4 adds the `provenance` block
-below. Committed schema-2 and schema-3 evidence still loads, unrewritten,
-through the typed historical-report path re-evaluation uses. Objective
-results and agent self-assessment are deliberately separate sections. The
-shape:
+`report.json`, `schema_version: 4`
+([ADR-0024](../docs/adr/0024-the-corpus-run-report-schema.md)). Committed
+schema-2 and schema-3 evidence still loads, unrewritten, through the typed
+historical-report path re-evaluation uses. Objective results and agent
+self-assessment are deliberately separate sections. The shape:
 
 - `schema_version`, `run_id` — identity.
 - `archetype` — name plus the sha256 of the exact spec text given to the
@@ -237,14 +229,13 @@ shape:
   no version or model, and a re-evaluation keeps a schema-4 source's block
   or, for an older one, states only what the recorded command says. Two runs
   compare as evidence when these match; where they cannot, the comparison
-  states the delta and reads as observational (ADR-0024's ROB07-WS02
-  amendment).
+  states the delta and reads as observational.
 - `acceptance` — objective: whether the produced app built, and one entry
   per suite case, each carrying the case's `expected` marker and its
   `outcome` (`pass`, `fail`, `expected-fail`, or `unexpected-pass`, the
   news of a gap silently closed) plus the authored `stresses`/`gap`/
   `reason` context so the report reads without the suite beside it.
-- `invariants` — objective: the fixed ROB01 plan (command × output mode ×
+- `invariants` — objective: the fixed invariant plan (command × output mode ×
   color × compiled theme × check). Every identity has `pass`, `fail`,
   `not-run`, or `not-applicable`; reports never improve a denominator by
   omitting a cell.
@@ -280,7 +271,7 @@ without a per-run indirection.
 Every assertion is **black-box against the produced binary** — argv, env,
 stdin in; stdout, stderr, exit status, wall time out. Nothing may inspect the
 produced source, link against it, or depend on standout internals, so the
-suites survive both idiom changes (ROB05) and any framework refactor.
+suites survive both idiom changes and any framework refactor.
 
 An `acceptance.toml` is:
 
@@ -315,7 +306,7 @@ stderr = ""
 stdout_lines_end_with_once = ["<id:name>"] # each suffix ends exactly one non-empty line
 ```
 
-Besides the cases, a suite may carry a declarative ROB01 matrix. The global
+Besides the cases, a suite may carry a declarative invariants matrix. The global
 axes are the whole plan: every command runs on every global axis
 combination, and each command declares only whether its output is
 framework-rendered or intentionally opaque bytes:
@@ -361,9 +352,8 @@ baseline does not run, the planned identities remain present as `not-run`.
   which terminal EOF is sent. The pty form is how attended interactive flows —
   prompt answers, confirmations — are driven. `"stdin"` in `tty` with no
   `stdin` string is an attended terminal that never sends anything.
-- **tty.** Streams listed in `tty` are attached to a pseudo-terminal (the
-  ROB01 harness's pty seam); all others are pipes. Pty captures are normalized
-  to LF before comparison.
+- **tty.** Streams listed in `tty` are attached to a pseudo-terminal; all
+  others are pipes. Pty captures are normalized to LF before comparison.
 - **timeout_seconds** is mandatory and is itself an assertion: a run that
   exceeds it fails the case. This is how "must never hang" is expressed.
 
@@ -403,14 +393,14 @@ capability**: the case is written as if the capability existed, and its
 failure today reads as a framework gap — signal for the named parity epic —
 rather than a spec defect. The runner reports these as *expected-fail* (and an
 unexpected pass as news), never as suite errors. Gap-only archetypes
-(`tflike`, `jjlike`, landed by ROB03-WS03) use the same marker per case.
+(`tflike`, `jjlike`) use the same marker per case.
 
 ### Manifest format
 
 ```toml
 [archetype]
 name = "gitlike"          # must match the directory name
-survey = "C1"             # roster entry in the 2026-08-16 survey (Part C)
+survey = "C1"             # roster entry in the archetype survey (Part C)
 summary = "one line"
 status = "in-capability"  # or "partially-past-capability" (gaps table says where)
 
@@ -430,12 +420,12 @@ PAR01 = "what is specced past current capability, and why on purpose"
 ### The roster
 
 Every directory under `archetypes/` except `smoke` (see Layout) is a roster
-member. *Survey* is the archetype's entry in the 2026-08-16 survey (Part C);
+member. *Survey* is the archetype's entry in the archetype survey (Part C);
 *Shape* is one line — each archetype's own `spec.md` and `manifest.toml` carry
 the rest.
 
-**The pilot four** (ROB03) — the archetypes the pilot ran against 8.1.1 and
-ROB07 re-ran against 9.0.0:
+**The pilot four** — the archetypes the pilot ran against 8.1.1 and the
+re-run against 9.0.0:
 
 | Archetype | Survey | Shape |
 | --- | --- | --- |
@@ -447,16 +437,12 @@ ROB07 re-ran against 9.0.0:
 Their execution artifacts — committed run reports and a scorecard — live under
 `pilot/` for the first runs and `rerun/` for the 9.0.0 ones (see Layout above).
 
-**The completion six** (ROB07) — the survey's remaining in-capability shapes,
+**The completion six** — the survey's remaining in-capability shapes,
 authored spec-first after the pilot
-(`docs/spec/implemented/robustness-corpus-completion.md`). Their behavioral
-sketches were lost with the 2026-08-16 session record, so each spec
-reconstructs the shape from the survey's capability matrix and states in prose
-which interactions it stresses. A first blind run had to wait for the 9.0 line
-to be published, because a run against the surface that release deletes would
-measure nothing.
-All six have now run against 9.0.0; their reports, transcripts, and the
-first-run scorecard live under `completion/` (see Layout above).
+(`docs/spec/implemented/robustness-corpus-completion.md`); each spec derives
+the shape from the survey's capability matrix and states in prose which
+interactions it stresses. Their first blind runs, against 9.0.0, live under
+`completion/` (see Layout above).
 
 | Archetype | Survey | Shape |
 | --- | --- | --- |
@@ -472,8 +458,7 @@ through the full loop against a produced binary that builds and then fails
 every invocation, so a suite that cannot execute is a red test rather than a
 wasted blind run.
 
-**Two gap-only archetypes** (ROB03-WS03), every acceptance case
-`expected = "fail"`:
+**Two gap-only archetypes**, every acceptance case `expected = "fail"`:
 
 | Archetype | Survey | Shape |
 | --- | --- | --- |
@@ -484,9 +469,8 @@ Their byte-precise, runnable-today suites live in `corpus/gap-suites/` (see
 its README for the expected-fail semantics under plain `pixi run test`).
 
 **One method-coverage archetype.** `validity` is not a survey Part C CLI; it
-exists so the known-edge validity check (#365) can pin all three known-edge
-families, including the two the ROB03 pilot did not independently rediscover.
-Its spec carries an implementer construction contract (registration order, the
+exists so the known-edge validity check can pin all three known-edge
+families. Its spec carries an implementer construction contract (registration order, the
 single registered template name, an incomplete app theme) because those edges
 are invisible on a happy-path product spec.
 

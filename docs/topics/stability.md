@@ -60,18 +60,13 @@ handler's data produces — its field names and its nesting — is contract.
 Changing it changes what a consuming script parses. A document that carries a
 `schema_version` key says which version of that shape it satisfies; see
 [the versioned document](#the-versioned-document) below. `csv` takes flat
-records only: a nested value is a render error naming `CsvProjection`, never
-a flattened column ([Output Modes](./output-modes.md#csv-output)). `ndjson`
-is a stream of one object per line: the framework's own lines are the
-`{"type":"result","data":…}` entry and the diagnostic, and the entries a
-handler emits through `ctx.stream()` are the application's contract with its
-consumers ([Output Modes](./output-modes.md#ndjson-mode)). In every
-structured mode a failure is the diagnostic document on stdout, and stderr
-carries nothing the framework wrote for it; an `AppFailure` or
-`ExternalFailure` still writes its own verbatim bytes to stderr, and the
-single-document modes keep warnings as stderr prose
-([Execution Outcomes](./execution-outcomes.md#failures-under-a-structured-mode)).
-That placement and the document's field names are contract
+records only ([Output Modes](./output-modes.md#csv-output)), and `ndjson` is
+a stream of one object per line whose handler-emitted entries are the
+application's contract with its consumers
+([Output Modes](./output-modes.md#ndjson-mode)). Where a failure and the
+warnings go under each structured mode is contract as
+[Execution Outcomes](./execution-outcomes.md#failures-under-a-structured-mode)
+states it, and so are the diagnostic document's field names
 ([Error Handling](./error-handling.md#the-diagnostic-document)).
 
 **Human modes** (`text`, `term`): the bytes are **not** contract. Themes,
@@ -79,10 +74,9 @@ wording, column widths and layout may change in any release. What is contract
 is the pair of properties a script can rely on without reading words:
 
 - *The style transformation.* `text` removes Standout's style tags and adds no
-  ANSI of its own. `term` turns every resolved style tag into ANSI. Neither
-  half reaches ANSI that a handler or a template writes literally — the
-  framework does not sanitize those bytes and does not promise to, so a caller
-  who needs them gone strips them itself.
+  ANSI of its own; `term` turns every resolved style tag into ANSI; neither
+  touches ANSI a handler or a template wrote literally
+  ([Term vs Text](./output-modes.md#term-vs-text)).
 - *The split between the streams.* Data goes to stdout; diagnostics and
   warnings go to stderr.
 
@@ -248,13 +242,10 @@ A schema file's contents are evidence, not contract, like any snapshot.
 
 ## Where this comes from
 
+[ADR-0033](../adr/0033-state-which-surfaces-are-contract.md) decides what this
+page says;
+[ADR-0032](../adr/0032-bless-one-item-per-axis-behind-a-capability-map.md)
+carries the blessed set and the capability map behind item 1;
 [ADR-0039](../adr/0039-version-the-document-and-mark-the-surface-with-a-trait.md)
 records the versioned document, the `ContractSurface` marker and the schema
-snapshot, and retires the hold ADR-0029 placed on structured help.
-
-[ADR-0033](../adr/0033-state-which-surfaces-are-contract.md) decides what this
-page says, including the alternatives that were rejected:
-declaring the whole public API contract, declaring nothing contract, and
-declaring the human-mode bytes contract.
-[ADR-0032](../adr/0032-bless-one-item-per-axis-behind-a-capability-map.md)
-carries the blessed set and the capability map behind item 1.
+snapshot.

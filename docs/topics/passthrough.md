@@ -4,8 +4,9 @@ Every other way of registering a command — the `Dispatch` derive,
 `command_with`, a `#[handler]` function — assumes the handler hands back
 something serializable that Standout can render or serialize. A passthrough
 command is the one registration shape without that assumption: the handler
-writes its own bytes and returns `Result<(), anyhow::Error>`. ADR-0032 keeps
-it as a secondary path for that reason: nothing else on the registration axis
+writes its own bytes and returns `Result<(), anyhow::Error>`.
+[ADR-0032](../adr/0032-bless-one-item-per-axis-behind-a-capability-map.md)
+keeps it as a secondary path for that reason: nothing else on the registration axis
 accepts a signature with no serializable output and no render.
 
 Reach for it when a command's job is genuinely "run this external process and
