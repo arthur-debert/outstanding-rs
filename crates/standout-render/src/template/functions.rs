@@ -15,7 +15,7 @@
 //!
 //! ## Auto-Dispatch (render or serialize based on mode)
 //!
-//! For structured modes (Json, Yaml, Csv, Xml), these skip templating and
+//! For structured modes (Json, Yaml, Csv), these skip templating and
 //! serialize data directly. For text modes, they render the template.
 //!
 //! | Function | Extra Features |
@@ -97,7 +97,6 @@ fn output_mode_to_transform(mode: OutputMode) -> TagTransform {
         | OutputMode::Text
         | OutputMode::Json
         | OutputMode::Yaml
-        | OutputMode::Xml
         | OutputMode::Csv => TagTransform::Remove,
     }
 }
@@ -540,18 +539,7 @@ fn render_auto_with_engine_split_kind(
         let output = match mode {
             OutputMode::Json => serde_json::to_string_pretty(data)?,
             OutputMode::Yaml => serde_yaml::to_string(data)?,
-            OutputMode::Xml => crate::util::serialize_to_xml(data)?,
-            OutputMode::Csv => {
-                let (headers, rows) = crate::util::flatten_json_for_csv(data);
-
-                let mut wtr = csv::Writer::from_writer(Vec::new());
-                wtr.write_record(&headers)?;
-                for row in rows {
-                    wtr.write_record(&row)?;
-                }
-                let bytes = wtr.into_inner()?;
-                String::from_utf8(bytes)?
-            }
+            OutputMode::Csv => crate::util::write_csv(data)?,
             _ => unreachable!("is_structured() returned true for non-structured mode"),
         };
         Ok(RenderResult::plain(output))
@@ -1033,72 +1021,22 @@ mod tests {
     }
 
     #[test]
-    fn test_render_auto_xml_mode_named_struct() {
-        let theme = Theme::new();
-
-        #[derive(Serialize)]
-        #[serde(rename = "root")]
-        struct Data {
-            name: String,
-            count: usize,
-        }
-
-        let data = Data {
-            name: "test".into(),
-            count: 42,
-        };
-
-        let output = render_auto("unused template", &data, &theme, OutputMode::Xml).unwrap();
-
-        // RenderRequest carries JSON, so XML uses the JSON object root
-        // (`data`), not the struct's `#[serde(rename = "root")]`.
-        assert!(output.contains("<data>"));
-        assert!(output.contains("<name>test</name>"));
-    }
-
-    #[test]
-    fn test_render_auto_xml_mode_json_map() {
+    fn test_render_auto_csv_mode_flat_records() {
         use serde_json::json;
 
         let theme = Theme::new();
-        let data = json!({"name": "test", "count": 42});
+        let data = json!([
+            {"name": "Alice", "score": 10},
+            {"name": "Bob", "score": 20}
+        ]);
 
-        let output = render_auto("unused template", &data, &theme, OutputMode::Xml).unwrap();
+        let output = render_auto("unused", &data, &theme, OutputMode::Csv).unwrap();
 
-        assert!(output.contains("<data>"));
-        assert!(output.contains("<name>test</name>"));
-        assert!(output.contains("<count>42</count>"));
+        assert_eq!(output, "name,score\nAlice,10\nBob,20\n");
     }
 
     #[test]
-    fn test_render_auto_xml_mode_nested_map() {
-        use serde_json::json;
-
-        let theme = Theme::new();
-        let data = json!({"user": {"name": "Alice", "age": 30}});
-
-        let output = render_auto("unused template", &data, &theme, OutputMode::Xml).unwrap();
-
-        assert!(output.contains("<data>"));
-        assert!(output.contains("<user>"));
-        assert!(output.contains("<name>Alice</name>"));
-    }
-
-    #[test]
-    fn test_render_auto_xml_mode_with_array() {
-        use serde_json::json;
-
-        let theme = Theme::new();
-        let data = json!({"items": ["a", "b", "c"]});
-
-        let output = render_auto("unused template", &data, &theme, OutputMode::Xml).unwrap();
-
-        assert!(output.contains("<data>"));
-        assert!(output.contains("<items>a</items>"));
-    }
-
-    #[test]
-    fn test_render_auto_csv_mode_auto_flatten() {
+    fn test_render_auto_csv_mode_refuses_a_nested_value() {
         use serde_json::json;
 
         let theme = Theme::new();
@@ -1107,11 +1045,10 @@ mod tests {
             {"name": "Bob", "stats": {"score": 20}}
         ]);
 
-        let output = render_auto("unused", &data, &theme, OutputMode::Csv).unwrap();
-
-        assert!(output.contains("name,stats.score"));
-        assert!(output.contains("Alice,10"));
-        assert!(output.contains("Bob,20"));
+        let error = render_auto("unused", &data, &theme, OutputMode::Csv).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("`[0].stats` is an object"), "{message}");
+        assert!(message.contains("CsvProjection"), "{message}");
     }
 
     #[test]
@@ -1139,25 +1076,6 @@ mod tests {
         assert!(lines.contains(&"Alice,admin"));
         assert!(lines.contains(&"Bob,user"));
         assert!(!output.contains("30"));
-    }
-
-    #[test]
-    fn test_render_auto_csv_mode_with_array_field() {
-        use serde_json::json;
-
-        let theme = Theme::new();
-        let data = json!([
-            {"name": "Alice", "tags": ["admin", "user"]},
-            {"name": "Bob", "tags": ["user"]}
-        ]);
-
-        let output = render_auto("unused", &data, &theme, OutputMode::Csv).unwrap();
-
-        assert!(output.contains("tags.0"));
-        assert!(output.contains("tags.1"));
-        assert!(output.contains("admin"));
-        assert!(output.contains("user"));
-        assert!(!output.contains("[\""));
     }
 
     #[test]

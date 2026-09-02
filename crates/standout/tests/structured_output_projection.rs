@@ -81,16 +81,7 @@ fn command_with_output() -> Command {
             .long("output")
             .value_name("MODE")
             .global(true)
-            .value_parser([
-                "auto",
-                "term",
-                "text",
-                "term-debug",
-                "json",
-                "yaml",
-                "xml",
-                "csv",
-            ])
+            .value_parser(["auto", "term", "text", "term-debug", "json", "yaml", "csv"])
             .default_value("auto"),
     )
 }
@@ -166,16 +157,10 @@ fn csv_projection_preserves_canonical_output_in_other_modes() {
     assert!(yaml.contains("paths:"));
     assert!(yaml.find("report:") < yaml.find("totals:"));
     assert!(yaml.find("totals:") < yaml.find("skipped:"));
-
-    let xml = direct_dispatch(&app, OutputMode::Xml);
-    assert!(xml.contains("<report>"));
-    assert!(xml.contains("<skipped>"));
-    assert!(xml.find("<report>") < xml.find("<totals>"));
-    assert!(xml.find("<totals>") < xml.find("<skipped>"));
 }
 
 #[test]
-fn commands_without_a_projection_keep_automatic_csv_flattening() {
+fn commands_without_a_projection_take_flat_records() {
     let app = App::builder()
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(

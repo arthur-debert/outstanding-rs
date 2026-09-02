@@ -2,7 +2,7 @@ use clap::Command;
 use serde_json::json;
 use standout::cli::FnHandler;
 use standout::cli::{
-    App, Artifact, Diagnostic, ExternalFailure, HandlerResult, HookError, Hooks, Output,
+    App, Artifact, Diagnostic, ExitStatus, ExternalFailure, HandlerResult, HookError, Hooks, Output,
 };
 use standout::EmbeddedTemplates;
 
@@ -11,6 +11,7 @@ const TEMPLATES: &[(&str, &str)] = &[
     ("hook-fail", "{{ message }}"),
     ("render-fail", "{{ message }}"),
     ("ok", "{{ message }}"),
+    ("signal", "{{ message }}"),
     ("warn-ok", "{{ message }}"),
     ("huge", "{{ message }}"),
     ("artifact", ARTIFACT_TEMPLATE),
@@ -33,6 +34,7 @@ fn command() -> Command {
     Command::new("outcome-fixture")
         .version("1.2.3")
         .subcommand(Command::new("ok"))
+        .subcommand(Command::new("signal"))
         .subcommand(Command::new("fail"))
         .subcommand(Command::new("silent"))
         .subcommand(Command::new("binary"))
@@ -56,6 +58,15 @@ fn app() -> App {
         .command_with(
             "ok",
             FnHandler::new(|_, _| Ok(Output::Render(json!({ "message": "ok" })))),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .command_with(
+            "signal",
+            FnHandler::new(|_, _| {
+                Ok(Output::Render(json!({ "message": "changes" }))
+                    .with_exit_status(ExitStatus::from(2)))
+            }),
             |cfg| cfg,
         )
         .unwrap()

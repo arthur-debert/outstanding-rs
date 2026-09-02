@@ -1,5 +1,5 @@
 //! [`OutputMode`] controls how rendering behaves, from terminal colors to
-//! structured serialization (JSON/YAML/XML/CSV, which skip template
+//! structured serialization (JSON/YAML/CSV, which skip template
 //! rendering entirely). `Auto` is resolved from the request
 //! ([`crate::ColorPolicy::Auto`] plus stdout capability on
 //! [`crate::TargetProperties`]) by callers at the edge — this module never
@@ -62,7 +62,6 @@ pub enum OutputMode {
     TermDebug,
     Json,
     Yaml,
-    Xml,
     Csv,
 }
 
@@ -76,10 +75,7 @@ impl OutputMode {
     }
 
     pub fn is_structured(&self) -> bool {
-        matches!(
-            self,
-            OutputMode::Json | OutputMode::Yaml | OutputMode::Xml | OutputMode::Csv
-        )
+        matches!(self, OutputMode::Json | OutputMode::Yaml | OutputMode::Csv)
     }
 }
 

@@ -1,6 +1,6 @@
 //! `preserve_order` (crates/standout-render/Cargo.toml) makes the
-//! standalone `render_request_split` entry point emit JSON, YAML, and XML
-//! object keys in the data's declaration order rather than alphabetically.
+//! standalone `render_request_split` entry point emit JSON, YAML, and CSV
+//! keys in the data's declaration order rather than alphabetically.
 //! `App` dispatch (crates/standout) delegates here, so this is the shared
 //! seam both paths run through; see docs/topics/output-modes.md
 //! "Key ordering".
@@ -80,10 +80,10 @@ fn yaml_keeps_declaration_order() {
 }
 
 #[test]
-fn xml_keeps_declaration_order() {
-    let result = render_request_split(&request(OutputMode::Xml)).unwrap();
-    assert_ascending(
-        &result.formatted,
-        &["<name>", "<zone>", "<machine_type>", "<status>"],
+fn csv_keeps_declaration_order() {
+    let result = render_request_split(&request(OutputMode::Csv)).unwrap();
+    assert_eq!(
+        result.formatted,
+        "name,zone,machine_type,status\nweb-1,us-east1-b,n2-standard-2,RUNNING\n"
     );
 }

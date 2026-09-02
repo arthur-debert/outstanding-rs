@@ -1183,7 +1183,7 @@ impl App {
             hooks.run_pre_dispatch(matches, &mut ctx)?;
         }
 
-        let result = handler(matches, &ctx);
+        let result = handler(matches, &ctx).map(|output| output.split_exit_status().0);
 
         let output = match result {
             Ok(HandlerOutput::Render(data)) => {
@@ -1302,16 +1302,8 @@ fn duplicate_help_word(claim: &str) -> SetupError {
 const HELP_PROBE_SHORT: &str = "__standout_help_short";
 const HELP_PROBE_LONG: &str = "__standout_help_long";
 
-pub(crate) const OUTPUT_MODE_FLAG_VALUES: [&str; 8] = [
-    "auto",
-    "term",
-    "text",
-    "term-debug",
-    "json",
-    "yaml",
-    "xml",
-    "csv",
-];
+pub(crate) const OUTPUT_MODE_FLAG_VALUES: [&str; 7] =
+    ["auto", "term", "text", "term-debug", "json", "yaml", "csv"];
 
 fn parse_output_mode_flag(value: &str) -> Option<OutputMode> {
     match value {
@@ -1321,7 +1313,6 @@ fn parse_output_mode_flag(value: &str) -> Option<OutputMode> {
         "term-debug" => Some(OutputMode::TermDebug),
         "json" => Some(OutputMode::Json),
         "yaml" => Some(OutputMode::Yaml),
-        "xml" => Some(OutputMode::Xml),
         "csv" => Some(OutputMode::Csv),
         _ => None,
     }

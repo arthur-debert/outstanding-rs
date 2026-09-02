@@ -185,19 +185,27 @@ fn test_app_output_mode_csv() {
         .build()
         .expect("Failed to build app");
 
-    let output = app
+    let error = app
         .render_with(
             standout::TemplateRef::Inline((simple_template()).to_string()),
             &TestData::sample(),
             OutputMode::Csv,
             standout::TargetProperties::detect(),
         )
-        .expect("Render failed");
+        .expect_err("a nested `items` array is not a flat record")
+        .to_string();
+    assert!(error.contains("`items` is an array"), "{error}");
+    assert!(error.contains("CsvProjection"), "{error}");
 
-    assert!(output.contains("name"));
-    assert!(output.contains("count"));
-    assert!(output.contains("test"));
-    assert!(output.contains("42"));
+    let output = app
+        .render_with(
+            standout::TemplateRef::Inline((simple_template()).to_string()),
+            &serde_json::json!({ "name": "test", "count": 42 }),
+            OutputMode::Csv,
+            standout::TargetProperties::detect(),
+        )
+        .expect("Render failed");
+    assert_eq!(output, "name,count\ntest,42\n");
 }
 
 #[test]
@@ -356,19 +364,16 @@ fn test_local_app_output_mode_csv() {
         .build()
         .expect("Failed to build app");
 
-    let output = app
+    let error = app
         .render_with(
             standout::TemplateRef::Inline((simple_template()).to_string()),
             &TestData::sample(),
             OutputMode::Csv,
             standout::TargetProperties::detect(),
         )
-        .expect("Render failed");
-
-    assert!(output.contains("name"));
-    assert!(output.contains("count"));
-    assert!(output.contains("test"));
-    assert!(output.contains("42"));
+        .expect_err("a nested `items` array is not a flat record")
+        .to_string();
+    assert!(error.contains("CsvProjection"), "{error}");
 }
 
 #[test]

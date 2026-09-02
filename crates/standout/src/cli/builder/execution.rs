@@ -154,15 +154,25 @@ impl App {
                 Err(e) => return DispatchResult::Error(e),
             };
 
-            let (output, request) = match dispatch_output {
-                DispatchOutput::Text { formatted, raw } => {
-                    (RenderedOutput::Text(TextOutput::new(formatted, raw)), None)
+            let (output, request, status) = match dispatch_output {
+                DispatchOutput::Text {
+                    formatted,
+                    raw,
+                    status,
+                } => (
+                    RenderedOutput::Text(TextOutput::new(formatted, raw)),
+                    None,
+                    status,
+                ),
+                DispatchOutput::Binary(b, f) => {
+                    (RenderedOutput::Binary(b, f), None, ExitStatus::SUCCESS)
                 }
-                DispatchOutput::Binary(b, f) => (RenderedOutput::Binary(b, f), None),
-                DispatchOutput::Artifact { output, request } => {
-                    (RenderedOutput::Artifact(output), Some(request))
-                }
-                DispatchOutput::Silent => (RenderedOutput::Silent, None),
+                DispatchOutput::Artifact { output, request } => (
+                    RenderedOutput::Artifact(output),
+                    Some(request),
+                    ExitStatus::SUCCESS,
+                ),
+                DispatchOutput::Silent { status } => (RenderedOutput::Silent, None, status),
             };
 
             let mut final_output = if let Some(hooks) = hooks {
@@ -187,6 +197,11 @@ impl App {
             });
 
             if let RenderedOutput::Artifact(artifact) = final_output {
+                if status != ExitStatus::SUCCESS {
+                    return DispatchResult::Error(
+                        super::super::dispatch::status_without_a_carrier(status, "artifact"),
+                    );
+                }
                 // The artifact path renders its report inside `complete_artifact`,
                 // so the strict gate lives there, after that render and before any
                 // bytes are written.
@@ -228,12 +243,19 @@ impl App {
             }
 
             match final_output {
-                RenderedOutput::Text(t) => DispatchResult::Handled(RunOutput::command(t.formatted)),
+                RenderedOutput::Text(t) => DispatchResult::Handled(
+                    RunOutput::command(t.formatted).with_exit_status(status),
+                ),
+                RenderedOutput::Binary(_, _) if status != ExitStatus::SUCCESS => {
+                    DispatchResult::Error(super::super::dispatch::status_without_a_carrier(
+                        status, "binary",
+                    ))
+                }
                 RenderedOutput::Binary(b, f) => DispatchResult::Binary(b, f),
                 RenderedOutput::Artifact(_) => unreachable!("artifacts returned above"),
-                RenderedOutput::Silent => {
-                    DispatchResult::Handled(RunOutput::command(String::new()))
-                }
+                RenderedOutput::Silent => DispatchResult::Handled(
+                    RunOutput::command(String::new()).with_exit_status(status),
+                ),
             }
         } else {
             DispatchResult::NoMatch(matches)
@@ -463,7 +485,7 @@ impl App {
         self.seed_startup_warnings(&warnings);
         let _capture = standout_render::diagnostics::begin_capture();
         let (mut outcome, output_mode) = inner(warnings.clone());
-        if outcome.exit_status() == Some(ExitStatus::SUCCESS) {
+        if outcome.success_kind().is_some() {
             if let Some(error) = self.strict_style_tags_error(&warnings) {
                 outcome = DispatchResult::Error(error);
             }

@@ -1,7 +1,9 @@
 //! Declarative projections for machine-readable output.
 //!
 //! A projection is a presentation-layer view over a canonical serialized
-//! response. It never mutates the value used by other output modes.
+//! response. It never mutates the value used by other output modes. Its row
+//! source is a dot path into the response, or `.` for the response itself;
+//! an array there is one row per element, a record is one row.
 
 use std::fmt;
 use std::rc::Rc;
@@ -58,11 +60,15 @@ impl CsvProjection {
                 path: self.row_source.clone(),
             }
         })?;
-        let rows = rows
-            .as_array()
-            .ok_or_else(|| ProjectionError::RowSourceNotArray {
-                path: self.row_source.clone(),
-            })?;
+        let rows: Vec<&Value> = match rows {
+            Value::Array(items) => items.iter().collect(),
+            Value::Object(_) => vec![rows],
+            _ => {
+                return Err(ProjectionError::RowSourceNotRecords {
+                    path: self.row_source.clone(),
+                })
+            }
+        };
 
         let spec = FlatDataSpec::new(
             self.columns
@@ -87,6 +93,7 @@ impl CsvProjection {
         for row in rows {
             wtr.write_record(self.extract_row(&spec, row, root))?;
         }
+
         for row in self
             .synthetic_rows
             .iter()
@@ -197,8 +204,8 @@ impl CsvProjectionBuilder {
 pub enum ProjectionError {
     #[error("projection row source `{path}` was not found")]
     MissingRowSource { path: String },
-    #[error("projection row source `{path}` is not an array")]
-    RowSourceNotArray { path: String },
+    #[error("projection row source `{path}` is neither a record nor an array of records")]
+    RowSourceNotRecords { path: String },
     #[error(transparent)]
     Csv(#[from] csv::Error),
     #[error(transparent)]
@@ -208,6 +215,9 @@ pub enum ProjectionError {
 }
 
 fn value_at_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+    if path == "." {
+        return Some(value);
+    }
     path.split('.')
         .try_fold(value, |current, segment| match current {
             Value::Object(object) => object.get(segment),
@@ -287,6 +297,36 @@ mod tests {
         assert_eq!(
             projection().render(&root).unwrap(),
             "LANGUAGE,CODE,NET\nRust,-,-2\nTOTAL,-,-2\n"
+        );
+    }
+
+    #[test]
+    fn the_document_itself_is_a_row_source_and_a_record_is_one_row() {
+        let projection = CsvProjection::builder(".")
+            .column(column("summary", "summary"))
+            .column(column("range.start.line", "range_line").null_repr(""))
+            .build();
+
+        assert_eq!(
+            projection
+                .render(&json!({ "summary": "bad line", "range": { "start": { "line": 2 } } }))
+                .unwrap(),
+            "summary,range_line\nbad line,2\n"
+        );
+        assert_eq!(
+            projection.render(&json!({ "summary": "bad" })).unwrap(),
+            "summary,range_line\nbad,\n"
+        );
+        assert_eq!(
+            projection
+                .render(&json!([{ "summary": "a" }, { "summary": "b" }]))
+                .unwrap(),
+            "summary,range_line\na,\nb,\n"
+        );
+        let error = projection.render(&json!("text")).unwrap_err();
+        assert!(
+            matches!(error, ProjectionError::RowSourceNotRecords { ref path } if path == "."),
+            "{error}"
         );
     }
 

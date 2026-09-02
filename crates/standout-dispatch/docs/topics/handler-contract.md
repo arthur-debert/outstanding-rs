@@ -306,6 +306,11 @@ concrete types, preserves each diagnostic verbatim, and exposes them as
 use status `1`; this is not a general exit-code mapping mechanism. Handlers must
 not print or call `process::exit` themselves.
 
+A *successful* run declares a status through the output, not through an error:
+`Output::Render(data).with_exit_status(ExitStatus::from(2))` is a success that
+exits `2` — the document still reaches stdout and nothing becomes a diagnostic.
+See [Execution Outcomes](../../../topics/execution-outcomes.md#status-and-streams).
+
 ---
 
 ## The Output Enum
@@ -319,11 +324,17 @@ pub enum Output<T: Serialize> {
     Silent,
     Binary { data: Vec<u8>, filename: String },
     Artifact(Artifact<T>),
+    WithStatus { output: Box<Output<T>>, status: ExitStatus },
 }
 ```
 
 `Output` is `#[non_exhaustive]`: matches on it need a `_` arm so later shapes
-can be added without breaking downstream code.
+can be added without breaking downstream code. `WithStatus` is built by
+`with_exit_status` and wraps a `Render` or `Silent` output together with the
+exit status the handler chose; `split_exit_status()` takes it apart,
+`exit_status()` reads it (`SUCCESS` when none was declared), `map_render(f)`
+reaches the rendered value through it, and the `is_*` predicates answer for the
+wrapped output. Declaring a status on `Binary` or `Artifact` is a render error.
 
 ### Output::Render(T)
 
