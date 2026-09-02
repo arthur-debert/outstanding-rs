@@ -173,6 +173,40 @@ fn batch_rejects_an_out_dir_inside_the_source_checkout() {
     assert!(stderr.contains("inside source checkout"), "{stderr}");
 }
 
+#[test]
+fn batch_rejects_runs_dir_and_out_being_the_same_directory() {
+    let scratch = tempfile::tempdir().unwrap();
+    let shared = scratch.path().join("shared");
+    std::fs::create_dir_all(&shared).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_corpus-runner"))
+        .args([
+            "batch",
+            "smoke",
+            "--framework-version",
+            env!("CARGO_PKG_VERSION"),
+            "--agent-cmd",
+            "agent.sh",
+            "--runs-dir",
+        ])
+        .arg(&shared)
+        .arg("--out")
+        .arg(&shared)
+        .current_dir(repo())
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "batch should refuse --out and --runs-dir resolving to the same directory"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("must not be the same directory"),
+        "{stderr}"
+    );
+}
+
 /// Deletes `out_dir` on drop: `batch` creates it (via `create_dir_all`)
 /// before rejecting it as being inside the checkout.
 struct RemoveOnDrop(std::path::PathBuf);

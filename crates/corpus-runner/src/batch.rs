@@ -51,6 +51,9 @@ pub fn batch(config: &BatchConfig) -> anyhow::Result<Vec<(String, ArchetypeOutco
         "batch output directory",
         "--out",
     )?;
+    std::fs::create_dir_all(&config.runs_dir)
+        .with_context(|| format!("creating runs directory {}", config.runs_dir.display()))?;
+    require_distinct_directories(&config.out_dir, &config.runs_dir)?;
 
     let outcomes: Vec<(String, ArchetypeOutcome)> = config
         .archetypes
@@ -62,6 +65,31 @@ pub fn batch(config: &BatchConfig) -> anyhow::Result<Vec<(String, ArchetypeOutco
         .context("writing batch scorecards")?;
 
     Ok(outcomes)
+}
+
+/// Rejects `--out` and `--runs-dir` resolving to the same directory, or one
+/// nesting inside the other. `run_one` sanitizes an archetype's evidence
+/// into `--out` and then removes its scratch subdirectory of `--runs-dir`;
+/// were the two configured to overlap, that removal would delete the
+/// sanitized copy it just wrote instead of only the scratch original.
+fn require_distinct_directories(out_dir: &Path, runs_dir: &Path) -> anyhow::Result<()> {
+    let canonical_out = out_dir
+        .canonicalize()
+        .with_context(|| format!("resolving batch output directory {}", out_dir.display()))?;
+    let canonical_runs = runs_dir
+        .canonicalize()
+        .with_context(|| format!("resolving runs directory {}", runs_dir.display()))?;
+    if canonical_out == canonical_runs
+        || canonical_out.starts_with(&canonical_runs)
+        || canonical_runs.starts_with(&canonical_out)
+    {
+        bail!(
+            "--out {} and --runs-dir {} must not be the same directory or nested in each other",
+            canonical_out.display(),
+            canonical_runs.display()
+        );
+    }
+    Ok(())
 }
 
 fn run_one(config: &BatchConfig, archetype: &str) -> ArchetypeOutcome {
@@ -164,6 +192,61 @@ mod tests {
         let path = dir.join(name);
         std::fs::write(&path, body).unwrap();
         path
+    }
+
+    #[test]
+    fn require_distinct_directories_rejects_the_same_directory() {
+        let scratch = tempfile::tempdir().unwrap();
+        let dir = scratch.path().join("shared");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let err = require_distinct_directories(&dir, &dir).unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("must not be the same directory"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn require_distinct_directories_rejects_runs_dir_nested_under_out() {
+        let scratch = tempfile::tempdir().unwrap();
+        let out_dir = scratch.path().join("out");
+        let runs_dir = out_dir.join("runs");
+        std::fs::create_dir_all(&runs_dir).unwrap();
+
+        let err = require_distinct_directories(&out_dir, &runs_dir).unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("must not be the same directory"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn require_distinct_directories_rejects_out_nested_under_runs_dir() {
+        let scratch = tempfile::tempdir().unwrap();
+        let runs_dir = scratch.path().join("runs");
+        let out_dir = runs_dir.join("out");
+        std::fs::create_dir_all(&out_dir).unwrap();
+
+        let err = require_distinct_directories(&out_dir, &runs_dir).unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("must not be the same directory"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn require_distinct_directories_accepts_sibling_directories() {
+        let scratch = tempfile::tempdir().unwrap();
+        let out_dir = scratch.path().join("out");
+        let runs_dir = scratch.path().join("runs");
+        std::fs::create_dir_all(&out_dir).unwrap();
+        std::fs::create_dir_all(&runs_dir).unwrap();
+
+        require_distinct_directories(&out_dir, &runs_dir).unwrap();
     }
 
     #[test]
