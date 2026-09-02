@@ -100,7 +100,8 @@ Ok(list_view(matches).empty_exit_status(3).output())
 `ListViewResult::into_output` (which `.output()` calls) returns
 `Output::Render(list)`, and when `items` is empty and a status was declared,
 `Output::Render(list).with_exit_status(status)`. The list still renders — the
-template's "No items found" branch, or `{"items":[]}` under `--output json` —
+template's "No items found" branch, or `{"schema_version":1,"items":[]}` under
+`--output json` —
 and the process exits with the declared status. See [Execution
 Outcomes](./execution-outcomes.md#status-and-streams) for what a declared
 status is and is not.

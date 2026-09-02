@@ -15,7 +15,7 @@ rewrites — and the form that runs today under plain `pixi run test`.
 epics close:
 
 - `tests/tflike_diagnostic.rs` — gates **PAR02** (machine contract,
-  `docs/spec/parity-machine-contract.md`). All seven assertions are promoted and the
+  `docs/spec/implemented/parity-machine-contract.md`). All seven assertions are promoted and the
   gate reads `closed`; the group runs green against the in-repo fixture.
 - `tests/tflike_progress.rs` — gates **PAR03** (terminal citizenship,
   `docs/spec/parity-terminal-citizenship.md`). PAR03 is done when this group turns green.

@@ -23,7 +23,7 @@ With help handling on, standout:
 2. **Keeps** clap's native `--help`/`-h` flag, on purpose: clap's flag short-circuits argument validation, so `myapp build --help` renders even when required arguments are missing
 3. Intercepts all help requests and renders them through a MiniJinja template with style tags — the `help` word, which clap routes like any other subcommand, and clap's `DisplayHelp` (from `--help`/`-h`, at root and subcommand level)
 
-Every form that is available renders the same help, through the same template and theme, and `--output` reaches every form alike: `myapp help --output text` and `myapp --help --output text` both render in text mode. The two are answered differently — the word is a subcommand, so clap parses its line in full, globals included, while `--help` short-circuits inside clap before the parse completes — so the flags take their mode from a scan of the raw argv for the output flag: the last occurrence wins, `--output text` and `--output=text` alike, and nothing after `--` counts. A value that is not a mode (`--output txt`) is a clap usage error, exit 2, whichever form asked.
+Every form that is available renders the same help, through the same template and theme, and `--output` reaches every form alike: `myapp help --output text` and `myapp --help --output text` both render in text mode. The two are answered differently — the word is a subcommand, so clap parses its line in full, globals included, while `--help` short-circuits inside clap before the parse completes — so the flags take their mode from a scan of the raw argv for the output flag: the last occurrence wins, `--output text` and `--output=text` alike, and nothing after `--` counts. A value that is not a mode (`--output txt`) is a clap usage error, exit 2, wherever clap reaches it: after the word, or before `--help` on the line. After `--help` it is never reached, because clap stops at the flag, so `myapp --help --output txt` renders the page in the fallback mode.
 
 Subcommand-level help (e.g. `myapp build --help`) also works, rendering that subcommand's help through standout.
 
@@ -153,7 +153,7 @@ OPTIONS
   -c, --color <BOOL>  Enable ANSI color
   --output            Output format
                       default: auto
-                      possible values: auto, term, text, term-debug, json, yaml, csv
+                      possible values: auto, term, text, term-debug, json, yaml, csv, ndjson
   --output-file-path  Write output to file instead of stdout
 ```
 
@@ -229,7 +229,7 @@ COMMANDS
 OPTIONS
   --output      Output format
                 default: auto
-                possible values: auto, term, text, term-debug, json, yaml, csv
+                possible values: auto, term, text, term-debug, json, yaml, csv, ndjson
   -h, --help    Print help
 ```
 
@@ -563,4 +563,4 @@ $ myapp deps --help --output json
 
 The document lists clap's own `-h`/`--help` and `-V`/`--version` and the framework's `--output` flag, because a script reading it wants every argument the command accepts. It is `standout::cli::HelpDocument` (with `HelpArg` and `HelpSubcommand`), so a test can read it back with serde. `render_help` and `render_help_with_topics` produce the same document for a `HelpConfig` whose `output_mode` is `Json` or `Yaml`.
 
-`csv` has no help projection: `--help --output csv` is a render error, emitted as the diagnostic document of kind `render` that every structured-mode failure produces (see [Error Handling](./error-handling.md)). Topic pages — `help topics` and `help <topic>` — are prose in every mode and stay so.
+`csv` has no help projection: `--help --output csv` is a render error, emitted as the diagnostic document of kind `render` that every structured-mode failure produces (see [Error Handling](./error-handling.md)). `ndjson` has no help entry: `--help --output ndjson` renders the page as `auto` does. Topic pages — `help topics` and `help <topic>` — are prose in every mode and stay so.

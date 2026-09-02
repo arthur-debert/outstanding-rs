@@ -54,9 +54,9 @@ pipeline in detail.
   application never opens the file or words a success it hasn't earned.
 - **I — Keep one data contract across modes.** `auto`, `term`, and `text` render
   the MiniJinja template and transform semantic style tags. `term-debug` keeps
-  the tags visible. Structured `json`, `yaml`, and `csv` modes serialize
-  handler data directly and bypass templates, including template-injected
-  context.
+  the tags visible. Structured `json`, `yaml`, `csv` and `ndjson` modes
+  serialize handler data directly and bypass templates, including
+  template-injected context.
 - **A — Use MiniJinja and semantic CSS.** Put layout in file-backed MiniJinja
   templates and appearance in CSS classes such as `.title` or `.warning`.
   Define adaptive overrides with `@media (prefers-color-scheme: light)` and

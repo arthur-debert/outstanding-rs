@@ -52,16 +52,23 @@ deliberate: an item kept with a stated reason cannot be quietly removed as
 
 ### 2. The structural shape of each `--output` mode's bytes
 
-`--output` accepts `auto`, `term`, `text`, `term-debug`, `json`, `yaml` and
-`csv`. All seven are classified here.
+`--output` accepts `auto`, `term`, `text`, `term-debug`, `json`, `yaml`, `csv`
+and `ndjson`. All eight are classified here.
 
-**Structured modes** (`json`, `yaml`, `csv`): the document a handler's
-data produces — its field names and its nesting — is contract. Changing it
-changes what a consuming script parses. A document that carries a
+**Structured modes** (`json`, `yaml`, `csv`, `ndjson`): the document a
+handler's data produces — its field names and its nesting — is contract.
+Changing it changes what a consuming script parses. A document that carries a
 `schema_version` key says which version of that shape it satisfies; see
 [the versioned document](#the-versioned-document) below. `csv` takes flat
 records only: a nested value is a render error naming `CsvProjection`, never
-a flattened column ([Output Modes](./output-modes.md#csv-output)).
+a flattened column ([Output Modes](./output-modes.md#csv-output)). `ndjson`
+is a stream of one object per line: the framework's own lines are the
+`{"type":"result","data":…}` entry and the diagnostic, and the entries a
+handler emits through `ctx.stream()` are the application's contract with its
+consumers ([Output Modes](./output-modes.md#ndjson-mode)). In every
+structured mode a failure is the diagnostic document on stdout, with stderr
+silent; that placement and the document's field names are contract
+([Error Handling](./error-handling.md#the-diagnostic-document)).
 
 **Human modes** (`text`, `term`): the bytes are **not** contract. Themes,
 wording, column widths and layout may change in any release. What is contract

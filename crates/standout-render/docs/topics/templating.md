@@ -100,7 +100,7 @@ Two exceptions:
 - The `~` concatenation operator formats inside MiniJinja's evaluator, which
   exposes no hook: `{{ "x" ~ flag }}` yields `xTrue`. Write `{{ "x" }}{{ flag }}`
   or `{{ "x" ~ flag | string }}`.
-- Structured output (JSON, YAML, CSV) skips templates entirely and
+- Structured output (JSON, YAML, CSV, NDJSON) skips templates entirely and
   serializes your data directly, so those modes follow their format's own rules.
 
 If you build a `minijinja::Environment` yourself, use
@@ -415,13 +415,13 @@ When handler data and context variables have the same key, **handler data wins**
 
 ## Structured Output
 
-For machine-readable output (JSON, YAML, CSV), templates are bypassed entirely:
+For machine-readable output (JSON, YAML, CSV, NDJSON), templates are bypassed entirely:
 
 ```rust
 use standout_render::{render_auto, OutputMode};
 
 // Template is used for Term/Text modes
-// Data is serialized directly for Json/Yaml/Csv
+// Data is serialized directly for Json/Yaml/Csv/Ndjson
 let output = render_auto(template, &data, &theme, OutputMode::Json)?;
 ```
 
