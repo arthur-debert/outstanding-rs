@@ -320,8 +320,18 @@ where
         .to_string()
 }
 
+fn standalone_help(mode: OutputMode) -> Result<String, standout::RenderError> {
+    render_help(
+        &help_command(),
+        Some(HelpConfig {
+            output_mode: Some(mode),
+            ..Default::default()
+        }),
+    )
+}
+
 #[test]
-fn help_path_agrees_byte_for_byte_and_stays_human_under_structured_output() {
+fn help_path_agrees_byte_for_byte_with_standalone_help_in_every_mode() {
     let app = App::builder().help_handling(true).build().unwrap();
 
     let auto = help_page(&app, help_command(), ["app", "help"]);
@@ -329,82 +339,58 @@ fn help_path_agrees_byte_for_byte_and_stays_human_under_structured_output() {
         auto.contains("USAGE") && auto.contains("Demo"),
         "app help-path must render human help:\n{auto}"
     );
-
-    for mode in ["json", "yaml", "csv", "xml"] {
-        let structured = help_page(
-            &app,
-            help_command(),
-            vec!["app".into(), "help".into(), format!("--output={mode}")],
-        );
-        assert_eq!(
-            auto, structured,
-            "help --output={mode} must equal Auto help (ADR-0029 maps structured modes to Auto)"
-        );
-        assert!(
-            !structured.trim_start().starts_with('{'),
-            "{mode} must not emit a JSON help document:\n{structured}"
-        );
-    }
-
-    let via_standalone = render_help(
-        &help_command(),
-        Some(HelpConfig {
-            output_mode: Some(OutputMode::Text),
-            ..Default::default()
-        }),
-    )
-    .unwrap();
+    let via_standalone = standalone_help(OutputMode::Text).unwrap();
     assert!(
         via_standalone.contains("USAGE") && via_standalone.contains("Demo"),
         "standalone render_help must render human help:\n{via_standalone}"
     );
 
-    let mut standalone_pages = Vec::new();
-    for mode in [
-        OutputMode::Json,
-        OutputMode::Yaml,
-        OutputMode::Csv,
-        OutputMode::Xml,
-    ] {
-        let structured = render_help(
-            &help_command(),
-            Some(HelpConfig {
-                output_mode: Some(mode),
-                ..Default::default()
-            }),
-        )
-        .unwrap();
-        assert!(
-            !structured.trim_start().starts_with('{'),
-            "{mode:?} must not emit a JSON help document:\n{structured}"
-        );
-        standalone_pages.push((mode, structured));
-    }
-    let first = &standalone_pages[0].1;
-    for (mode, page) in &standalone_pages[1..] {
-        assert_eq!(
-            first, page,
-            "standalone {mode:?} help must equal {:?} help",
-            standalone_pages[0].0
-        );
-    }
+    let xml = help_page(&app, help_command(), ["app", "help", "--output=xml"]);
+    assert_eq!(
+        auto, xml,
+        "xml carries no help document, so it stays the page"
+    );
+    assert_eq!(standalone_help(OutputMode::Xml).unwrap(), via_standalone);
+
+    let app_json = help_page(&app, help_command(), ["app", "help", "--output=json"]);
+    let app_yaml = help_page(&app, help_command(), ["app", "help", "--output=yaml"]);
+    assert!(
+        !app_json.contains("USAGE") && !app_yaml.contains("USAGE"),
+        "json and yaml must emit the help document, not the page:\n{app_json}\n{app_yaml}"
+    );
+    let json_document: serde_json::Value = serde_json::from_str(&app_json).unwrap();
+    let yaml_document: serde_json::Value = serde_yaml::from_str(&app_yaml).unwrap();
+    assert_eq!(
+        json_document, yaml_document,
+        "the two document modes carry the same help document"
+    );
+    assert_eq!(json_document["usage"], "app [OPTIONS]");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&standalone_help(OutputMode::Json).unwrap())
+            .unwrap()["usage"],
+        "app",
+        "standalone help documents the bare command, without the framework's flags"
+    );
+    assert!(
+        standalone_help(OutputMode::Csv).is_err(),
+        "csv has no help projection"
+    );
 }
 
 #[test]
-fn app_help_word_stays_human_under_structured_output() {
+fn app_help_word_answers_with_the_document_under_json() {
     let app = App::builder().help_handling(true).build().unwrap();
     let cmd = Command::new("app")
         .about("Demo")
-        .subcommand(Command::new("greet"));
+        .subcommand(Command::new("greet").about("Say hi"));
 
     let human = help_page(&app, cmd.clone(), ["app", "help"]);
+    assert!(human.contains("USAGE"), "{human}");
+
     let structured = help_page(&app, cmd, ["app", "help", "--output=json"]);
-    assert_eq!(
-        human, structured,
-        "help word under --output=json must equal Auto help"
-    );
-    assert!(
-        !structured.trim_start().starts_with('{'),
-        "help --output=json must not emit a JSON document:\n{structured}"
-    );
+    let document: serde_json::Value = serde_json::from_str(&structured).unwrap();
+    assert_eq!(document["schema_version"], 1);
+    assert_eq!(document["name"], "app");
+    assert_eq!(document["about"], "Demo");
+    assert_eq!(document["subcommands"][0]["name"], "greet");
 }

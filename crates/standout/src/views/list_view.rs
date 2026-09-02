@@ -1,29 +1,63 @@
-use serde::Serialize;
+use serde::ser::SerializeStruct;
+use serde::{Serialize, Serializer};
 
 use super::{Message, MessageLevel};
 use crate::tabular::TabularSpec;
+use crate::ContractSurface;
 
-#[derive(Debug, Clone, Serialize)]
+/// Serializes as a versioned framework document: `schema_version` first,
+/// then `items`, then each optional field that is set.
+#[derive(Debug, Clone)]
 pub struct ListViewResult<T> {
     pub items: Vec<T>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub intro: Option<String>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub ending: Option<String>,
-
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub messages: Vec<Message>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub total_count: Option<usize>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub filter_summary: Option<String>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub tabular_spec: Option<TabularSpec>,
+}
+
+impl<T> ContractSurface for ListViewResult<T> {
+    const SCHEMA_VERSION: u32 = 1;
+}
+
+impl<T: Serialize> Serialize for ListViewResult<T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let present = [
+            self.intro.is_some(),
+            self.ending.is_some(),
+            !self.messages.is_empty(),
+            self.total_count.is_some(),
+            self.filter_summary.is_some(),
+            self.tabular_spec.is_some(),
+        ]
+        .iter()
+        .filter(|set| **set)
+        .count();
+        let mut document = serializer.serialize_struct("ListViewResult", 2 + present)?;
+        document.serialize_field("schema_version", &Self::SCHEMA_VERSION)?;
+        document.serialize_field("items", &self.items)?;
+        if let Some(intro) = &self.intro {
+            document.serialize_field("intro", intro)?;
+        }
+        if let Some(ending) = &self.ending {
+            document.serialize_field("ending", ending)?;
+        }
+        if !self.messages.is_empty() {
+            document.serialize_field("messages", &self.messages)?;
+        }
+        if let Some(total_count) = &self.total_count {
+            document.serialize_field("total_count", total_count)?;
+        }
+        if let Some(filter_summary) = &self.filter_summary {
+            document.serialize_field("filter_summary", filter_summary)?;
+        }
+        if let Some(tabular_spec) = &self.tabular_spec {
+            document.serialize_field("tabular_spec", tabular_spec)?;
+        }
+        document.end()
+    }
 }
 
 impl<T> ListViewResult<T> {
@@ -209,7 +243,7 @@ mod tests {
             .build();
 
         let json = serde_json::to_string(&result).unwrap();
-        assert!(json.contains("\"items\":[\"item1\",\"item2\"]"));
+        assert!(json.starts_with("{\"schema_version\":1,\"items\":[\"item1\",\"item2\"]"));
         assert!(json.contains("\"intro\":\"Header\""));
         assert!(json.contains("\"warning\""));
     }
@@ -219,6 +253,7 @@ mod tests {
         let result = list_view(vec![1]).build();
         let json = serde_json::to_string(&result).unwrap();
 
+        assert_eq!(json, "{\"schema_version\":1,\"items\":[1]}");
         assert!(!json.contains("\"intro\""));
         assert!(!json.contains("\"ending\""));
         assert!(!json.contains("\"messages\""));

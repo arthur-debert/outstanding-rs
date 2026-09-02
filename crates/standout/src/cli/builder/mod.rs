@@ -37,8 +37,9 @@ use super::group::CommandRecipe;
 use super::handler::{CommandContext, Extensions, HandlerResult, Output as HandlerOutput};
 use super::help::data::{extract_help_data, extract_help_data_with_topics};
 use super::help::{
-    default_help_theme, human_help_format, named_or_inline_template, render_via_request,
-    CommandGroup, HelpConfig, HelpLength, DEFAULT_HELP_TEMPLATE,
+    default_help_theme, help_is_a_document, human_help_format, named_or_inline_template,
+    render_help_document, render_via_request, CommandGroup, HelpConfig, HelpLength,
+    DEFAULT_HELP_TEMPLATE,
 };
 use super::hooks::{ArtifactOutput, HookError, HookPhase, Hooks, RenderedOutput, TextOutput};
 use super::questionnaire::QuestionnaireCommand;
@@ -881,7 +882,7 @@ impl App {
         target: Option<crate::TargetProperties>,
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
-        let format = human_help_format(self.extract_output_mode(matches));
+        let format = self.extract_output_mode(matches);
         let target = self.help_target_properties(target);
         let config = HelpConfig {
             command_groups: self.help_command_groups.clone(),
@@ -919,6 +920,9 @@ impl App {
         warnings: Option<standout_render::warnings::WarningBuffer>,
         use_pager: bool,
     ) -> HelpDisplay {
+        if help_is_a_document(format) {
+            return self.help_document(cmd, &[], config.length, format);
+        }
         let template = match self.help_template(
             config.template.as_deref(),
             crate::assets::HELP_TEMPLATE_NAME,
@@ -929,16 +933,38 @@ impl App {
         };
         let data = extract_help_data_with_topics(
             cmd,
+            &[],
             &self.registry,
             config.command_groups.as_deref(),
             config.length,
             &target,
-        );
+        )
+        .expect("the root is always at the empty path");
         self.help_display(
             cmd,
-            self.render_help_surface(&data, template, format, target, warnings),
+            self.render_help_surface(&data, template, human_help_format(format), target, warnings),
             use_pager,
         )
+    }
+
+    /// The versioned help document (spec D9) for the command at `path`,
+    /// never paged; a `csv` request is the render error the mode has no
+    /// projection for.
+    fn help_document(
+        &self,
+        cmd: &Command,
+        path: &[&str],
+        length: HelpLength,
+        format: OutputMode,
+    ) -> HelpDisplay {
+        match render_help_document(cmd, path, length, format) {
+            Ok(Some(text)) => HelpDisplay::Rendered { text, paged: false },
+            Ok(None) => HelpDisplay::Clap(cmd.clone().error(
+                clap::error::ErrorKind::InvalidSubcommand,
+                format!("The subcommand '{}' wasn't recognized", path.join(" ")),
+            )),
+            Err(e) => Self::render_failure(cmd, e),
+        }
     }
 
     fn render_help_for_display_help_error(
@@ -949,7 +975,7 @@ impl App {
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
         let request = Self::help_request(cmd, args);
-        let format = human_help_format(self.extract_output_mode_from_unparsed(args));
+        let format = self.extract_output_mode_from_unparsed(args);
         let target = self.help_target_properties(target);
         let config = HelpConfig {
             command_groups: self.help_command_groups.clone(),
@@ -1029,6 +1055,7 @@ impl App {
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
         let sub_name = keywords[0];
+        let page_format = human_help_format(format);
 
         if sub_name == "topics" {
             let template = match self.help_template(
@@ -1043,30 +1070,33 @@ impl App {
                 topics_list_data(&self.registry, &format!("{} help", cmd.get_name()), &target);
             return self.help_display(
                 cmd,
-                self.render_help_surface(&data, template, format, target, warnings),
+                self.render_help_surface(&data, template, page_format, target, warnings),
                 use_pager,
             );
         }
 
-        if super::app::find_subcommand(cmd, sub_name).is_some() {
-            if let Some(help_cmd) = super::app::find_subcommand_recursive(cmd, keywords) {
-                let template = match self.help_template(
-                    config.template.as_deref(),
-                    crate::assets::HELP_TEMPLATE_NAME,
-                    DEFAULT_HELP_TEMPLATE,
-                ) {
-                    Ok(template) => template,
-                    Err(e) => return Self::render_failure(cmd, e),
-                };
-                let data = extract_help_data(
-                    help_cmd,
-                    config.command_groups.as_deref(),
-                    config.length,
-                    &target,
-                );
+        if super::app::find_subcommand_recursive(cmd, keywords).is_some() {
+            if help_is_a_document(format) {
+                return self.help_document(cmd, keywords, config.length, format);
+            }
+            let template = match self.help_template(
+                config.template.as_deref(),
+                crate::assets::HELP_TEMPLATE_NAME,
+                DEFAULT_HELP_TEMPLATE,
+            ) {
+                Ok(template) => template,
+                Err(e) => return Self::render_failure(cmd, e),
+            };
+            if let Some(data) = extract_help_data(
+                cmd,
+                keywords,
+                config.command_groups.as_deref(),
+                config.length,
+                &target,
+            ) {
                 return self.help_display(
                     cmd,
-                    self.render_help_surface(&data, template, format, target, warnings),
+                    self.render_help_surface(&data, template, page_format, target, warnings),
                     use_pager,
                 );
             }
@@ -1083,7 +1113,13 @@ impl App {
             };
             return self.help_display(
                 cmd,
-                self.render_help_surface(&topic_data(topic), template, format, target, warnings),
+                self.render_help_surface(
+                    &topic_data(topic),
+                    template,
+                    page_format,
+                    target,
+                    warnings,
+                ),
                 use_pager,
             );
         }

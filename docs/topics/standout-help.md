@@ -432,7 +432,7 @@ The template receives a `HelpData` struct with these fields:
 | Variable | Type | Description |
 | ---------- | ------ | ------------- |
 | `about` | String | The command's `about`, or its `long_about` — see [Short and long help](#short-and-long-help) |
-| `usage` | String | Usage line (without "Usage: " prefix) |
+| `usage` | String | Usage line (without "Usage: " prefix), naming the full command path — `app nest leaf [OPTIONS]` for a nested leaf |
 | `subcommands` | Vec | Command groups (each with `title`, `help`, `items`) |
 | `subcommands_width` | usize | Width of the COMMANDS name column |
 | `arguments` | Vec | Positional groups (each with `title`, `help`, `items`) |
@@ -518,7 +518,7 @@ Style tags like `[header]...[/header]` are resolved against the theme. A tag the
 
 ## Output Modes
 
-The `help` word, `--help` and `-h` all respect the `--output` flag, but only as far as *styling*. Help is always the rendered template; the mode decides what happens to its style tags — applied in `Term`, stripped in `Text`, left visible as `[header]…[/header]` in `TermDebug`:
+The `help` word, `--help` and `-h` all respect the `--output` flag. In the human modes help is the rendered template, and the mode decides what happens to its style tags — applied in `Term`, stripped in `Text`, left visible as `[header]…[/header]` in `TermDebug`:
 
 ```bash
 myapp help --output text
@@ -527,4 +527,40 @@ myapp --help --output text
 
 Without the flag, every form renders in the app's [output-mode fallback](./app-configuration.md#output-mode-fallback), which is `Auto` — styling for the terminal it finds — unless the app set another one.
 
-The structured modes (`json`, `yaml`, `xml`, `csv`) strip the tags exactly as `Text` does. None of them serializes `HelpData`, so help is themed prose in every mode, not a machine-readable document. If you need help as data, render it yourself: `HelpData` is what a [custom template](#custom-templates) receives, and a template that emits JSON is the seam for it.
+### Help as data
+
+Under `json` and `yaml`, every form answers with the **help document** instead of the page: one versioned document a script can read the way it reads any other `--output json` result.
+
+```bash
+$ myapp deps --help --output json
+{
+  "schema_version": 1,
+  "name": "deps",
+  "path": ["myapp", "deps"],
+  "usage": "myapp deps [OPTIONS] <FORMULA>",
+  "about": "The transitive dependency closure of a formula.",
+  "args": [
+    {"name": "formula", "short": null, "long": null, "value_name": "FORMULA", "required": true,
+     "help": "The formula to resolve.", "default": null, "possible_values": []},
+    {"name": "tree", "short": null, "long": "--tree", "value_name": null, "required": false,
+     "help": "Show the closure as a tree instead of a set.", "default": null, "possible_values": []},
+    {"name": "help", "short": "-h", "long": "--help", "value_name": null, "required": false,
+     "help": "Print help", "default": null, "possible_values": []}
+  ],
+  "subcommands": []
+}
+```
+
+| Field | Meaning |
+| ------- | --------- |
+| `schema_version` | The version of this document's shape, `1` today — see [What Is Contract](./stability.md#the-versioned-document) |
+| `name` | The command's own name |
+| `path` | The words from the root to the command, `["myapp", "deps"]` |
+| `usage` | The usage line, naming the full path |
+| `about` | `about` for `-h`, `long_about` (falling back to `about`) for `--help` and the `help` word |
+| `args` | Every visible argument, positionals first, in display order: `name` is the clap id, `short` and `long` are the tokens as typed (`-t`, `--tree`), `value_name` is the metavar when the argument takes a value, `required`, `help`, `default` and `possible_values` are clap's |
+| `subcommands` | Every visible subcommand's `name` and `about` |
+
+The document lists clap's own `-h`/`--help` and `-V`/`--version` and the framework's `--output` flag, because a script reading it wants every argument the command accepts. It is `standout::cli::HelpDocument` (with `HelpArg` and `HelpSubcommand`), so a test can read it back with serde. `render_help` and `render_help_with_topics` produce the same document for a `HelpConfig` whose `output_mode` is `Json` or `Yaml`.
+
+`csv` has no help projection: `--help --output csv` is a render error, emitted as the diagnostic document of kind `render` that every structured-mode failure produces (see [Error Handling](./error-handling.md)). `xml` keeps the human page. Topic pages — `help topics` and `help <topic>` — are prose in every mode and stay so.

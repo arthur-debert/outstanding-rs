@@ -12,17 +12,51 @@ use crate::{
     SharedTemplateEngine, TargetProperties, TemplateRef, Theme,
 };
 
-use super::config::{default_help_theme, HelpConfig};
+use super::config::{default_help_theme, HelpConfig, HelpLength};
 use super::data::{extract_help_data, extract_help_data_with_topics};
+use super::document::HelpDocument;
 
 pub(crate) const DEFAULT_HELP_TEMPLATE: &str = include_str!("template.txt");
 
+/// Under a single-document mode help is data, not the page: `json` and
+/// `yaml` serialize the document, and `csv`, which has no help projection,
+/// is a render error.
+pub(crate) fn help_is_a_document(mode: OutputMode) -> bool {
+    matches!(mode, OutputMode::Json | OutputMode::Yaml | OutputMode::Csv)
+}
+
+/// The mode the human help page renders in: a structured mode that carries
+/// no help document falls back to the terminal's own resolution.
 pub(crate) fn human_help_format(mode: OutputMode) -> OutputMode {
     if mode.is_structured() {
         OutputMode::Auto
     } else {
         mode
     }
+}
+
+/// The help document at `path` under `root` in `mode`, without the newline
+/// the process edge appends; `None` when no command sits at that path. `csv`
+/// has no help projection, so it is a render error.
+pub(crate) fn render_help_document(
+    root: &Command,
+    path: &[&str],
+    length: HelpLength,
+    mode: OutputMode,
+) -> Result<Option<String>, RenderError> {
+    if !matches!(mode, OutputMode::Json | OutputMode::Yaml) {
+        return Err(RenderError::OperationError(format!(
+            "the help document has no {mode:?} projection"
+        )));
+    }
+    let Some(document) = HelpDocument::extract(root, path, length) else {
+        return Ok(None);
+    };
+    let mut text = standout_render::serialize_document(&document, mode)?;
+    while text.ends_with('\n') {
+        text.pop();
+    }
+    Ok(Some(text))
 }
 
 fn resolve_help_theme(configured: Option<Theme>) -> Theme {
@@ -137,8 +171,19 @@ pub(crate) fn render_via_request<T: Serialize>(
     render_request(&request)
 }
 
+fn standalone_document(cmd: &Command, config: &HelpConfig) -> Option<Result<String, RenderError>> {
+    let mode = config.output_mode.unwrap_or(OutputMode::Auto);
+    help_is_a_document(mode).then(|| {
+        render_help_document(cmd, &[], config.length, mode)
+            .map(|document| document.expect("the root is always at the empty path"))
+    })
+}
+
 pub fn render_help(cmd: &Command, config: Option<HelpConfig>) -> Result<String, RenderError> {
     let config = config.unwrap_or_default();
+    if let Some(document) = standalone_document(cmd, &config) {
+        return document;
+    }
     let theme = resolve_help_theme(config.theme);
     let template = match config.template.as_deref() {
         Some(source) => inline_template_ref(source, &theme, HELP_TEMPLATE_NAME)?,
@@ -147,10 +192,12 @@ pub fn render_help(cmd: &Command, config: Option<HelpConfig>) -> Result<String, 
     let target = TargetProperties::detect();
     let data = extract_help_data(
         cmd,
+        &[],
         config.command_groups.as_deref(),
         config.length,
         &target,
-    );
+    )
+    .expect("the root is always at the empty path");
     render_via_request(
         &data,
         template,
@@ -170,6 +217,9 @@ pub fn render_help_with_topics(
     config: Option<HelpConfig>,
 ) -> Result<String, RenderError> {
     let config = config.unwrap_or_default();
+    if let Some(document) = standalone_document(cmd, &config) {
+        return document;
+    }
     let theme = resolve_help_theme(config.theme);
     let template = match config.template.as_deref() {
         Some(source) => inline_template_ref(source, &theme, HELP_TEMPLATE_NAME)?,
@@ -178,11 +228,13 @@ pub fn render_help_with_topics(
     let target = TargetProperties::detect();
     let data = extract_help_data_with_topics(
         cmd,
+        &[],
         registry,
         config.command_groups.as_deref(),
         config.length,
         &target,
-    );
+    )
+    .expect("the root is always at the empty path");
     render_via_request(
         &data,
         template,
@@ -206,31 +258,49 @@ mod tests {
         Command::new("app").about("Demo")
     }
 
+    fn help_in(mode: OutputMode) -> Result<String, RenderError> {
+        render_help(
+            &cmd(),
+            Some(HelpConfig {
+                output_mode: Some(mode),
+                ..Default::default()
+            }),
+        )
+    }
+
     #[test]
-    fn structured_modes_still_print_human_help() {
-        for mode in [
-            OutputMode::Json,
-            OutputMode::Yaml,
-            OutputMode::Csv,
-            OutputMode::Xml,
-        ] {
-            let output = render_help(
-                &cmd(),
-                Some(HelpConfig {
-                    output_mode: Some(mode),
-                    ..Default::default()
-                }),
-            )
-            .unwrap();
-            assert!(
-                output.contains("USAGE"),
-                "{mode:?} must print human help, got:\n{output}"
-            );
-            assert!(
-                !output.trim_start().starts_with('{'),
-                "{mode:?} must not emit a JSON help document:\n{output}"
-            );
-        }
+    fn json_and_yaml_answer_with_the_help_document() {
+        let json = help_in(OutputMode::Json).unwrap();
+        let document: HelpDocument = serde_json::from_str(&json).unwrap();
+        assert_eq!(document.schema_version, 1);
+        assert_eq!(document.path, ["app"]);
+        assert!(!json.contains("USAGE"), "{json}");
+        assert!(!json.ends_with('\n'), "{json:?}");
+
+        let yaml = help_in(OutputMode::Yaml).unwrap();
+        assert!(yaml.starts_with("schema_version: 1\nname: app\n"), "{yaml}");
+    }
+
+    #[test]
+    fn csv_has_no_help_projection() {
+        let error = help_in(OutputMode::Csv).unwrap_err().to_string();
+        assert!(error.contains("no Csv projection"), "{error}");
+    }
+
+    #[test]
+    fn xml_still_prints_the_human_page() {
+        let output = help_in(OutputMode::Xml).unwrap();
+        assert!(output.contains("USAGE"), "{output}");
+    }
+
+    #[test]
+    fn a_mode_is_either_the_page_or_the_document() {
+        assert!(help_is_a_document(OutputMode::Json));
+        assert!(help_is_a_document(OutputMode::Yaml));
+        assert!(help_is_a_document(OutputMode::Csv));
+        assert!(!help_is_a_document(OutputMode::Xml));
+        assert!(!help_is_a_document(OutputMode::Text));
+        assert!(!help_is_a_document(OutputMode::Auto));
     }
 
     #[test]

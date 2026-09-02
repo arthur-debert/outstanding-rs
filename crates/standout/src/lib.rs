@@ -76,6 +76,9 @@ pub use standout_macros::{embed_styles, embed_templates, handler};
 
 pub use standout_macros::{Tabular, TabularRow};
 
+pub use standout_dispatch::{ContractSurface, Envelope};
+pub use standout_macros::ContractSurface;
+
 pub use standout_seeker as seeker;
 
 pub use standout_dispatch as dispatch;
