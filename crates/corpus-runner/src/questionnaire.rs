@@ -185,8 +185,8 @@ mod tests {
     // A rejected field (confidence answered as more than one line, which
     // ADR-0016 forbids for a scalar) is a diagnostic on a sheet that was
     // found, not the absence of one: `collected` stays true, and every
-    // other answer — including the field's own free-text sibling — is kept
-    // (#462).
+    // other answer — including the field's own free-text sibling — is
+    // kept.
     #[test]
     fn a_field_that_does_not_decode_keeps_the_answers_that_did() {
         let dir = tempfile::tempdir().unwrap();

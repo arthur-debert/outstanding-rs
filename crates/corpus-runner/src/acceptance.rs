@@ -124,11 +124,12 @@ pub fn not_run_invariants(invariants: &Invariants, reason: &str) -> Vec<Invarian
     sweep_plan(invariants, |_, _, _| ModeRuns::new(), reason, None)
 }
 
-// Declining `--output` entirely (#461) is a fact about the binary, not one
+// Declining `--output` entirely is a fact about the binary, not one
 // command: probed once, ahead of the matrix, against the binary's own
-// `--help`. A probe that cannot complete (the binary crashes, hangs, or is
-// missing) states nothing about that choice, so the matrix still runs and
-// lets the real invocations report whatever that failure actually is.
+// `--help`. A probe that cannot complete (the binary crashes, hangs, exits
+// nonzero, or is missing) states nothing about that choice, so the matrix
+// still runs and lets the real invocations report whatever that failure
+// actually is.
 fn accepts_output_flag(
     binary: &Path,
     timeout: Duration,
@@ -144,9 +145,37 @@ fn accepts_output_flag(
         &home,
         &[],
     ) {
-        Ok((_, page)) => page.contains("--output"),
+        Ok((Some(0), stdout, stderr)) => {
+            mentions_output_flag(&stdout) || mentions_output_flag(&stderr)
+        }
+        Ok(_) => true,
         Err(_) => true,
     }
+}
+
+// Matches `--output` as its own token: neither side may be flanked by an
+// alphanumeric, `-`, or `_`, so a longer flag like `--output-file-path` or
+// `--no-output` doesn't count, while `[--output]`, `--output=json` and
+// `--output <mode>` do.
+fn mentions_output_flag(page: &str) -> bool {
+    const FLAG: &str = "--output";
+    let is_word_char = |c: char| c.is_alphanumeric() || c == '-' || c == '_';
+    for (pos, _) in page.match_indices(FLAG) {
+        let before_ok = page[..pos]
+            .chars()
+            .next_back()
+            .map(|c| !is_word_char(c))
+            .unwrap_or(true);
+        let after_ok = page[pos + FLAG.len()..]
+            .chars()
+            .next()
+            .map(|c| !is_word_char(c))
+            .unwrap_or(true);
+        if before_ok && after_ok {
+            return true;
+        }
+    }
+    false
 }
 
 type ModeRuns = BTreeMap<&'static str, Result<(Option<i32>, String), String>>;
@@ -159,14 +188,18 @@ fn sweep_plan(
 ) -> Vec<InvariantCell> {
     let mut cells = Vec::new();
     for command in &invariants.commands {
-        // `either` (#467) is resolved once, from the command's first evaluated
-        // cell, and held for the rest of that command's plan.
+        // `either` is resolved once, from the command's first cell
+        // that actually settles it, and held for the rest of that command's
+        // plan. A cell that gives no real evidence either way — some or all
+        // of its modes never ran (spawn error, timeout) — locks in no
+        // contract; if no cell ever settles it, no contract is ever locked
+        // and each cell's checks fail on their own errors instead.
         let mut resolved_either: Option<InvariantContract> = None;
         for color in &invariants.colors {
             for theme in &invariants.themes {
                 let runs = mode_runs(command, *color, theme);
                 if command.contract == InvariantContract::Either && resolved_either.is_none() {
-                    resolved_either = Some(resolve_either_contract(&runs));
+                    resolved_either = resolve_either_contract(&runs);
                 }
                 let contract = match command.contract {
                     InvariantContract::Either => {
@@ -193,28 +226,38 @@ fn sweep_plan(
     cells
 }
 
-// Whichever of `rendered` or `opaque-bytes` the binary's first evaluated cell
-// satisfies: JSON-mode output that parses as JSON is rendered; failing that,
-// a non-text mode whose bytes match the text baseline is opaque. Neither
-// signal is available (e.g. the command errored everywhere), defaults to
-// `rendered` so the ambiguity surfaces as ordinary check failures rather
-// than vanishing as not-applicable.
-fn resolve_either_contract(runs: &ModeRuns) -> InvariantContract {
-    if let Some(Ok((_, page))) = runs.get(InvariantMode::Json.as_str()) {
+// Whichever of `rendered` or `opaque-bytes` a cell's runs positively
+// establish, each read only from a clean (exit 0) invocation so a failure's
+// stray output can't lock in the wrong contract: JSON-mode output that
+// parses as JSON is rendered; failing that, a non-text mode whose bytes
+// match the text baseline is opaque. Either signal, once found, settles it
+// regardless of what else in the cell failed to run or exited nonzero.
+// Absent a positive signal, the cell only defaults to `rendered`
+// (surfacing the ambiguity as ordinary check failures rather than
+// vanishing as not-applicable) when every planned mode actually ran — a
+// cell missing some of its modes (spawn error, timeout) gives no real
+// evidence either way, so it settles nothing and `None` lets a later cell
+// decide.
+fn resolve_either_contract(runs: &ModeRuns) -> Option<InvariantContract> {
+    if let Some(Ok((Some(0), page))) = runs.get(InvariantMode::Json.as_str()) {
         if serde_json::from_str::<serde_json::Value>(page).is_ok() {
-            return InvariantContract::Rendered;
+            return Some(InvariantContract::Rendered);
         }
     }
-    if let Some(Ok((_, text))) = runs.get(InvariantMode::Text.as_str()) {
+    if let Some(Ok((Some(0), text))) = runs.get(InvariantMode::Text.as_str()) {
         for mode in [InvariantMode::Term, InvariantMode::Json] {
-            if let Some(Ok((_, page))) = runs.get(mode.as_str()) {
+            if let Some(Ok((Some(0), page))) = runs.get(mode.as_str()) {
                 if page == text {
-                    return InvariantContract::OpaqueBytes;
+                    return Some(InvariantContract::OpaqueBytes);
                 }
             }
         }
     }
-    InvariantContract::Rendered
+    if runs.values().all(|run| run.is_ok()) {
+        Some(InvariantContract::Rendered)
+    } else {
+        None
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -366,12 +409,11 @@ fn applicability_reason(
     check: &str,
     equal_across_modes: bool,
 ) -> String {
-    if !equal_across_modes
-        && matches!(
-            check,
-            "styling preserves text layout" | "opaque output preserves text bytes"
-        )
-    {
+    // `equal_across_modes` is the reason a check doesn't apply only when the
+    // contract and mode would otherwise have let it run: reusing
+    // `check_applies` with `equal_across_modes` forced true is what confirms
+    // that. Otherwise the mismatch is about contract or mode, handled below.
+    if !equal_across_modes && check_applies(contract, mode, check, true) {
         return "command's content varies by output mode".to_string();
     }
     match (contract, check) {
@@ -427,6 +469,7 @@ fn run_mode(
         }
     }
     run_binary(binary, &args, timeout, isolation, invocation.home, &env)
+        .map(|(exit_code, stdout, _stderr)| (exit_code, stdout))
 }
 
 fn run_binary(
@@ -436,7 +479,7 @@ fn run_binary(
     isolation: &workspace::Isolation,
     home: &Path,
     env: &[(String, String)],
-) -> Result<(Option<i32>, String), String> {
+) -> Result<(Option<i32>, String, String), String> {
     let mut command = Command::new(binary);
     command.args(args).current_dir(home);
     isolation.apply_check(&mut command, home)?;
@@ -448,7 +491,7 @@ fn run_binary(
     if outcome.timed_out {
         return Err(format!("timed out after {}s", timeout.as_secs()));
     }
-    Ok((outcome.exit_code, outcome.stdout))
+    Ok((outcome.exit_code, outcome.stdout, outcome.stderr))
 }
 
 // The panic hook is process-wide; concurrent swaps would restore a stale one.
