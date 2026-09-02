@@ -21,14 +21,14 @@ fn corpus_archetypes_dir() -> std::path::PathBuf {
 }
 
 fn run_suite(toml: &str, binary_body: &str) -> Vec<CaseResult> {
-    run_suite_with_evidence(toml, binary_body, &BTreeMap::new(), None)
+    run_suite_with_evidence(toml, binary_body, &BTreeMap::new(), Ok(""))
 }
 
 fn run_suite_with_evidence(
     toml: &str,
     binary_body: &str,
     gaps: &BTreeMap<String, GapEntry>,
-    app_cargo_toml: Option<&str>,
+    app_cargo_toml: Result<&str, &str>,
 ) -> Vec<CaseResult> {
     let dir = tempfile::tempdir().unwrap();
     let binary = script(dir.path(), "fake", binary_body);
@@ -808,7 +808,7 @@ exit_code = 0
             .detail
             .as_deref()
             .unwrap()
-            .contains("could not be read"),
+            .contains("does not exist"),
         "{:?}",
         results[2].detail
     );
@@ -861,7 +861,7 @@ files_absent = ["conf/configurations/config_staging"]
 }
 
 #[test]
-fn files_assertion_refuses_a_symlink() {
+fn files_assertion_refuses_a_symlink_at_the_leaf() {
     let results = run_suite(
         r#"
 [[case]]
@@ -880,14 +880,51 @@ exit_code = 0
     );
     assert_eq!(results[0].outcome, CaseOutcome::Fail);
     assert!(
-        results[0].detail.as_deref().unwrap().contains("symlink"),
+        results[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("not a regular file"),
         "{:?}",
         results[0].detail
     );
 }
 
 #[test]
-fn files_assertion_refuses_a_non_regular_file() {
+fn files_assertion_refuses_a_symlinked_parent_directory() {
+    let results = run_suite(
+        r#"
+[[case]]
+name = "symlinked-parent"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["alpha"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+[case.expect.files]
+"conf/config_default" = "irrelevant\n"
+"#,
+        r#"mkdir -p elsewhere; echo elsewhere > elsewhere/config_default; ln -s elsewhere conf"#,
+    );
+    assert_eq!(results[0].outcome, CaseOutcome::Fail);
+    // The inventory records the symlinked `conf` itself and never descends
+    // into it, so nothing under it is ever recorded: the same "does not
+    // exist" a produced app that simply never wrote the file would get.
+    assert!(
+        results[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("does not exist"),
+        "{:?}",
+        results[0].detail
+    );
+}
+
+#[test]
+fn files_assertion_refuses_a_fifo() {
     let results = run_suite(
         r#"
 [[case]]
@@ -917,37 +954,7 @@ exit_code = 0
 }
 
 #[test]
-fn files_assertion_treats_oversized_content_as_a_mismatch() {
-    let results = run_suite(
-        r#"
-[[case]]
-name = "oversized-target"
-stresses = "post-run sandbox assertion"
-expected = "pass"
-[case.run]
-argv = ["alpha"]
-timeout_seconds = 5
-[case.expect]
-exit_code = 0
-[case.expect.files]
-"conf/config_default" = "short\n"
-"#,
-        r#"mkdir -p conf; head -c 1000000 /dev/zero | tr '\0' 'x' > conf/config_default"#,
-    );
-    assert_eq!(results[0].outcome, CaseOutcome::Fail);
-    assert!(
-        results[0]
-            .detail
-            .as_deref()
-            .unwrap()
-            .contains("content differs"),
-        "{:?}",
-        results[0].detail
-    );
-}
-
-#[test]
-fn files_absent_treats_a_dangling_symlink_as_present() {
+fn files_absent_with_a_dangling_symlink_present_fails() {
     let results = run_suite(
         r#"
 [[case]]
@@ -970,6 +977,35 @@ files_absent = ["conf/config_default"]
             .as_deref()
             .unwrap()
             .contains("must not exist"),
+        "{:?}",
+        results[0].detail
+    );
+}
+
+#[test]
+fn files_absent_ignores_content_behind_a_symlinked_directory() {
+    // A naive symlink-following walk would find `conf/secret.txt` (via
+    // `elsewhere/secret.txt`) and fail this files_absent; the inventory
+    // records the symlinked `conf` as `Other` and never descends into it,
+    // so the case passes.
+    let results = run_suite(
+        r#"
+[[case]]
+name = "symlinked-parent-hides-content"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["alpha"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+files_absent = ["conf/secret.txt"]
+"#,
+        r#"mkdir -p elsewhere; echo leaked > elsewhere/secret.txt; ln -s elsewhere conf"#,
+    );
+    assert_eq!(
+        results[0].outcome,
+        CaseOutcome::Pass,
         "{:?}",
         results[0].detail
     );
@@ -1002,11 +1038,11 @@ exit_code = 0
 }
 
 #[test]
-fn files_assertion_refuses_a_symlinked_parent_directory() {
+fn an_over_budget_sandbox_is_a_case_error() {
     let results = run_suite(
         r#"
 [[case]]
-name = "symlinked-parent"
+name = "oversized-sandbox"
 stresses = "post-run sandbox assertion"
 expected = "pass"
 [case.run]
@@ -1015,9 +1051,9 @@ timeout_seconds = 5
 [case.expect]
 exit_code = 0
 [case.expect.files]
-"conf/config_default" = "irrelevant\n"
+"conf/config_default" = "short\n"
 "#,
-        r#"mkdir -p elsewhere; echo elsewhere > elsewhere/config_default; ln -s elsewhere conf"#,
+        r#"mkdir -p conf; head -c 2000000 /dev/zero | tr '\0' 'x' > conf/config_default"#,
     );
     assert_eq!(results[0].outcome, CaseOutcome::Fail);
     assert!(
@@ -1025,38 +1061,76 @@ exit_code = 0
             .detail
             .as_deref()
             .unwrap()
-            .contains("symlinked directory"),
+            .contains("inventory budget"),
         "{:?}",
         results[0].detail
     );
 }
 
 #[test]
-fn files_absent_refuses_a_symlinked_parent_directory() {
-    let results = run_suite(
-        r#"
+fn a_backgrounded_descendant_is_killed_before_assertions_run() {
+    // Inlined rather than run_suite: the sandbox (`dir`) must survive past
+    // the run to prove the write never lands even after the descendant's
+    // sleep would have elapsed, not just that the assertion beat it there.
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(
+        dir.path(),
+        "fake",
+        // Redirected away from the captured pipes: inherited, they would
+        // stay open until the backgrounded job exits on its own, which
+        // would delay case completion until well past its write.
+        r#"(sleep 0.3; echo written > race.txt) >/dev/null 2>&1 &
+exit 0"#,
+    );
+    let archetype_dir = dir.path().join("archetypes/fake");
+    fs::create_dir_all(&archetype_dir).unwrap();
+    fs::write(archetype_dir.join("spec.md"), "spec").unwrap();
+    fs::write(
+        archetype_dir.join("acceptance.toml"),
+        r#"schema = 1
+archetype = "fake"
+
 [[case]]
-name = "symlinked-parent-absent"
-stresses = "post-run sandbox assertion"
+name = "background-writer"
+stresses = "process-group reaping before assertions"
 expected = "pass"
 [case.run]
-argv = ["alpha"]
+argv = []
 timeout_seconds = 5
 [case.expect]
 exit_code = 0
-files_absent = ["conf/config_default"]
+files_absent = ["race.txt"]
 "#,
-        r#"mkdir -p elsewhere; echo elsewhere > elsewhere/config_default; ln -s elsewhere conf"#,
+    )
+    .unwrap();
+    let archetype = Archetype::load(&dir.path().join("archetypes"), "fake").unwrap();
+    let isolation = Isolation::new(
+        dir.path(),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
+    )
+    .unwrap();
+    let report = run_cases(
+        &binary,
+        &archetype.suite.cases,
+        &dir.path().join("cases"),
+        &isolation,
+        &BTreeMap::new(),
+        Ok(""),
     );
-    assert_eq!(results[0].outcome, CaseOutcome::Fail);
-    assert!(
-        results[0]
-            .detail
-            .as_deref()
-            .unwrap()
-            .contains("symlinked directory"),
+    assert!(report.built);
+    assert_eq!(
+        report.cases[0].outcome,
+        CaseOutcome::Pass,
         "{:?}",
-        results[0].detail
+        report.cases[0].detail
+    );
+
+    // Prove the descendant was actually killed, not just outrun by a fast
+    // assertion: wait past its sleep and confirm the write never lands.
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    assert!(
+        !dir.path().join("cases/background-writer/race.txt").exists(),
+        "the backgrounded writer was not killed before it could write"
     );
 }
 
@@ -1089,7 +1163,7 @@ stdout = "hello\n"
         toml,
         "echo hello",
         &gaps,
-        Some("[dependencies]\nserde = \"1\"\n"),
+        Ok("[dependencies]\nserde = \"1\"\n"),
     );
     assert_eq!(without_crate[0].outcome, CaseOutcome::HandRolledPass);
     assert!(!without_crate[0].outcome.is_expected());
@@ -1098,14 +1172,24 @@ stdout = "hello\n"
         toml,
         "echo hello",
         &gaps,
-        Some("[dependencies]\nclapfig = \"0.24\"\n"),
+        Ok("[dependencies]\nclapfig = \"0.24\"\n"),
     );
     assert_eq!(with_crate[0].outcome, CaseOutcome::UnexpectedPass);
 
-    let unreadable_cargo_toml = run_suite_with_evidence(toml, "echo hello", &gaps, None);
-    assert_eq!(
-        unreadable_cargo_toml[0].outcome,
-        CaseOutcome::HandRolledPass
+    // Unreadable, not merely absent: the evidence claim could not be
+    // checked at all, so this must not read as either a framework win
+    // (unexpected-pass) or a hand-rolled one — it's a case error.
+    let unreadable_cargo_toml =
+        run_suite_with_evidence(toml, "echo hello", &gaps, Err("permission denied"));
+    assert_eq!(unreadable_cargo_toml[0].outcome, CaseOutcome::Fail);
+    assert!(
+        unreadable_cargo_toml[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("could not be checked"),
+        "{:?}",
+        unreadable_cargo_toml[0].detail
     );
 
     let without_evidence = run_suite(toml, "echo hello");
@@ -1156,7 +1240,7 @@ stdout = "hello\n"
             &toml,
             "echo hello",
             &gaps,
-            Some("[dependencies]\nserde = \"1\"\n"),
+            Ok("[dependencies]\nserde = \"1\"\n"),
         );
         assert_eq!(
             without_clapfig[0].outcome,
@@ -1168,7 +1252,7 @@ stdout = "hello\n"
             &toml,
             "echo hello",
             &gaps,
-            Some("[dependencies]\nclapfig = \"0.24\"\n"),
+            Ok("[dependencies]\nclapfig = \"0.24\"\n"),
         );
         assert_eq!(with_clapfig[0].outcome, CaseOutcome::UnexpectedPass);
     }

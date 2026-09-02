@@ -1,6 +1,7 @@
 // The one subprocess supervisor: every external process the runner spawns
 // runs under `supervise`, which enforces a hard deadline over the child and
-// its output streams and kills the child's whole process group on expiry.
+// its output streams and kills the child's whole process group before
+// reaping it, whether it exits on its own or hits the deadline.
 
 use std::io::Read;
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -11,6 +12,7 @@ use std::time::{Duration, Instant};
 pub const CAPTURE_CAP_BYTES: usize = 2 * 1024 * 1024;
 
 const READER_GRACE: Duration = Duration::from_secs(2);
+const GROUP_KILL_GRACE: Duration = Duration::from_millis(500);
 
 #[derive(Debug)]
 pub struct Outcome {
@@ -75,52 +77,132 @@ pub fn supervise(
 ) -> Result<Supervised, String> {
     let started = Instant::now();
     let mut timed_out = false;
-    let mut status: Option<ExitStatus> = None;
+    // `reaped_status` is set only on the non-unix fallback below, whose
+    // `try_wait` reaps as a side effect of checking; `child.wait()` after
+    // the loop would then error (the process is already gone), so that
+    // status has to be carried out of the loop instead of re-fetched.
+    let mut reaped_status: Option<ExitStatus> = None;
     loop {
-        if status.is_none() {
+        let exited = if cfg!(unix) {
+            child_exited_without_reaping(child.id())?
+        } else {
             match child.try_wait() {
-                Ok(Some(exited)) => status = Some(exited),
-                Ok(None) => {}
+                Ok(Some(status)) => {
+                    reaped_status = Some(status);
+                    true
+                }
+                Ok(None) => false,
                 Err(err) => return Err(format!("waiting for child: {err}")),
             }
-        }
-        if status.is_some() && captures.iter().all(|c| c.is_finished()) {
+        };
+        if exited && captures.iter().all(|c| c.is_finished()) {
             break;
         }
         if started.elapsed() >= deadline {
             timed_out = true;
-            kill_group(child);
-            if status.is_none() {
-                match child.wait() {
-                    Ok(exited) => status = Some(exited),
-                    Err(err) => return Err(format!("reaping timed-out child: {err}")),
-                }
-            }
-            let grace_ends = Instant::now() + READER_GRACE;
-            while !captures.iter().all(|c| c.is_finished()) && Instant::now() < grace_ends {
-                std::thread::sleep(Duration::from_millis(10));
-            }
             break;
         }
         std::thread::sleep(Duration::from_millis(25));
     }
-    let status = status.expect("supervision loop always breaks with a status");
+    // The whole process group is signalled here, before the leader is
+    // reaped below: reaping is what frees its pid for the OS to reuse, and
+    // a group signal after that point risks hitting an unrelated process
+    // that happened to receive the recycled pid. On non-unix this is a
+    // no-op (no process-group concept, and reaped_status already holds
+    // the leader's status from the loop above).
+    signal_process_group(child.id());
+    let _ = child.kill();
+    let status = match reaped_status {
+        Some(status) => status,
+        None => child
+            .wait()
+            .map_err(|err| format!("reaping child: {err}"))?,
+    };
+    // Only after the leader is reaped: a not-yet-reaped zombie leader
+    // answers a signal-0 probe too, so polling for the group to be gone
+    // before this point would always spin for the full grace period.
+    wait_for_process_group_to_die(child.id());
+    if timed_out {
+        let grace_ends = Instant::now() + READER_GRACE;
+        while !captures.iter().all(|c| c.is_finished()) && Instant::now() < grace_ends {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
     Ok(Supervised {
         exit_code: status.code(),
         timed_out,
     })
 }
 
-fn kill_group(child: &mut Child) {
+/// Whether `pid` has exited, without reaping it — the `WNOWAIT` peek
+/// `waitid` supports and `waitpid`/`Child::try_wait` don't. This is what
+/// lets `supervise` signal the process group (see `signal_process_group`)
+/// before reaping the leader: reaping is what frees the pid for reuse, and
+/// a group signal after that could hit an unrelated, newly spawned process
+/// that happened to receive it.
+#[cfg(unix)]
+fn child_exited_without_reaping(pid: u32) -> Result<bool, String> {
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let ret = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            pid as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOWAIT | libc::WNOHANG,
+        )
+    };
+    if ret != 0 {
+        return Err(format!(
+            "polling child exit status: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    // `waitid` sets `si_signo` to `SIGCHLD` once a tracked state change is
+    // ready to report; `WNOHANG` leaves it 0 when there is nothing yet.
+    Ok(info.si_signo != 0)
+}
+
+#[cfg(not(unix))]
+fn child_exited_without_reaping(_pid: u32) -> Result<bool, String> {
+    unreachable!("only called from the cfg!(unix) branch in supervise's loop")
+}
+
+fn signal_process_group(pid: u32) {
     #[cfg(unix)]
     {
-        // SAFETY: the child was made its own process-group leader before
-        // spawn, so the negative pid targets only that run's descendants.
+        // SAFETY: pid was made its own process-group leader (via
+        // `place_in_own_group`) before spawn, so this reaches only that
+        // run's descendants.
         unsafe {
-            libc::killpg(child.id() as libc::pid_t, libc::SIGKILL);
+            libc::killpg(pid as libc::pid_t, libc::SIGKILL);
         }
     }
-    let _ = child.kill();
+    #[cfg(not(unix))]
+    let _ = pid;
+}
+
+/// Blocks, bounded by `GROUP_KILL_GRACE`, until nothing in `pid`'s process
+/// group answers a signal-0 existence probe. Call only after the group's
+/// leader has been reaped (`Child::wait`): a zombie leader answers the
+/// probe too, so calling this first would spin for the full grace period
+/// on every case, leader included, rather than only when a straggler
+/// (a descendant `signal_process_group` also reached) is still dying.
+fn wait_for_process_group_to_die(pid: u32) {
+    #[cfg(unix)]
+    {
+        let deadline = Instant::now() + GROUP_KILL_GRACE;
+        while Instant::now() < deadline {
+            // signal 0 is an existence probe: killpg returns an error (ESRCH)
+            // once nothing in the group is left to signal.
+            let anything_left = unsafe { libc::killpg(pid as libc::pid_t, 0) } == 0;
+            if !anything_left {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = pid;
 }
 
 pub struct Capture {
@@ -239,5 +321,55 @@ mod tests {
         assert_eq!(outcome.exit_code, Some(4));
         assert_eq!(outcome.stdout.trim(), "out");
         assert_eq!(outcome.stderr.trim(), "err");
+    }
+
+    #[test]
+    fn exit_peek_does_not_reap_the_child() {
+        // The primitive `supervise` relies on to signal the process group
+        // before reaping the leader: it must observe the exit without
+        // consuming it, or a real `wait()` afterward would find nothing
+        // left to reap.
+        let mut child = Command::new("sh").args(["-c", "exit 0"]).spawn().unwrap();
+        let pid = child.id();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !child_exited_without_reaping(pid).unwrap() {
+            assert!(Instant::now() < deadline, "child did not exit in time");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let status = child.wait().unwrap();
+        assert_eq!(status.code(), Some(0));
+    }
+
+    #[test]
+    fn a_trivial_child_is_supervised_promptly() {
+        let pid = Arc::new(Mutex::new(0u32));
+        let pid_for_capture = Arc::clone(&pid);
+        let started = Instant::now();
+        let outcome = run_watched(
+            Command::new("sh").args(["-c", "exit 0"]),
+            Duration::from_secs(30),
+            true,
+            move |child_pid| *pid_for_capture.lock().unwrap() = child_pid,
+        )
+        .unwrap();
+        assert!(!outcome.timed_out);
+        assert_eq!(outcome.exit_code, Some(0));
+
+        let pid = *pid.lock().unwrap();
+        // SAFETY: a signal-0 probe only checks whether the group exists; it
+        // sends nothing.
+        let probe = unsafe { libc::killpg(pid as libc::pid_t, 0) };
+        assert_eq!(probe, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH),
+            "expected the process group to be gone once supervise returned"
+        );
+        assert!(
+            started.elapsed() < GROUP_KILL_GRACE * 10,
+            "supervise took {:?}, well past what a trivial child with nothing \
+             left to signal should ever need",
+            started.elapsed()
+        );
     }
 }

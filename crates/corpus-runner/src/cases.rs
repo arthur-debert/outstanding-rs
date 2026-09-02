@@ -19,7 +19,7 @@ pub fn run_cases(
     cases_dir: &Path,
     isolation: &workspace::Isolation,
     gaps: &BTreeMap<String, GapEntry>,
-    app_cargo_toml: Option<&str>,
+    app_cargo_toml: Result<&str, &str>,
 ) -> AcceptanceReport {
     let results = cases
         .iter()
@@ -27,32 +27,32 @@ pub fn run_cases(
             let sandbox = cases_dir.join(&case.name);
             let (outcome, detail) = match execute(binary, case, &sandbox, isolation) {
                 Ok(execution) => {
-                    let (raw_pass, detail) = evaluate(case, &execution, &sandbox);
-                    let outcome = match (case.expected, raw_pass) {
-                        (Expected::Pass, true) => CaseOutcome::Pass,
-                        (Expected::Pass, false) => CaseOutcome::Fail,
-                        (Expected::Fail, false) => CaseOutcome::ExpectedFail,
+                    let (raw_pass, detail) = evaluate(case, &execution);
+                    match (case.expected, raw_pass) {
+                        (Expected::Pass, true) => (CaseOutcome::Pass, detail),
+                        (Expected::Pass, false) => (CaseOutcome::Fail, detail),
+                        (Expected::Fail, false) => (CaseOutcome::ExpectedFail, detail),
                         (Expected::Fail, true) => {
-                            let evidence = case
-                                .gap
-                                .as_deref()
-                                .and_then(|gap| gaps.get(gap))
-                                .and_then(GapEntry::evidence);
-                            let evidence_absent = match evidence {
-                                None => false,
+                            let gap = case.gap.as_deref();
+                            let evidence = gap.and_then(|gap| gaps.get(gap)).and_then(GapEntry::evidence);
+                            match evidence {
+                                None => (CaseOutcome::UnexpectedPass, detail),
                                 Some(evidence) => match app_cargo_toml {
-                                    Some(cargo_toml) => !evidence.satisfied_by(cargo_toml),
-                                    None => true,
+                                    Ok(cargo_toml) if evidence.satisfied_by(cargo_toml) => {
+                                        (CaseOutcome::UnexpectedPass, detail)
+                                    }
+                                    Ok(_) => (CaseOutcome::HandRolledPass, detail),
+                                    Err(read_err) => (
+                                        CaseOutcome::Fail,
+                                        Some(format!(
+                                            "evidence for gap {:?} could not be checked: the produced app's Cargo.toml could not be read: {read_err}",
+                                            gap.unwrap_or("?")
+                                        )),
+                                    ),
                                 },
-                            };
-                            if evidence_absent {
-                                CaseOutcome::HandRolledPass
-                            } else {
-                                CaseOutcome::UnexpectedPass
                             }
                         }
-                    };
-                    (outcome, detail)
+                    }
                 }
                 Err(err) => (
                     CaseOutcome::Fail,
@@ -86,6 +86,7 @@ struct Execution {
     timed_out: bool,
     stdout: String,
     stderr: String,
+    sandbox_inventory: SandboxInventory,
 }
 
 fn execute(
@@ -206,6 +207,10 @@ fn execute(
     .into_iter()
     .flatten()
     .collect();
+    // `supervise` kills the case's whole process group before returning,
+    // whether the case exits on its own or hits its deadline, so nothing in
+    // it can still be writing into the sandbox by the time the one
+    // inventory read below runs.
     let supervised = exec::supervise(
         &mut child,
         Duration::from_secs(case.run.timeout_seconds),
@@ -227,11 +232,20 @@ fn execute(
         stderr_capture.map(exec::Capture::text).unwrap_or_default()
     };
 
+    let sandbox_inventory = if supervised.timed_out
+        || (case.expect.files.is_empty() && case.expect.files_absent.is_empty())
+    {
+        SandboxInventory::default()
+    } else {
+        build_sandbox_inventory(sandbox)?
+    };
+
     Ok(Execution {
         exit_code: supervised.exit_code,
         timed_out: supervised.timed_out,
         stdout: normalize_lf(&stdout),
         stderr: normalize_lf(&stderr),
+        sandbox_inventory,
     })
 }
 
@@ -310,45 +324,117 @@ fn sandbox_path(sandbox: &Path, rel: &str) -> Result<PathBuf, String> {
     Ok(sandbox.join(rel_path))
 }
 
-/// Walks `rel`'s intermediate directory components (not the leaf) from
-/// `sandbox` and refuses one that is a symlink, so a produced app cannot
-/// redirect a sandbox-relative assertion outside the sandbox by replacing a
-/// directory component (`conf -> /elsewhere`) with a symlink. A missing
-/// intermediate component means nothing is there to redirect through, so it
-/// stops the walk rather than erroring.
-fn reject_symlinked_ancestors(rel: &str, sandbox: &Path) -> Result<(), String> {
-    let mut current = sandbox.to_path_buf();
-    let mut components = Path::new(rel).components().peekable();
-    while let Some(component) = components.next() {
-        if components.peek().is_none() {
-            break;
-        }
-        current.push(component);
-        let metadata = match std::fs::symlink_metadata(&current) {
-            Ok(metadata) => metadata,
-            Err(_) => return Ok(()),
-        };
-        if metadata.file_type().is_symlink() {
-            return Err(format!("path {rel:?} passes through a symlinked directory"));
-        }
-    }
-    Ok(())
-}
-
-fn expectation_path(sandbox: &Path, rel: &str) -> Result<PathBuf, String> {
-    let path = sandbox_path(sandbox, rel)?;
-    reject_symlinked_ancestors(rel, sandbox)?;
-    Ok(path)
-}
-
 fn normalize_lf(text: &str) -> String {
     text.replace("\r\n", "\n")
 }
 
-/// Reads at most `cap + 1` bytes of a regular, non-symlinked file. The extra
-/// byte lets a caller comparing against a `cap`-byte expectation detect an
-/// oversized file as a mismatch without reading the whole thing.
-fn read_bounded_file(path: &Path, cap: usize) -> Result<Vec<u8>, String> {
+/// Bounds how many bytes a single call to `read_regular_file_no_follow` will
+/// read, and how many cumulative bytes `build_sandbox_inventory` will read
+/// across a whole sandbox. Exceeding it is a case error naming the size —
+/// the sandbox belongs to an untrusted produced app, so a `files`/
+/// `files_absent` assertion must never launch an unbounded read.
+pub(crate) const MAX_INVENTORIED_BYTES: u64 = 1024 * 1024;
+
+/// What a path in a `SandboxInventory` resolved to, without ever following
+/// a symlink.
+#[derive(Debug)]
+enum SandboxEntry {
+    File(Vec<u8>),
+    Directory,
+    /// A symlink, FIFO, socket, device, or anything else that isn't a
+    /// regular file or a directory.
+    Other,
+}
+
+/// A snapshot of a case sandbox's directory tree, taken once by
+/// `build_sandbox_inventory` after `execute` confirms the case's whole
+/// process group is dead — nothing can still be writing into the sandbox by
+/// the time this exists. `files` and `files_absent` are lookups against it;
+/// neither touches the filesystem again. Keyed by the native relative
+/// `PathBuf`, not a lossily-converted string: a produced app is untrusted
+/// and could otherwise name a non-UTF-8 file whose lossy spelling collides
+/// with a legitimate expectation.
+#[derive(Debug, Default)]
+struct SandboxInventory {
+    entries: BTreeMap<PathBuf, SandboxEntry>,
+}
+
+impl SandboxInventory {
+    fn get(&self, rel: &str) -> Result<Option<&SandboxEntry>, String> {
+        let rel_path = Path::new(rel);
+        if rel_path.is_absolute()
+            || rel_path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(format!("path {rel:?} escapes the case sandbox"));
+        }
+        Ok(self.entries.get(rel_path))
+    }
+}
+
+/// Walks `root` recursively, never following a symlink, and records every
+/// entry: a directory, a regular file (read in full and counted against
+/// `MAX_INVENTORIED_BYTES`), or `SandboxEntry::Other` for anything else
+/// (symlink, FIFO, socket, device). A symlinked directory is recorded as
+/// `Other` and not descended into, so a produced app cannot redirect the
+/// walk outside the sandbox by replacing a directory with a symlink.
+fn build_sandbox_inventory(root: &Path) -> Result<SandboxInventory, String> {
+    let mut entries = BTreeMap::new();
+    let mut total_bytes: u64 = 0;
+    let mut pending = vec![PathBuf::new()];
+    while let Some(rel_dir) = pending.pop() {
+        let dir = root.join(&rel_dir);
+        let read_dir = std::fs::read_dir(&dir)
+            .map_err(|err| format!("reading sandbox directory {}: {err}", rel_dir.display()))?;
+        for entry in read_dir {
+            let entry = entry
+                .map_err(|err| format!("reading sandbox directory {}: {err}", rel_dir.display()))?;
+            let rel = rel_dir.join(entry.file_name());
+            // `DirEntry::file_type` reads the directory-entry type directly
+            // (no extra syscall on most platforms) and, like
+            // `symlink_metadata`, never follows a final symlink — unlike
+            // `DirEntry::metadata`/`std::fs::metadata`, which do.
+            let file_type = entry
+                .file_type()
+                .map_err(|err| format!("inspecting sandbox entry {}: {err}", rel.display()))?;
+            if file_type.is_dir() {
+                entries.insert(rel.clone(), SandboxEntry::Directory);
+                pending.push(rel);
+            } else if file_type.is_file() {
+                let metadata = entry
+                    .metadata()
+                    .map_err(|err| format!("inspecting sandbox entry {}: {err}", rel.display()))?;
+                let remaining = MAX_INVENTORIED_BYTES.saturating_sub(total_bytes);
+                // A cheap early exit for a grossly oversized file, before
+                // attempting to read it at all; the read below is the real
+                // enforcement (belt: nothing is still writing, by the time
+                // this runs, so `metadata.len()` is accurate; braces: the
+                // read itself is still bounded).
+                if metadata.len() > remaining {
+                    return Err(format!(
+                        "sandbox contents exceed the {MAX_INVENTORIED_BYTES}-byte inventory \
+                         budget (over budget at {}, would be {} bytes)",
+                        rel.display(),
+                        total_bytes.saturating_add(metadata.len())
+                    ));
+                }
+                let bytes = read_regular_file_no_follow(&root.join(&rel), remaining)
+                    .map_err(|err| format!("reading sandbox entry {}: {err}", rel.display()))?;
+                // The bytes actually read, not `metadata.len()`: the two
+                // can differ, and the cumulative budget must reflect what
+                // was truly consumed.
+                total_bytes = total_bytes.saturating_add(bytes.len() as u64);
+                entries.insert(rel, SandboxEntry::File(bytes));
+            } else {
+                entries.insert(rel, SandboxEntry::Other);
+            }
+        }
+    }
+    Ok(SandboxInventory { entries })
+}
+
+pub(crate) fn read_regular_file_no_follow(path: &Path, max_bytes: u64) -> Result<Vec<u8>, String> {
     let metadata = std::fs::symlink_metadata(path).map_err(|err| err.to_string())?;
     if metadata.file_type().is_symlink() {
         return Err("refusing to follow a symlink".to_string());
@@ -358,9 +444,16 @@ fn read_bounded_file(path: &Path, cap: usize) -> Result<Vec<u8>, String> {
     }
     let file = open_no_follow(path).map_err(|err| err.to_string())?;
     let mut buf = Vec::new();
-    Read::take(file, cap as u64 + 1)
+    // Capped at the stream level, not just by the stat above: a file that
+    // grows between the stat and this read still can't make the read
+    // itself unbounded. The extra byte lets an oversized file be detected
+    // as a mismatch without reading past the cap.
+    Read::take(file, max_bytes + 1)
         .read_to_end(&mut buf)
         .map_err(|err| err.to_string())?;
+    if buf.len() as u64 > max_bytes {
+        return Err(format!("file is over the {max_bytes}-byte read budget"));
+    }
     Ok(buf)
 }
 
@@ -378,7 +471,7 @@ fn open_no_follow(path: &Path) -> std::io::Result<std::fs::File> {
     std::fs::File::open(path)
 }
 
-fn evaluate(case: &Case, execution: &Execution, sandbox: &Path) -> (bool, Option<String>) {
+fn evaluate(case: &Case, execution: &Execution) -> (bool, Option<String>) {
     let mut failures = Vec::new();
     if execution.timed_out {
         failures.push(format!(
@@ -386,7 +479,7 @@ fn evaluate(case: &Case, execution: &Execution, sandbox: &Path) -> (bool, Option
             case.run.timeout_seconds
         ));
     } else {
-        apply_expectations(&case.expect, execution, sandbox, &mut failures);
+        apply_expectations(&case.expect, execution, &mut failures);
     }
     if failures.is_empty() {
         (true, None)
@@ -399,12 +492,7 @@ fn evaluate(case: &Case, execution: &Execution, sandbox: &Path) -> (bool, Option
     }
 }
 
-fn apply_expectations(
-    expect: &CaseExpect,
-    execution: &Execution,
-    sandbox: &Path,
-    failures: &mut Vec<String>,
-) {
+fn apply_expectations(expect: &CaseExpect, execution: &Execution, failures: &mut Vec<String>) {
     if let Some(code) = expect.exit_code {
         if execution.exit_code != Some(code) {
             failures.push(format!(
@@ -517,30 +605,25 @@ fn apply_expectations(
         }
     }
     for (rel, want) in &expect.files {
-        match expectation_path(sandbox, rel) {
-            Ok(path) => {
-                // The read cap admits every `\n` in `want` expanding from a
-                // CRLF byte on disk, so a legitimately CRLF-written file
-                // that normalizes to `want` is never rejected as oversized.
-                let cap = want.len() + want.matches('\n').count();
-                match read_bounded_file(&path, cap) {
-                    Ok(bytes) => match std::str::from_utf8(&bytes) {
-                        Ok(text) if bytes.len() <= cap && &normalize_lf(text) == want => {}
-                        _ => failures.push(format!("file {rel:?} content differs from expected")),
-                    },
-                    Err(err) => failures.push(format!("file {rel:?} could not be read: {err}")),
-                }
+        match execution.sandbox_inventory.get(rel) {
+            Ok(Some(SandboxEntry::File(bytes))) => match std::str::from_utf8(bytes) {
+                Ok(text) if &normalize_lf(text) == want => {}
+                _ => failures.push(format!("file {rel:?} content differs from expected")),
+            },
+            Ok(Some(SandboxEntry::Directory)) => {
+                failures.push(format!("file {rel:?} is a directory, not a regular file"));
             }
+            Ok(Some(SandboxEntry::Other)) => {
+                failures.push(format!("file {rel:?} is not a regular file"));
+            }
+            Ok(None) => failures.push(format!("file {rel:?} does not exist")),
             Err(err) => failures.push(err),
         }
     }
     for rel in &expect.files_absent {
-        match expectation_path(sandbox, rel) {
-            Ok(path) => {
-                if std::fs::symlink_metadata(&path).is_ok() {
-                    failures.push(format!("file {rel:?} must not exist"));
-                }
-            }
+        match execution.sandbox_inventory.get(rel) {
+            Ok(Some(_)) => failures.push(format!("file {rel:?} must not exist")),
+            Ok(None) => {}
             Err(err) => failures.push(err),
         }
     }

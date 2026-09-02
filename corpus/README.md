@@ -328,9 +328,13 @@ files_absent = ["sub/dir/.gitlike.lock"]   # paths that must not exist after the
 A case is one invocation; `[case.run.files]` seeds a precondition, and
 `[case.expect.files]`/`files_absent` read the sandbox back afterwards — the
 only way a store-mutating command's write path is checked rather than only
-its streams. `[case.expect.files]` values are exact content; a key naming a
-path the run never wrote is a failure (not silently unasserted), same as a
-`files_absent` path that does exist.
+its streams. Both are lookups against one inventory of the sandbox, taken
+after the case's process group is confirmed dead, that never follows a
+symlink, refuses anything but a regular file, and errors the case (naming
+the size) rather than silently truncating a sandbox over its total byte
+budget; `[case.expect.files]` values are exact content, and a key naming a
+path the inventory has no regular-file entry for is a failure, same as a
+`files_absent` path the inventory has any entry for at all.
 
 Besides the cases, a suite may carry a declarative invariants matrix. The global
 axes are the whole plan: every command runs on every global axis
