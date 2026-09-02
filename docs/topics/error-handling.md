@@ -24,7 +24,9 @@ its stderr bytes writes them itself through `AppFailure`, below.
 ## The diagnostic document
 
 Under `--output json`, `yaml`, `csv` or `ndjson` the framing above does not
-apply: the failure is the stdout document, and stderr carries nothing for it.
+apply: the failure is the stdout document, and stderr carries nothing the
+framework wrote for it; an `AppFailure` or `ExternalFailure` still writes its
+own bytes there, as its section below says.
 Under `ndjson` the document is one line in the stream, written where the run
 failed, after the entries the handler emitted before it. The document
 is `Diagnostic` (`standout::cli::Diagnostic`): `type`, `schema_version`,

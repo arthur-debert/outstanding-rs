@@ -1,6 +1,6 @@
 # Declare success statuses, delete XML, take flat CSV records
 
-Three decisions of `docs/spec/parity-machine-contract.md` — D5, D7 and D8 — recorded together because they land in one workstream (PAR02-WS04) and each is a rule about what the machine contract does and does not carry. The spec holds the reasoning; this records the shape.
+Three decisions of `docs/spec/implemented/parity-machine-contract.md` — D5, D7 and D8 — recorded together because they land in one workstream (PAR02-WS04) and each is a rule about what the machine contract does and does not carry. The spec holds the reasoning; this records the shape.
 
 ## D5: a successful run declares its own status
 

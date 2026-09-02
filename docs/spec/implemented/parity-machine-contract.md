@@ -1,5 +1,33 @@
 # PAR02: The Machine Contract
 
+> **Implemented** by PAR02 (#475): WS01 #485 (ADR-0037), WS02 #487 (ADR-0038),
+> WS03 #488 (ADR-0039), WS04 #486 (ADR-0040). As built, where the text below
+> differs:
+>
+> - D6: a `--output` value that is not a mode is a usage error where clap reaches
+>   it. `myapp --output jsn --help` and `myapp help --output jsn` exit 2 with
+>   prose; `myapp --help --output jsn` renders the help page, because clap stops
+>   at `--help` before it validates the value.
+> - D3: `Output::Binary` and `Output::Artifact` are render errors under `ndjson`,
+>   decided before anything is written; a stream has no room for a payload.
+> - D9: the help document exists under `json` and `yaml`; `--help --output ndjson`
+>   renders the human page. `short` and `long` in the document are the tokens as
+>   typed (`--tree`), not the bare word the example shows.
+> - D4: the envelope is an application opt-in, so brewlike's
+>   `list-json-payload-carries-the-schema-version` passes for an implementation
+>   built from the archetype spec (mirrored in
+>   `crates/standout-test/tests/contract_surfaces.rs`) and fails for the frozen
+>   `standout-corpus` member, which never opted in; that member is re-accepted
+>   from a fresh run.
+> - The diagnostic rows of `corpus/archetypes/tflike/acceptance.toml` keep
+>   `expected = "fail"`: the corpus runner has no tflike binary to run them
+>   against. The executable form of the criterion is
+>   `corpus/gap-suites/tests/tflike_diagnostic.rs` against the in-repo fixture
+>   `corpus/gap-suites/src/bin/tflike.rs`.
+> - `ctx.output_mode()` in the examples does not exist; `ctx.stream().is_live()`
+>   is the one mode predicate a handler has. `DiagnosticKind` has one name beyond
+>   D1's list, `framework`, the kind of a warning entry.
+
 First epic of the capability-parity program to execute. The program's order is PAR02,
 then PAR01 (config layering) and PAR04 (corpus runner) side by side, then PAR03
 (terminal citizenship), then PAR05 (named configuration sets). PAR02 depends on nothing

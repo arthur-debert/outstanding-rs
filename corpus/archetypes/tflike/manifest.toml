@@ -51,5 +51,5 @@ cases = [
 ]
 
 [gaps]
-PAR02 = "The machine contract (docs/spec/parity-machine-contract.md): NDJSON stream mode, diagnostics as stream entries with severity and range, -detailed-exitcode's 0/2/1 vocabulary, handler-error-as-diagnostic. The diagnostic-milestone cases are its executable shape; PAR02 is done when they turn green."
+PAR02 = "The machine contract (docs/spec/implemented/parity-machine-contract.md): NDJSON stream mode, diagnostics as stream entries with severity and range, -detailed-exitcode's 0/2/1 vocabulary, handler-error-as-diagnostic. The diagnostic-milestone cases are its executable shape; PAR02 is done when they turn green."
 PAR03 = "Terminal citizenship (docs/spec/parity-terminal-citizenship.md): a framework-owned progress seam emitting apply-lifecycle events into the stream and suppressing human progress entirely under structured modes. The progress-milestone cases are its executable shape; PAR03 is done when they turn green."

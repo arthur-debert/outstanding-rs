@@ -3,7 +3,7 @@
 # Roster-completion archetype (ROB07-WS03b). The survey's C10 sketch is lost
 # with the 2026-08-16 session record, so the interactions below are
 # reconstructed from the survey's capability matrix and the parity Spec that
-# names this archetype (docs/spec/parity-machine-contract.md, which gates on
+# names this archetype (docs/spec/implemented/parity-machine-contract.md, which gates on
 # "brewlike's schema-version tests"); spec.md states the same reconstruction.
 #
 # The survey files C10 among its in-capability archetypes, and all but the
@@ -94,4 +94,4 @@ cases = [
 ]
 
 [gaps]
-PAR02 = "The machine contract (docs/spec/parity-machine-contract.md): structured output marked as a contract surface with a schema version addressable from the CLI, and help --output=json as a versioned document. The schema-version cases are the executable shape of that Spec's brewlike gate; PAR02 is done when they turn green. Those two cases pin the version at an envelope key, while the Spec still leaves 'flag or key in the envelope' to the grill: an ADR choosing the flag form amends them."
+PAR02 = "The machine contract (docs/spec/implemented/parity-machine-contract.md): structured output marked as a contract surface with a schema version addressable from the CLI, and help --output=json as a versioned document. The schema-version cases are the executable shape of that Spec's brewlike gate; PAR02 is done when they turn green. Those two cases pin the version at an envelope key, while the Spec still leaves 'flag or key in the envelope' to the grill: an ADR choosing the flag form amends them."

@@ -1,6 +1,6 @@
 # Version the document and mark the surface with a trait
 
-A structured document carries the version of its own shape as a `schema_version` key, and the type behind it says so through the `ContractSurface` trait. This records decisions D4 and D9 of `docs/spec/parity-machine-contract.md`, whose reasoning is not repeated here, and retires the hold of [ADR-0029](0029-hold-structured-help-back-in-glue.md): structured help was held back until it could be versioned, and it is versioned here.
+A structured document carries the version of its own shape as a `schema_version` key, and the type behind it says so through the `ContractSurface` trait. This records decisions D4 and D9 of `docs/spec/implemented/parity-machine-contract.md`, whose reasoning is not repeated here, and retires the hold of [ADR-0029](0029-hold-structured-help-back-in-glue.md): structured help was held back until it could be versioned, and it is versioned here.
 
 ## The marker (D4)
 
