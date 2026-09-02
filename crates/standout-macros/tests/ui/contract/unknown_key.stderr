@@ -1,0 +1,5 @@
+error: unknown `contract` key; the only key is `schema_version`
+ --> tests/ui/contract/unknown_key.rs:4:12
+  |
+4 | #[contract(version = 1)]
+  |            ^^^^^^^

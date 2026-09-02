@@ -126,29 +126,37 @@ fn the_help_word_honours_the_output_flag_through_run() {
     tagged.assert_success();
     tagged.assert_stdout_contains("[header]USAGE[/header]");
     drop(tagged);
-    for mode in ["json", "yaml", "csv"] {
+    for mode in ["json", "yaml"] {
         let result = TestHarness::new().run(
             fixture.app(),
             fixture.command(),
             ["lookma", "help", "--output", mode],
         );
         result.assert_success();
-        result.assert_stdout_contains("USAGE");
+        assert_eq!(result.success_kind(), Some(SuccessKind::ClapHelp));
         assert!(
-            !result.stdout().contains("[header]"),
-            "{mode}: structured modes still print human help:\n{}",
+            !result.stdout().contains("USAGE"),
+            "{mode}: help is the versioned document, not the page:\n{}",
             result.stdout()
         );
-        assert!(
-            !result.stdout().trim_start().starts_with('{'),
-            "{mode}: must not emit a JSON help document:\n{}",
-            result.stdout()
-        );
+        result.assert_stdout_contains("schema_version");
     }
+    let csv = TestHarness::new().run(
+        fixture.app(),
+        fixture.command(),
+        ["lookma", "help", "--output", "csv"],
+    );
+    csv.assert_error_kind(RunErrorKind::Render);
+    let diagnostic = csv.expect_diagnostic();
+    assert_eq!(diagnostic.kind, standout::cli::DiagnosticKind::Render);
+    assert!(
+        diagnostic.summary.contains("no Csv projection"),
+        "{diagnostic:?}"
+    );
 }
 #[test]
 #[serial]
-fn structured_help_on_a_color_tty_still_looks_like_help() {
+fn the_help_document_on_a_color_tty_carries_no_ansi() {
     let fixture = downstream().flat().build();
     let result = TestHarness::new().with_color().run(
         fixture.app(),
@@ -156,12 +164,14 @@ fn structured_help_on_a_color_tty_still_looks_like_help() {
         ["lookma", "help", "--output", "json"],
     );
     result.assert_success();
-    result.assert_stdout_contains("USAGE");
     assert!(
-        result.stdout().contains('\u{1b}'),
-        "help --output=json on a color TTY must still look like help:\n{:?}",
+        !result.stdout().contains('\u{1b}'),
+        "the help document is data, never styled:\n{:?}",
         result.stdout()
     );
+    let document: serde_json::Value = serde_json::from_str(result.stdout()).unwrap();
+    assert_eq!(document["schema_version"], 1);
+    assert_eq!(document["name"], "lookma");
 }
 #[test]
 #[serial]

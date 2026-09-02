@@ -181,7 +181,7 @@ fn a_list_declares_its_empty_status_only_when_empty() {
     empty.assert_exit_status(ExitStatus::from(3));
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(empty.stdout()).unwrap(),
-        json!({ "items": [] })
+        json!({ "schema_version": 1, "items": [] })
     );
 
     let filled = run(OutputMode::Text, &["app", "list"]);

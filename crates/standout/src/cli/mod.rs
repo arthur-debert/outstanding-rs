@@ -68,11 +68,13 @@ pub use help::{
 
 pub use handler::{
     AppFailure, Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext,
-    CommandContextInput, Diagnostic, DiagnosticKind, DiagnosticPosition, DiagnosticRange,
-    DispatchResult, ExitStatus, ExternalFailure, FnHandler, Handler, HandlerResult,
-    InvalidAppStatus, InvalidExternalStatus, Output, OutputKind, RunError, RunErrorKind, RunOutput,
-    Severity, SuccessKind,
+    CommandContextInput, ContractSurface, Diagnostic, DiagnosticKind, DiagnosticPosition,
+    DiagnosticRange, DispatchResult, Envelope, ExitStatus, ExternalFailure, FnHandler, Handler,
+    HandlerResult, InvalidAppStatus, InvalidExternalStatus, Output, OutputKind, RunError,
+    RunErrorKind, RunOutput, Severity, SuccessKind,
 };
+
+pub use help::{HelpArg, HelpDocument, HelpSubcommand};
 
 pub use emit::{
     carries_diagnostic_document, emit_run_result, parse_diagnostic, render_diagnostic,

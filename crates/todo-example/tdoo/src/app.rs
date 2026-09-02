@@ -87,6 +87,29 @@ mod tests {
 
     #[test]
     #[serial]
+    fn the_list_document_keeps_its_schema() {
+        let (app, _dir) = fresh_app();
+
+        TestHarness::new()
+            .no_color()
+            .run(
+                &app,
+                cli::command(),
+                ["tdoo", "add", "--title", "ship the docs"],
+            )
+            .assert_success();
+        let listed = TestHarness::new().no_color().run(
+            &app,
+            cli::command(),
+            ["tdoo", "list", "--output", "json"],
+        );
+
+        listed.assert_success();
+        listed.assert_schema_snapshot("list.json");
+    }
+
+    #[test]
+    #[serial]
     fn naked_invocation_at_a_terminal_lists() {
         let (app, _dir) = fresh_app();
 
