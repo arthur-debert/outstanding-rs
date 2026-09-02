@@ -57,9 +57,11 @@ deliberate: an item kept with a stated reason cannot be quietly removed as
 
 **Structured modes** (`json`, `yaml`, `csv`): the document a handler's
 data produces — its field names and its nesting — is contract. Changing it
-changes what a consuming script parses. `csv` takes flat records only: a
-nested value is a render error naming `CsvProjection`, never a flattened
-column ([Output Modes](./output-modes.md#csv-output)).
+changes what a consuming script parses. A document that carries a
+`schema_version` key says which version of that shape it satisfies; see
+[the versioned document](#the-versioned-document) below. `csv` takes flat
+records only: a nested value is a render error naming `CsvProjection`, never
+a flattened column ([Output Modes](./output-modes.md#csv-output)).
 
 **Human modes** (`text`, `term`): the bytes are **not** contract. Themes,
 wording, column widths and layout may change in any release. What is contract
@@ -129,8 +131,9 @@ never touched the framework. Contract by name, signature and meaning:
   pseudo-terminal it opens exists.
 - `TestResult`, which an in-process `run` returns: its `outcome`, its exit
   status and success and error kinds, its raw and plain streams and `binary`,
-  its style-tag resolutions, its `warnings`, its artifact accessors and its
-  `assert_*` methods.
+  its style-tag resolutions, its `warnings`, its artifact accessors, its
+  `diagnostic` readers and its `assert_*` methods, `assert_schema_snapshot`
+  among them.
 - `ProcessResult`, which a spawned `run_process` or `run_pty` returns: its
   process status, code and success, its raw, plain and byte streams, its
   tempdir and its `assert_*` methods.
@@ -156,14 +159,87 @@ Everything else, explicitly including:
   decline them;
 - the leaf crates' APIs where `standout` does not re-export them.
 
-## One boundary worth naming
+## The versioned document
 
-A machine-readable schema — a versioned envelope a consumer can validate
-against — is not part of this statement. What this statement establishes is
-that structured output *has* a contract shape at all, not that the shape is
-published as a schema.
+A consumer of `--output json` has to tell a shape change from a data change
+without reading a changelog, so a document can carry the version of the shape
+it satisfies as a `schema_version` key. Bumping that number is what a
+breaking change to the document looks like on the wire; the field names
+behind it stay contract exactly as item 2 says.
+
+### An application's own view
+
+A view opts in by naming its version, and a handler wraps it in the envelope:
+
+```rust,ignore
+use standout::{ContractSurface, Envelope};
+use standout::cli::{CommandContext, Output};
+
+#[derive(Serialize, ContractSurface)]
+#[contract(schema_version = 1)]
+struct Listing { items: Vec<Item> }
+
+#[handler]
+fn list(#[ctx] ctx: &CommandContext) -> Result<Output<Envelope<Listing>>, anyhow::Error> {
+    Ok(Output::Render(load()?.envelope()))
+}
+```
+
+`Envelope<T>` serializes as `{"schema_version": 1, "data": {"items": […]}}`
+in every structured mode. The human modes receive the same shape, so a
+template for an enveloped view reads its fields under `data`
+(`{% for item in data.items %}`). `ContractSurface` is a trait with
+`const SCHEMA_VERSION: u32`; the derive sets it from the attribute, and a
+hand-written `impl` sets it the same way.
+
+### The framework's own documents
+
+A document the framework owns carries `schema_version` as a top-level key
+beside its own fields, because there is nothing for it to wrap:
+
+| Document | Shape |
+| --- | --- |
+| `ListViewResult` | `{"schema_version": 1, "items": […], …}` — see [List View](./list-view.md) |
+| the help document | `{"schema_version": 1, "name": …, "path": […], "usage": …, "args": […], "subcommands": […]}` — see [Themed Help](./standout-help.md#help-as-data) |
+| the diagnostic | `{"type": "diagnostic", "schema_version": 1, "severity": …, "kind": …, …}` — see [Error Handling](./error-handling.md) |
+
+Each of these types implements `ContractSurface`, so its version has one
+owner. There is no `--format-version` flag: the version is in the document.
+
+### Pinning a document's shape in a test
+
+`TestResult::assert_schema_snapshot(name)` in `standout-test` reduces the
+run's stdout document to its key names and JSON value types — every string
+becomes `"string"`, every number `"number"`, every object is mapped key by
+key, every array is reduced to its distinct element shapes — and compares
+that against a stored file. Values never count, so a test that pins the
+shape does not break when the data changes, and a renamed field fails it.
+
+```rust,ignore
+let listed = TestHarness::new().run(&app, cli::command(), ["myapp", "list", "--output", "json"]);
+listed.assert_schema_snapshot("list.json");
+```
+
+The convention:
+
+- The file is `tests/schemas/<name>` in the crate under test, found through
+  `CARGO_MANIFEST_DIR`, which `cargo test` sets. Name it after the command
+  and give it a `.json` suffix; the stored form is pretty-printed JSON.
+- The document is read in the mode the run resolved (`json` or `yaml`), so
+  the same file pins both.
+- A missing file is written from the run and the assertion **fails**, so a
+  first run never passes on nothing; review the file and commit it.
+- A changed schema fails with both shapes in the message. To accept an
+  intentional change, run with `STANDOUT_UPDATE_SNAPSHOTS=1`, which rewrites
+  the file, then commit it alongside the version bump it records.
+
+A schema file's contents are evidence, not contract, like any snapshot.
 
 ## Where this comes from
+
+[ADR-0039](../adr/0039-version-the-document-and-mark-the-surface-with-a-trait.md)
+records the versioned document, the `ContractSurface` marker and the schema
+snapshot, and retires the hold ADR-0029 placed on structured help.
 
 [ADR-0033](../adr/0033-state-which-surfaces-are-contract.md) decides what this
 page says, including the alternatives that were rejected:

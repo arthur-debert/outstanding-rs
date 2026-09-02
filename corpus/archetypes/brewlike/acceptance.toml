@@ -388,9 +388,7 @@ stdout_contains = ["--tree"]
 name = "list-json-payload-carries-the-schema-version"
 group = "schema-version"
 stresses = "structured output as a versioned contract surface, not just a serialization"
-expected = "fail"
-gap = "PAR02"
-reason = "no framework-owned versioned envelope exists (docs/topics/stability.md: a versioned envelope a consumer can validate against is outside the stability statement)"
+expected = "pass"
 [case.run]
 argv = ["list", "--output", "json"]
 timeout_seconds = 10
@@ -409,9 +407,7 @@ stderr = ""
 name = "machine-help-is-a-versioned-document"
 group = "schema-version"
 stresses = "help as machine data carrying the same schema version, instead of prose in every mode"
-expected = "fail"
-gap = "PAR02"
-reason = "no structured mode serializes help data (docs/topics/standout-help.md: help is themed prose in every mode). PAR02 defines the help document's own schema, so this case pins the stamp it must carry and the flag it must name, and leaves the rest of the document to that Spec."
+expected = "pass"
 [case.run]
 argv = ["deps", "--help", "--output", "json"]
 timeout_seconds = 10

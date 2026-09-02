@@ -15,6 +15,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+use crate::contract::ContractSurface;
 use crate::handler::RunErrorKind;
 use crate::hooks::HookPhase;
 
@@ -31,9 +32,11 @@ pub struct Diagnostic {
     pub range: Option<DiagnosticRange>,
 }
 
-impl Diagnostic {
-    pub const SCHEMA_VERSION: u32 = 1;
+impl ContractSurface for Diagnostic {
+    const SCHEMA_VERSION: u32 = 1;
+}
 
+impl Diagnostic {
     pub fn error(summary: impl Into<String>) -> Self {
         Self::new(Severity::Error, summary)
     }

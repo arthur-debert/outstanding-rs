@@ -48,6 +48,7 @@ mod page;
 mod process;
 #[cfg(unix)]
 pub mod pty;
+mod schema;
 mod snapshot;
 pub use matrix::{matrix, MatrixCell};
 pub use process::ProcessResult;
@@ -460,6 +461,14 @@ impl TestResult {
     /// resolved mode carries no document or stdout is not one.
     pub fn diagnostic(&self) -> Option<Diagnostic> {
         standout::cli::parse_diagnostic(self.output_mode, &self.stdout).ok()
+    }
+    /// Compare the key names and JSON value types of the stdout document
+    /// against `tests/schemas/<name>` in the crate under test, ignoring
+    /// values; a missing file is recorded and fails, and
+    /// `STANDOUT_UPDATE_SNAPSHOTS=1` accepts a changed schema.
+    #[track_caller]
+    pub fn assert_schema_snapshot(&self, name: &str) {
+        schema::assert_schema_snapshot(self.output_mode, &self.stdout, name);
     }
     #[track_caller]
     pub fn expect_diagnostic(&self) -> Diagnostic {

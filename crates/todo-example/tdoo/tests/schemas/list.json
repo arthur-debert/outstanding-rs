@@ -1,0 +1,10 @@
+{
+  "todos": [
+    {
+      "id": "number",
+      "title": "string",
+      "done": "boolean"
+    }
+  ],
+  "total": "number"
+}

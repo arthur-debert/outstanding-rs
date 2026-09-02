@@ -12,6 +12,7 @@
 //! pre-dispatch hooks for things like a resolved user session.
 
 pub mod artifact;
+mod contract;
 mod diagnostic;
 mod dispatch;
 mod handler;
@@ -19,6 +20,7 @@ mod hooks;
 mod stream;
 pub mod verify;
 pub use artifact::{Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun};
+pub use contract::{ContractSurface, Envelope};
 pub use diagnostic::{Diagnostic, DiagnosticKind, DiagnosticPosition, DiagnosticRange, Severity};
 pub use dispatch::{
     extract_command_path, get_deepest_matches, has_subcommand, insert_default_command,

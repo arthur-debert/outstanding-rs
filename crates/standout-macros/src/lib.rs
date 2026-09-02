@@ -2,6 +2,7 @@
 //! configuration, tabular/seeker/questionnaire derives, and the handler
 //! attribute macro.
 
+mod contract;
 mod crate_path;
 mod dispatch;
 mod embed;
@@ -51,6 +52,17 @@ pub fn embed_styles(input: TokenStream) -> TokenStream {
 pub fn dispatch_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     dispatch::dispatch_derive_impl(input)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+/// Marks a serializable type as a versioned contract surface:
+/// `#[contract(schema_version = N)]` sets `ContractSurface::SCHEMA_VERSION`,
+/// the number `Envelope<T>` stamps beside the data under `--output json`.
+#[proc_macro_derive(ContractSurface, attributes(contract))]
+pub fn contract_surface_derive(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    contract::contract_surface_derive_impl(input)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
