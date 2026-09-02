@@ -239,8 +239,12 @@ self-assessment are deliberately separate sections. The shape:
   color × compiled theme × check). Every identity has `pass`, `fail`,
   `not-run`, or `not-applicable`; reports never improve a denominator by
   omitting a cell.
-- `questionnaire` — subjective: whether a valid sheet was collected, its
-  diagnostics, and the decoded answers keyed by stable field id.
+- `questionnaire` — subjective: `collected` is false only when no sheet was
+  found or its structure could not be parsed at all; a sheet that parsed but
+  had a field rejected (a diagnostic, dropped from `answers`) still reads
+  `collected: true` alongside every answer that did decode. `confidence`
+  (`low`/`medium`/`high`) and its free-text `confidence_reason` are separate
+  fields, keyed by stable field id like every other answer.
 
 A run that completes the loop always writes a report, even when every case
 fails — failing cases are findings, not runner errors.
@@ -326,7 +330,38 @@ contract = "rendered"                 # markers, layout, and JSON apply
 [[invariants.command]]
 argv = ["ref-list"]
 contract = "opaque-bytes"             # modes preserve text bytes
+
+[[invariants.command]]
+argv = ["build"]
+contract = "either"           # rendered or opaque-bytes, whichever the binary does, consistently
+
+[[invariants.command]]
+argv = ["config", "list"]
+contract = "rendered"
+equal_across_modes = false    # the content names the output mode
 ```
+
+A command's own choice can outrun what the suite could know spec-first.
+`contract = "either"` accepts whichever of `rendered` or `opaque-bytes` the
+produced binary actually satisfies — read from its first evaluated cell
+(json-mode output that parses as JSON reads `rendered`; failing that, a
+non-text mode whose bytes match the text baseline reads `opaque-bytes`) —
+and holds that contract for the rest of the command's cells, rather than
+failing an implementation the spec never ruled out. `equal_across_modes =
+false` marks a command whose content is deliberately not the same across
+modes — the resolved mode is part of what it prints, as `config list`'s
+`term.output` row is — so the cross-mode content check (`styling preserves
+text layout` for `rendered`, the byte-identity check for `opaque-bytes`)
+reads `not-applicable` instead of failing on content the spec asked for.
+Every other identity in the cell still runs.
+
+Before the matrix runs at all, the runner invokes the produced binary with
+`--help`. An application built with `no_output_flag()` (or
+`no_output_file_flag()`) never has to say so in the manifest: the runner
+reads the choice from the binary itself, and when `--help` never mentions
+`--output`, every planned cell for every command reads `not-applicable`
+with reason `no output flag` instead of failing an unknown-flag error on
+each one.
 
 Color is explicit and deterministic: `off` sets no-color controls; `on` sets
 terminal capability and force-color controls. A produced binary cannot swap

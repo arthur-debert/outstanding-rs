@@ -30,22 +30,22 @@ python3 corpus/scorecard.py completion=corpus/completion/runs
 
 | Archetype | Run | Standout | Acceptance | ROB01 invariants | Workarounds listed | Frictions listed | Session | Agent | Comparable |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| brewlike | completion | 9.0.0 | 26/28 (92.9%); 2 expected-fail | 84/84 (100.0%) applicable; 180 planned: 84 pass, 96 N/A | 0 | 0 | 14m28s, 60,140 generated tokens | claude 2.1.252, claude-opus-5[1m] | single run |
+| brewlike | completion | 9.0.0 | 26/28 (92.9%); 2 expected-fail | 84/84 (100.0%) applicable; 180 planned: 84 pass, 96 N/A | 4 | 6 | 14m28s, 60,140 generated tokens | claude 2.1.252, claude-opus-5[1m] | single run |
 | cargolike | completion | 9.0.0 | 28/50 (56.0%); 1 expected-fail, 21 unexpected-pass | 54/56 (96.4%) applicable; 120 planned: 54 pass, 2 fail, 64 N/A | 6 | 5 | 19m55s, 93,144 generated tokens | claude 2.1.252, claude-opus-5[1m] | single run |
 | dockerlike | completion | 9.0.0 | 44/46 (95.7%); 2 fail | 90/90 (100.0%) applicable; 210 planned: 90 pass, 120 N/A | 5 | 5 | 24m54s, 103,231 generated tokens | claude 2.1.252, claude-opus-5[1m] | single run |
-| gcloudlike | completion | 9.0.0 | 27/51 (52.9%); 24 unexpected-pass | 28/28 (100.0%) applicable; 60 planned: 28 pass, 32 N/A | 0 | 0 | 18m47s, 88,248 generated tokens | claude 2.1.252, claude-opus-5[1m] | single run |
-| kubelike | completion | 9.0.0 | 42/42 (100.0%) | 58/66 (87.9%) applicable; 150 planned: 58 pass, 8 fail, 84 N/A | 0 | 0 | 15m52s, 73,008 generated tokens | claude 2.1.252, claude-opus-5[1m] | single run |
-| pnpmlike | completion | 9.0.0 | 32/32 (100.0%) | 28/28 (100.0%) applicable; 60 planned: 28 pass, 32 N/A | 0 | 0 | 17m13s, 81,865 generated tokens | claude 2.1.252, claude-opus-5[1m] | single run |
+| gcloudlike | completion | 9.0.0 | 27/51 (52.9%); 24 unexpected-pass | 28/28 (100.0%) applicable; 60 planned: 28 pass, 32 N/A | 4 | 5 | 18m47s, 88,248 generated tokens | claude 2.1.252, claude-opus-5[1m] | single run |
+| kubelike | completion | 9.0.0 | 42/42 (100.0%) | 58/66 (87.9%) applicable; 150 planned: 58 pass, 8 fail, 84 N/A | 4 | 4 | 15m52s, 73,008 generated tokens | claude 2.1.252, claude-opus-5[1m] | single run |
+| pnpmlike | completion | 9.0.0 | 32/32 (100.0%) | 28/28 (100.0%) applicable; 60 planned: 28 pass, 32 N/A | 5 | 4 | 17m13s, 81,865 generated tokens | claude 2.1.252, claude-opus-5[1m] | single run |
 
-**Four of the six workaround and friction counts read 0 where the committed
-answer lists items.** The counter takes an item to be a line starting `1.`,
-`a)`, `-`, or a bold lead-in at the left margin; `brewlike`, `gcloudlike`,
-`kubelike` and `pnpmlike` all listed as `(1)` or `(a)`, which none of those
-match. Read from the answers themselves: `brewlike` 4 workarounds and 6
-frictions, `gcloudlike` 4 and 5, `kubelike` 4 and 4, `pnpmlike` 5 and 4;
-`cargolike` (6 and 5) and `dockerlike` (5 and 5) listed in a recognized form
-and their cells are right. The rule is not changed here, because it is the one
-the pilot and re-run scorecards published their figures under.
+**Four of the six workaround and friction counts read 0 in the table this
+page first published.** The counter matched a line starting `1.`, `a)`, `-`,
+or a bold lead-in, but `brewlike`, `gcloudlike`, `kubelike` and `pnpmlike`
+all listed items as `(1)` or `(a)`, which none of those matched.
+`scorecard.py`'s counter now matches that form too, and the table above
+already reflects it: `brewlike` 4 workarounds and 6 frictions, `gcloudlike` 4
+and 5, `kubelike` 4 and 4, `pnpmlike` 5 and 4; `cargolike` (6 and 5) and
+`dockerlike` (5 and 5) were listed in a recognized form from the start and
+their cells were always right.
 
 ## What the first runs say
 

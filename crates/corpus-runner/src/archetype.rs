@@ -81,6 +81,7 @@ impl ColorState {
 pub enum InvariantContract {
     Rendered,
     OpaqueBytes,
+    Either,
 }
 
 #[derive(Debug, Deserialize)]
@@ -96,6 +97,12 @@ pub struct InvariantTheme {
 pub struct InvariantCommand {
     pub argv: Vec<String>,
     pub contract: InvariantContract,
+    #[serde(default = "default_true")]
+    pub equal_across_modes: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn all_modes() -> Vec<InvariantMode> {
@@ -634,5 +641,27 @@ exit_code = 0
         assert_eq!(suite.invariants.colors.len(), 2);
         assert_eq!(suite.invariants.themes.len(), 1);
         assert_eq!(suite.invariants.commands.len(), 1);
+        assert!(suite.invariants.commands[0].equal_across_modes);
+    }
+
+    #[test]
+    fn contract_either_parses() {
+        let suite = parse(&suite(&format!(
+            "{VALID_CASE}\n[invariants]\n[[invariants.command]]\nargv = [\"build\"]\ncontract = \"either\"\n"
+        )))
+        .unwrap();
+        assert_eq!(
+            suite.invariants.commands[0].contract,
+            InvariantContract::Either
+        );
+    }
+
+    #[test]
+    fn equal_across_modes_false_parses() {
+        let suite = parse(&suite(&format!(
+            "{VALID_CASE}\n[invariants]\n[[invariants.command]]\nargv = [\"config\", \"list\"]\ncontract = \"rendered\"\nequal_across_modes = false\n"
+        )))
+        .unwrap();
+        assert!(!suite.invariants.commands[0].equal_across_modes);
     }
 }
