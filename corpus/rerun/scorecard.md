@@ -58,26 +58,25 @@ python3 corpus/scorecard.py pilot=corpus/pilot/runs rerun=corpus/rerun/runs
 
 <!-- generated: regenerate with the command above -->
 
-| Archetype | Run | Standout | Acceptance | ROB01 invariants | Workarounds listed | Frictions listed | Session | Agent | Comparable |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| formlike | pilot | 8.1.1 | 4/11 (36.4%); 7 fail | 12/14 (85.7%) applicable; 30 planned: 12 pass, 2 fail, 16 N/A | 3 | 6 | 12m14s, 53,294 generated tokens | claude 2.1.234, claude-opus-5[1m] (recovered) | baseline |
-| formlike | rerun | 9.0.0 | 4/11 (36.4%); 7 fail | 12/14 (85.7%) applicable; 30 planned: 12 pass, 2 fail, 16 N/A | 3 | 6 | 17m40s, 72,214 generated tokens | claude 2.1.252, claude-opus-5[1m] | no: agent |
-| ghlike | pilot | 8.1.1 | 18/18 (100.0%) | 70/70 (100.0%) applicable; 150 planned: 70 pass, 80 N/A | 6 | 6 | 11m49s, 54,492 generated tokens | claude 2.1.234, claude-opus-5[1m] (recovered) | baseline |
-| ghlike | rerun | 9.0.0 | 17/18 (94.4%); 1 fail | 30/70 (42.9%) applicable; 150 planned: 30 pass, 40 fail, 80 N/A | 4 | 4 | 14m47s, 65,568 generated tokens | claude 2.1.252, claude-opus-5[1m] | no: agent |
-| gitlike | pilot | 8.1.1 | 15/19 (78.9%); 4 unexpected-pass | 48/48 (100.0%) applicable; 120 planned: 48 pass, 72 N/A | 5 | 5 | 12m27s, 56,330 generated tokens | claude 2.1.234, claude-opus-5[1m] (recovered) | baseline |
-| gitlike | rerun | 9.0.0 | 15/19 (78.9%); 4 unexpected-pass | 48/48 (100.0%) applicable; 120 planned: 48 pass, 72 N/A | 5 | 4 | 15m00s, 69,399 generated tokens | claude 2.1.252, claude-opus-5[1m] | no: agent |
-| systemdlike | pilot | 8.1.1 | 17/18 (94.4%); 1 fail | 56/56 (100.0%) applicable; 120 planned: 56 pass, 64 N/A | 6 | 7 | 12m00s, 54,480 generated tokens | claude 2.1.234, claude-opus-5[1m] (recovered) | baseline |
-| systemdlike | rerun | 9.0.0 | 18/18 (100.0%) | 56/56 (100.0%) applicable; 120 planned: 56 pass, 64 N/A | 3 | 0 | 10m50s, 46,376 generated tokens | claude 2.1.252, claude-opus-5[1m] | no: agent, suite |
-| validity | pilot | 8.1.1 | 6/22 (27.3%); 16 fail | 40/40 (100.0%) applicable; 80 planned: 40 pass, 40 N/A | 0 | 0 | 16m53s, 54,684 generated tokens | claude 2.1.252, claude-opus-5[1m] (recovered) | baseline |
-| validity | rerun | 9.0.0 | 6/22 (27.3%); 16 fail | 40/40 (100.0%) applicable; 80 planned: 40 pass, 40 N/A | 4 | 4 | 8m41s, 34,417 generated tokens | claude 2.1.252, claude-opus-5[1m] | yes |
+| Archetype | Run | Standout | Acceptance | Hand-rolled passes | ROB01 invariants | Workarounds listed | Frictions listed | Session | Agent | Comparable |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| formlike | pilot | 8.1.1 | 4/11 (36.4%); 7 fail | 0 | 12/14 (85.7%) applicable; 30 planned: 12 pass, 2 fail, 16 N/A | 3 | 6 | 12m14s, 53,294 generated tokens | claude 2.1.234, claude-opus-5[1m] (recovered) | baseline |
+| formlike | rerun | 9.0.0 | 4/11 (36.4%); 7 fail | 0 | 12/14 (85.7%) applicable; 30 planned: 12 pass, 2 fail, 16 N/A | 3 | 6 | 17m40s, 72,214 generated tokens | claude 2.1.252, claude-opus-5[1m] | no: agent |
+| ghlike | pilot | 8.1.1 | 18/18 (100.0%) | 0 | 70/70 (100.0%) applicable; 150 planned: 70 pass, 80 N/A | 6 | 6 | 11m49s, 54,492 generated tokens | claude 2.1.234, claude-opus-5[1m] (recovered) | baseline |
+| ghlike | rerun | 9.0.0 | 17/18 (94.4%); 1 fail | 0 | 30/70 (42.9%) applicable; 150 planned: 30 pass, 40 fail, 80 N/A | 4 | 4 | 14m47s, 65,568 generated tokens | claude 2.1.252, claude-opus-5[1m] | no: agent |
+| gitlike | pilot | 8.1.1 | 15/19 (78.9%); 4 unexpected-pass | 0 | 48/48 (100.0%) applicable; 120 planned: 48 pass, 72 N/A | 5 | 5 | 12m27s, 56,330 generated tokens | claude 2.1.234, claude-opus-5[1m] (recovered) | baseline |
+| gitlike | rerun | 9.0.0 | 15/19 (78.9%); 4 unexpected-pass | 0 | 48/48 (100.0%) applicable; 120 planned: 48 pass, 72 N/A | 5 | 4 | 15m00s, 69,399 generated tokens | claude 2.1.252, claude-opus-5[1m] | no: agent |
+| systemdlike | pilot | 8.1.1 | 17/18 (94.4%); 1 fail | 0 | 56/56 (100.0%) applicable; 120 planned: 56 pass, 64 N/A | 6 | 7 | 12m00s, 54,480 generated tokens | claude 2.1.234, claude-opus-5[1m] (recovered) | baseline |
+| systemdlike | rerun | 9.0.0 | 18/18 (100.0%) | 0 | 56/56 (100.0%) applicable; 120 planned: 56 pass, 64 N/A | 3 | 0 | 10m50s, 46,376 generated tokens | claude 2.1.252, claude-opus-5[1m] | no: agent, suite |
+| validity | pilot | 8.1.1 | 6/22 (27.3%); 16 fail | 0 | 40/40 (100.0%) applicable; 80 planned: 40 pass, 40 N/A | 0 | 0 | 16m53s, 54,684 generated tokens | claude 2.1.252, claude-opus-5[1m] (recovered) | baseline |
+| validity | rerun | 9.0.0 | 6/22 (27.3%); 16 fail | 0 | 40/40 (100.0%) applicable; 80 planned: 40 pass, 40 N/A | 4 | 4 | 8m41s, 34,417 generated tokens | claude 2.1.252, claude-opus-5[1m] | yes |
 
 Rows marked not comparable, and what differs:
 
 - **formlike / rerun** against `pilot` — executable version: 2.1.234 → 2.1.252
 - **ghlike / rerun** against `pilot` — executable version: 2.1.234 → 2.1.252
 - **gitlike / rerun** against `pilot` — executable version: 2.1.234 → 2.1.252
-- **systemdlike / rerun** against `pilot` — the acceptance suite: e87a2b05… →
-  f3db0930…; executable version: 2.1.234 → 2.1.252
+- **systemdlike / rerun** against `pilot` — the acceptance suite: e87a2b05… → f3db0930…; executable version: 2.1.234 → 2.1.252
 
 Two of those counts need a caveat the script cannot give them. `systemdlike`'s
 re-run **0 frictions** is a formatting artifact: the count is of listed items,

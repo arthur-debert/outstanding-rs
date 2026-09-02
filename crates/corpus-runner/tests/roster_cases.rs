@@ -857,6 +857,121 @@ files_absent = ["conf/configurations/config_staging"]
 }
 
 #[test]
+fn files_assertion_refuses_a_symlink() {
+    let results = run_suite(
+        r#"
+[[case]]
+name = "symlinked-target"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["alpha"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+[case.expect.files]
+"conf/config_default" = "irrelevant\n"
+"#,
+        r#"mkdir -p conf; echo elsewhere > conf/elsewhere; ln -s elsewhere conf/config_default"#,
+    );
+    assert_eq!(results[0].outcome, CaseOutcome::Fail);
+    assert!(
+        results[0].detail.as_deref().unwrap().contains("symlink"),
+        "{:?}",
+        results[0].detail
+    );
+}
+
+#[test]
+fn files_assertion_refuses_a_non_regular_file() {
+    let results = run_suite(
+        r#"
+[[case]]
+name = "fifo-target"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["alpha"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+[case.expect.files]
+"conf/config_default" = "irrelevant\n"
+"#,
+        r#"mkdir -p conf; mkfifo conf/config_default"#,
+    );
+    assert_eq!(results[0].outcome, CaseOutcome::Fail);
+    assert!(
+        results[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("not a regular file"),
+        "{:?}",
+        results[0].detail
+    );
+}
+
+#[test]
+fn files_assertion_treats_oversized_content_as_a_mismatch() {
+    let results = run_suite(
+        r#"
+[[case]]
+name = "oversized-target"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["alpha"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+[case.expect.files]
+"conf/config_default" = "short\n"
+"#,
+        r#"mkdir -p conf; head -c 1000000 /dev/zero | tr '\0' 'x' > conf/config_default"#,
+    );
+    assert_eq!(results[0].outcome, CaseOutcome::Fail);
+    assert!(
+        results[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("content differs"),
+        "{:?}",
+        results[0].detail
+    );
+}
+
+#[test]
+fn files_absent_treats_a_dangling_symlink_as_present() {
+    let results = run_suite(
+        r#"
+[[case]]
+name = "dangling-symlink"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["alpha"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+files_absent = ["conf/config_default"]
+"#,
+        r#"mkdir -p conf; ln -s /nonexistent/target conf/config_default"#,
+    );
+    assert_eq!(results[0].outcome, CaseOutcome::Fail);
+    assert!(
+        results[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("must not exist"),
+        "{:?}",
+        results[0].detail
+    );
+}
+
+#[test]
 fn evidence_absent_reports_hand_rolled_pass() {
     let mut gaps = BTreeMap::new();
     gaps.insert(

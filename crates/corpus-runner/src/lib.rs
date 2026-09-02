@@ -394,8 +394,6 @@ fn evaluate_binary(
 ) -> Evaluation {
     match binary {
         Ok(binary) => {
-            // Read after the build succeeded, so it reflects the manifest that
-            // binary was actually built from (D17's evidence check).
             let app_cargo_toml = std::fs::read_to_string(app_dir.join("Cargo.toml")).ok();
             Evaluation {
                 acceptance: cases::run_cases(

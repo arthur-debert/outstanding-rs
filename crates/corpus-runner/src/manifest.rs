@@ -50,10 +50,6 @@ pub struct Interaction {
     pub cases: Vec<String>,
 }
 
-/// A `[gaps]` entry: prose alone, or prose plus a black-box-checkable claim
-/// (D17, `evidence = "uses-crate:<name>"`) that lets a passing gap case be
-/// verified against the produced workspace rather than trusted at face
-/// value — see `Evidence`.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum GapEntry {
