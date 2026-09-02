@@ -244,7 +244,7 @@ pub fn provision(
         } else {
             let tag = format!("v{framework_version}");
             let commit = resolve_tag_commit(&repo_root, &tag)?;
-            let archive_dir = create_docs_archive_scratch_dir(&repo_root, &tag)?;
+            let archive_dir = create_docs_archive_scratch_dir(run_dir, &tag)?;
             extract_tag_tree(&repo_root, &tag, archive_dir.path())?;
             // Canonicalized so `is_published_docs_target`'s `strip_prefix`
             // agrees with the canonicalized symlink targets `copy_recursive`
@@ -312,21 +312,19 @@ fn resolve_tag_commit(repo_root: &Path, tag: &str) -> anyhow::Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-/// A scratch directory to archive a tag's tree into, created *inside*
-/// `repo_root` rather than the system temp directory: `repo_root` is the one
-/// item in `Isolation::denied_read` this run controls the placement of, so a
-/// scratch path under it is covered by the agent's deny-read policy for the
-/// whole time it exists, including a crash that skips the RAII cleanup.
-/// The system temp directory carries no such guarantee — nothing denies it
-/// by default, so a curious agent could read an archived checkout sitting
-/// there even briefly.
-fn create_docs_archive_scratch_dir(
-    repo_root: &Path,
-    tag: &str,
-) -> anyhow::Result<tempfile::TempDir> {
+/// A scratch directory to archive a tag's tree into, created inside
+/// `run_dir` — the run artifact directory `provision` already owns and
+/// writes into — rather than the checkout (`repo_root`) or the system temp
+/// directory. `provision` runs, and this directory is created, extracted
+/// into, read from, and dropped, entirely before the agent process starts,
+/// so nothing about the agent's sandbox policy governs this window; the
+/// point of `run_dir` is not touching the checkout at all, so a read-only
+/// checkout still works and a crash that skips the RAII cleanup leaves
+/// debris in the runner's own disposable output, not in the user's tree.
+fn create_docs_archive_scratch_dir(run_dir: &Path, tag: &str) -> anyhow::Result<tempfile::TempDir> {
     tempfile::Builder::new()
         .prefix(".corpus-docs-tag-archive-")
-        .tempdir_in(repo_root)
+        .tempdir_in(run_dir)
         .with_context(|| format!("creating docs archive scratch directory for tag {tag}"))
 }
 
@@ -521,14 +519,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn docs_archive_scratch_dir_is_created_under_repo_root() {
-        let repo_root = tempfile::tempdir().unwrap();
-        let scratch = create_docs_archive_scratch_dir(repo_root.path(), "v1.2.3").unwrap();
+    fn docs_archive_scratch_dir_is_created_under_the_run_directory() {
+        let run_dir = tempfile::tempdir().unwrap();
+        let scratch = create_docs_archive_scratch_dir(run_dir.path(), "v1.2.3").unwrap();
         assert!(
-            scratch.path().starts_with(repo_root.path()),
-            "scratch dir {} must sit under the denied-read repo root {}, not the system temp dir",
+            scratch.path().starts_with(run_dir.path()),
+            "scratch dir {} must sit under the run directory {}, not the checkout or the \
+             system temp dir",
             scratch.path().display(),
-            repo_root.path().display()
+            run_dir.path().display()
         );
     }
 }

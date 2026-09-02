@@ -352,10 +352,13 @@ enum SandboxEntry {
 /// `build_sandbox_inventory` after `execute` confirms the case's whole
 /// process group is dead — nothing can still be writing into the sandbox by
 /// the time this exists. `files` and `files_absent` are lookups against it;
-/// neither touches the filesystem again.
+/// neither touches the filesystem again. Keyed by the native relative
+/// `PathBuf`, not a lossily-converted string: a produced app is untrusted
+/// and could otherwise name a non-UTF-8 file whose lossy spelling collides
+/// with a legitimate expectation.
 #[derive(Debug, Default)]
 struct SandboxInventory {
-    entries: BTreeMap<String, SandboxEntry>,
+    entries: BTreeMap<PathBuf, SandboxEntry>,
 }
 
 impl SandboxInventory {
@@ -368,16 +371,8 @@ impl SandboxInventory {
         {
             return Err(format!("path {rel:?} escapes the case sandbox"));
         }
-        Ok(self.entries.get(&inventory_key(rel_path)))
+        Ok(self.entries.get(rel_path))
     }
-}
-
-fn inventory_key(rel_path: &Path) -> String {
-    rel_path
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/")
 }
 
 /// Walks `root` recursively, never following a symlink, and records every
@@ -398,29 +393,29 @@ fn build_sandbox_inventory(root: &Path) -> Result<SandboxInventory, String> {
             let entry = entry
                 .map_err(|err| format!("reading sandbox directory {}: {err}", rel_dir.display()))?;
             let rel = rel_dir.join(entry.file_name());
-            let key = inventory_key(&rel);
             // `DirEntry::metadata` does not follow a final symlink, same as
             // `symlink_metadata` on the assembled path.
             let metadata = entry
                 .metadata()
-                .map_err(|err| format!("inspecting sandbox entry {key:?}: {err}"))?;
+                .map_err(|err| format!("inspecting sandbox entry {}: {err}", rel.display()))?;
             let file_type = metadata.file_type();
             if file_type.is_dir() {
-                entries.insert(key, SandboxEntry::Directory);
+                entries.insert(rel.clone(), SandboxEntry::Directory);
                 pending.push(rel);
             } else if file_type.is_file() {
                 total_bytes = total_bytes.saturating_add(metadata.len());
                 if total_bytes > MAX_INVENTORIED_BYTES {
                     return Err(format!(
                         "sandbox contents exceed the {MAX_INVENTORIED_BYTES}-byte inventory \
-                         budget (over budget at {key:?}, {total_bytes} bytes so far)"
+                         budget (over budget at {}, {total_bytes} bytes so far)",
+                        rel.display()
                     ));
                 }
                 let bytes = read_regular_file_no_follow(&root.join(&rel), MAX_INVENTORIED_BYTES)
-                    .map_err(|err| format!("reading sandbox entry {key:?}: {err}"))?;
-                entries.insert(key, SandboxEntry::File(bytes));
+                    .map_err(|err| format!("reading sandbox entry {}: {err}", rel.display()))?;
+                entries.insert(rel, SandboxEntry::File(bytes));
             } else {
-                entries.insert(key, SandboxEntry::Other);
+                entries.insert(rel, SandboxEntry::Other);
             }
         }
     }
