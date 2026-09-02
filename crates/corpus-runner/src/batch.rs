@@ -16,7 +16,6 @@ pub struct BatchConfig {
     pub archetypes: Vec<String>,
     pub archetypes_dir: PathBuf,
     pub docs_dir: PathBuf,
-    pub runs_dir: PathBuf,
     pub out_dir: PathBuf,
     pub agent_cmd: String,
     pub broker: Option<BrokerConfig>,
@@ -26,6 +25,13 @@ pub struct BatchConfig {
     pub scorecard_script: PathBuf,
     pub account: Option<String>,
 }
+
+/// Where each archetype's untrusted run workspace lives until sanitizing
+/// removes it. `--out` is the batch's one user-facing directory, already
+/// verified outside the checkout, so nesting the scratch space under it
+/// needs no separate boundary check or CLI option; a hidden name keeps it
+/// out of the scorecards' directory listing and off by default in `ls`.
+const SCRATCH_DIRNAME: &str = ".scratch";
 
 /// One archetype's result within the batch: the run id it was sanitized
 /// under, or a detail naming what could not complete — provisioning,
@@ -51,14 +57,18 @@ pub fn batch(config: &BatchConfig) -> anyhow::Result<Vec<(String, ArchetypeOutco
         "batch output directory",
         "--out",
     )?;
-    std::fs::create_dir_all(&config.runs_dir)
-        .with_context(|| format!("creating runs directory {}", config.runs_dir.display()))?;
-    require_distinct_directories(&config.out_dir, &config.runs_dir)?;
+    let scratch_root = config.out_dir.join(SCRATCH_DIRNAME);
+    std::fs::create_dir_all(&scratch_root).with_context(|| {
+        format!(
+            "creating batch scratch directory {}",
+            scratch_root.display()
+        )
+    })?;
 
     let outcomes: Vec<(String, ArchetypeOutcome)> = config
         .archetypes
         .iter()
-        .map(|archetype| (archetype.clone(), run_one(config, archetype)))
+        .map(|archetype| (archetype.clone(), run_one(config, &scratch_root, archetype)))
         .collect();
 
     write_scorecards(&config.scorecard_script, &config.out_dir)
@@ -67,36 +77,11 @@ pub fn batch(config: &BatchConfig) -> anyhow::Result<Vec<(String, ArchetypeOutco
     Ok(outcomes)
 }
 
-/// Rejects `--out` and `--runs-dir` resolving to the same directory, or one
-/// nesting inside the other. `run_one` sanitizes an archetype's evidence
-/// into `--out` and then removes its scratch subdirectory of `--runs-dir`;
-/// were the two configured to overlap, that removal would delete the
-/// sanitized copy it just wrote instead of only the scratch original.
-fn require_distinct_directories(out_dir: &Path, runs_dir: &Path) -> anyhow::Result<()> {
-    let canonical_out = out_dir
-        .canonicalize()
-        .with_context(|| format!("resolving batch output directory {}", out_dir.display()))?;
-    let canonical_runs = runs_dir
-        .canonicalize()
-        .with_context(|| format!("resolving runs directory {}", runs_dir.display()))?;
-    if canonical_out == canonical_runs
-        || canonical_out.starts_with(&canonical_runs)
-        || canonical_runs.starts_with(&canonical_out)
-    {
-        bail!(
-            "--out {} and --runs-dir {} must not be the same directory or nested in each other",
-            canonical_out.display(),
-            canonical_runs.display()
-        );
-    }
-    Ok(())
-}
-
-fn run_one(config: &BatchConfig, archetype: &str) -> ArchetypeOutcome {
+fn run_one(config: &BatchConfig, scratch_root: &Path, archetype: &str) -> ArchetypeOutcome {
     let run_config = RunConfig {
         archetype: archetype.to_string(),
         archetypes_dir: config.archetypes_dir.clone(),
-        runs_dir: config.runs_dir.clone(),
+        runs_dir: scratch_root.to_path_buf(),
         docs_dir: config.docs_dir.clone(),
         agent_cmd: config.agent_cmd.clone(),
         broker: config.broker.clone(),
@@ -117,7 +102,7 @@ fn run_one(config: &BatchConfig, archetype: &str) -> ArchetypeOutcome {
 }
 
 /// Sanitizes `run_dir`'s evidence into `dest`, then removes `run_dir` — the
-/// scratch copy under `--runs-dir` — since it now only duplicates what
+/// scratch copy under `<out>/.scratch/` — since it now only duplicates what
 /// sanitizing wrote. A sanitize failure returns before the removal and
 /// leaves `run_dir` in place for inspection.
 fn sanitize_and_cleanup(
@@ -192,61 +177,6 @@ mod tests {
         let path = dir.join(name);
         std::fs::write(&path, body).unwrap();
         path
-    }
-
-    #[test]
-    fn require_distinct_directories_rejects_the_same_directory() {
-        let scratch = tempfile::tempdir().unwrap();
-        let dir = scratch.path().join("shared");
-        std::fs::create_dir_all(&dir).unwrap();
-
-        let err = require_distinct_directories(&dir, &dir).unwrap_err();
-
-        assert!(
-            format!("{err:#}").contains("must not be the same directory"),
-            "{err:#}"
-        );
-    }
-
-    #[test]
-    fn require_distinct_directories_rejects_runs_dir_nested_under_out() {
-        let scratch = tempfile::tempdir().unwrap();
-        let out_dir = scratch.path().join("out");
-        let runs_dir = out_dir.join("runs");
-        std::fs::create_dir_all(&runs_dir).unwrap();
-
-        let err = require_distinct_directories(&out_dir, &runs_dir).unwrap_err();
-
-        assert!(
-            format!("{err:#}").contains("must not be the same directory"),
-            "{err:#}"
-        );
-    }
-
-    #[test]
-    fn require_distinct_directories_rejects_out_nested_under_runs_dir() {
-        let scratch = tempfile::tempdir().unwrap();
-        let runs_dir = scratch.path().join("runs");
-        let out_dir = runs_dir.join("out");
-        std::fs::create_dir_all(&out_dir).unwrap();
-
-        let err = require_distinct_directories(&out_dir, &runs_dir).unwrap_err();
-
-        assert!(
-            format!("{err:#}").contains("must not be the same directory"),
-            "{err:#}"
-        );
-    }
-
-    #[test]
-    fn require_distinct_directories_accepts_sibling_directories() {
-        let scratch = tempfile::tempdir().unwrap();
-        let out_dir = scratch.path().join("out");
-        let runs_dir = scratch.path().join("runs");
-        std::fs::create_dir_all(&out_dir).unwrap();
-        std::fs::create_dir_all(&runs_dir).unwrap();
-
-        require_distinct_directories(&out_dir, &runs_dir).unwrap();
     }
 
     #[test]

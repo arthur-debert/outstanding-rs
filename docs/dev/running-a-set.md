@@ -13,12 +13,16 @@ Archetypes run serially, in the order given — two sandboxed sessions cannot
 share one host credential broker. Each archetype gets the same treatment
 `corpus-runner run` gives one: provision, agent session, questionnaire,
 acceptance suite and invariant matrix, `report.json`. `--broker`,
-`--runs-dir`, `--agent-cmd`, `--agent-timeout`, `--build-timeout` and
-`--check-timeout` all mean what they mean for `run` and apply to every
-archetype in the set; see `corpus-runner run --help`.
+`--agent-cmd`, `--agent-timeout`, `--build-timeout` and `--check-timeout`
+all mean what they mean for `run` and apply to every archetype in the set;
+see `corpus-runner run --help`.
 
 A failed run is recorded and the batch moves on to the next archetype; the
 command's own exit status is non-zero if any run failed to complete.
+
+`--out` is the only directory `batch` takes: it must sit outside the
+framework checkout, and the batch owns everything under it, including each
+archetype's untrusted run workspace until sanitizing removes it.
 
 ## What lands under `--out`
 

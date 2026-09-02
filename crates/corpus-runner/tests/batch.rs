@@ -58,7 +58,6 @@ fn batch_smoke_writes_both_scorecards_and_sanitized_evidence() {
         true,
     );
 
-    let runs_dir = scratch.path().join("runs");
     let out_dir = scratch.path().join("out");
 
     let output = Command::new(env!("CARGO_BIN_EXE_corpus-runner"))
@@ -69,10 +68,8 @@ fn batch_smoke_writes_both_scorecards_and_sanitized_evidence() {
             env!("CARGO_PKG_VERSION"),
             "--agent-cmd",
             "agent.sh",
-            "--runs-dir",
+            "--out",
         ])
-        .arg(&runs_dir)
-        .arg("--out")
         .arg(&out_dir)
         .current_dir(repo())
         .output()
@@ -99,11 +96,14 @@ fn batch_smoke_writes_both_scorecards_and_sanitized_evidence() {
     assert_eq!(rows[0]["comparable"], "single run");
 
     // One sanitized run directory landed directly under --out, beside the
-    // two scorecards; its transcript never enters the checkout.
+    // two scorecards and the batch's hidden scratch directory; its
+    // transcript never enters the checkout.
     let run_dirs: Vec<_> = std::fs::read_dir(&out_dir)
         .unwrap()
         .map(|entry| entry.unwrap().path())
-        .filter(|path| path.is_dir())
+        .filter(|path| {
+            path.is_dir() && !path.file_name().unwrap().to_string_lossy().starts_with('.')
+        })
         .collect();
     assert_eq!(run_dirs.len(), 1, "{run_dirs:?}");
     let run_dir = &run_dirs[0];
@@ -131,9 +131,10 @@ fn batch_smoke_writes_both_scorecards_and_sanitized_evidence() {
     let report_text = std::fs::read_to_string(run_dir.join("report.json")).unwrap();
     assert!(!report_text.contains(scratch.path().to_str().unwrap()));
 
-    // The scratch run directory under --runs-dir held only what sanitizing
-    // duplicated into --out; nothing survives there once the run completes.
-    let scratch_runs: Vec<_> = std::fs::read_dir(&runs_dir)
+    // The scratch run directory under --out/.scratch held only what
+    // sanitizing duplicated into --out; nothing survives there once the
+    // run completes.
+    let scratch_runs: Vec<_> = std::fs::read_dir(out_dir.join(".scratch"))
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .collect();
@@ -142,7 +143,6 @@ fn batch_smoke_writes_both_scorecards_and_sanitized_evidence() {
 
 #[test]
 fn batch_rejects_an_out_dir_inside_the_source_checkout() {
-    let scratch = tempfile::tempdir().unwrap();
     let out_dir = repo()
         .join("target")
         .join("corpus-batch-out-inside-checkout-test");
@@ -156,10 +156,8 @@ fn batch_rejects_an_out_dir_inside_the_source_checkout() {
             env!("CARGO_PKG_VERSION"),
             "--agent-cmd",
             "agent.sh",
-            "--runs-dir",
+            "--out",
         ])
-        .arg(scratch.path().join("runs"))
-        .arg("--out")
         .arg(&out_dir)
         .current_dir(repo())
         .output()
@@ -171,40 +169,6 @@ fn batch_rejects_an_out_dir_inside_the_source_checkout() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("inside source checkout"), "{stderr}");
-}
-
-#[test]
-fn batch_rejects_runs_dir_and_out_being_the_same_directory() {
-    let scratch = tempfile::tempdir().unwrap();
-    let shared = scratch.path().join("shared");
-    std::fs::create_dir_all(&shared).unwrap();
-
-    let output = Command::new(env!("CARGO_BIN_EXE_corpus-runner"))
-        .args([
-            "batch",
-            "smoke",
-            "--framework-version",
-            env!("CARGO_PKG_VERSION"),
-            "--agent-cmd",
-            "agent.sh",
-            "--runs-dir",
-        ])
-        .arg(&shared)
-        .arg("--out")
-        .arg(&shared)
-        .current_dir(repo())
-        .output()
-        .unwrap();
-
-    assert!(
-        !output.status.success(),
-        "batch should refuse --out and --runs-dir resolving to the same directory"
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("must not be the same directory"),
-        "{stderr}"
-    );
 }
 
 /// Deletes `out_dir` on drop: `batch` creates it (via `create_dir_all`)

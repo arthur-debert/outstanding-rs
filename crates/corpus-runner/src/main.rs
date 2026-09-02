@@ -107,11 +107,6 @@ enum Commands {
         /// scorecard.py).
         #[arg(long, default_value = "corpus")]
         corpus_dir: PathBuf,
-        /// External directory for untrusted run workspaces, sanitized away
-        /// once each run completes. It must not live beneath the framework
-        /// checkout.
-        #[arg(long)]
-        runs_dir: Option<PathBuf>,
         /// The docs directory the published snapshot is copied from.
         #[arg(long, default_value = "docs")]
         docs_dir: PathBuf,
@@ -135,9 +130,11 @@ enum Commands {
         /// Seconds before each invariant invocation is killed.
         #[arg(long)]
         check_timeout: Option<u64>,
-        /// Directory the sanitized run evidence and both scorecards land
-        /// under: one `<run-id>/` per archetype, plus `scorecard.json` and
-        /// `scorecard.md`.
+        /// The one directory the batch owns: sanitized run evidence and
+        /// both scorecards land under it (one `<run-id>/` per archetype,
+        /// plus `scorecard.json` and `scorecard.md`), and it holds each
+        /// archetype's untrusted run workspace until sanitizing removes it.
+        /// It must not live beneath the framework checkout.
         #[arg(long)]
         out: PathBuf,
         /// Host account name to scrub from sanitized transcripts (forwarded
@@ -256,7 +253,6 @@ fn main() -> ExitCode {
         Commands::Batch {
             archetypes,
             corpus_dir,
-            runs_dir,
             docs_dir,
             agent_cmd,
             broker,
@@ -280,9 +276,6 @@ fn main() -> ExitCode {
                 archetypes,
                 archetypes_dir: corpus_dir.join("archetypes"),
                 docs_dir: absolute(&docs_dir),
-                runs_dir: runs_dir
-                    .map(|path| absolute(&path))
-                    .unwrap_or_else(|| std::env::temp_dir().join("standout-corpus-runs")),
                 out_dir: absolute(&out),
                 agent_cmd: agent_cmd.unwrap_or_else(session::default_agent_cmd),
                 broker,
