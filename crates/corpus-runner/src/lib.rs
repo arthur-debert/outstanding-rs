@@ -5,7 +5,7 @@ pub mod acceptance;
 pub mod archetype;
 pub mod broker;
 pub mod cases;
-mod digest;
+pub mod digest;
 pub mod exec;
 pub mod peer;
 pub mod provenance;

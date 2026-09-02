@@ -281,6 +281,10 @@ fn session_scrubs_the_environment_and_writes_the_transcript() {
     assert_eq!(report.transcript, session::TRANSCRIPT_FILENAME);
     assert!(!report.timed_out);
     assert_eq!(report.turns, None);
+    assert_eq!(
+        report.transcript_sha256.as_deref(),
+        Some(corpus_runner::digest::sha256_hex(transcript.as_bytes()).as_str())
+    );
 }
 
 #[test]
@@ -565,6 +569,7 @@ fn report_round_trips_through_json() {
             input_tokens: None,
             output_tokens: None,
             transcript: "transcript.jsonl".into(),
+            transcript_sha256: None,
         },
         provenance: corpus_runner::provenance::recorded(
             "claude --model claude-opus-5 -p 'do the thing'",
