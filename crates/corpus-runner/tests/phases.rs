@@ -12,6 +12,7 @@ use common::script;
 use corpus_runner::archetype::{Archetype, InvariantCommand, InvariantContract, Invariants};
 use corpus_runner::report::{InvariantStatus, QuestionnaireReport, RunReport};
 use corpus_runner::{acceptance, questionnaire, session, workspace};
+use sha2::{Digest, Sha256};
 
 const NO_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -281,9 +282,13 @@ fn session_scrubs_the_environment_and_writes_the_transcript() {
     assert_eq!(report.transcript, session::TRANSCRIPT_FILENAME);
     assert!(!report.timed_out);
     assert_eq!(report.turns, None);
+    let expected_sha256: String = Sha256::digest(transcript.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
     assert_eq!(
         report.transcript_sha256.as_deref(),
-        Some(corpus_runner::digest::sha256_hex(transcript.as_bytes()).as_str())
+        Some(expected_sha256.as_str())
     );
 }
 
