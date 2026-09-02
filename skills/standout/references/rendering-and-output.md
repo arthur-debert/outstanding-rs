@@ -33,9 +33,11 @@ The global `--output` flag chooses the view without changing handler data:
 | `term` | Template with forced ANSI | Explicit colored output |
 | `text` | Template with tags stripped | Stable rendered assertions |
 | `term-debug` | Template with tags preserved | Inspect style placement |
-| `json`, `yaml`, `xml`, `csv` | Direct serialization; template skipped | Parse or assert on data |
+| `json`, `yaml`, `csv` | Direct serialization; template skipped | Parse or assert on data |
 
 Unknown style tags gain a `?` marker in terminal mode, disappear in text mode, and remain literal in terminal-debug mode. Structured modes also skip injected template context.
+
+`csv` takes flat records only: one map of scalars, or an array of them, one row each in declared column order. A nested value is a render error naming `CsvProjection`; declare the columns with a `CsvProjection` on the command when the handler data is not flat. There is no XML mode.
 
 Prefer `--output json` plus a parser whenever an agent needs facts rather than presentation. Use `--output text` when the rendered wording matters. Do not scrape ANSI output.
 

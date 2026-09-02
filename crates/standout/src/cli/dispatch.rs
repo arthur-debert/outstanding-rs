@@ -6,7 +6,7 @@ use std::rc::Rc;
 use crate::cli::builder::{SharedTemplateEngine, TemplateAbsence, TemplateRef};
 use crate::cli::handler::Output as HandlerOutput;
 use crate::cli::handler::{
-    AppFailure, CommandContext, Diagnostic, ExternalFailure, RunError, RunErrorKind,
+    AppFailure, CommandContext, Diagnostic, ExitStatus, ExternalFailure, RunError, RunErrorKind,
 };
 use crate::cli::hooks::{ArtifactOutput, HookError, Hooks};
 use crate::context::ContextRegistry;
@@ -21,13 +21,48 @@ pub enum DispatchOutput {
     Text {
         formatted: String,
         raw: String,
+        status: ExitStatus,
     },
     Binary(Vec<u8>, String),
     Artifact {
         output: ArtifactOutput,
         request: Box<RenderRequest>,
     },
-    Silent,
+    Silent {
+        status: ExitStatus,
+    },
+}
+
+/// A handler-declared exit status has nowhere to ride on a binary or artifact
+/// outcome, so declaring one there is a render error rather than a lost status.
+pub(crate) fn status_without_a_carrier(status: ExitStatus, output: &str) -> RunError {
+    RunError::new(
+        format!(
+            "exit status {} was declared on {output} output; a declared status rides on \
+             Output::Render and Output::Silent only",
+            status.code()
+        ),
+        RunErrorKind::Render,
+    )
+}
+
+/// Fails when `status` was declared on an output that cannot carry it.
+pub(crate) fn reject_status_without_a_carrier(
+    status: ExitStatus,
+    is_binary: bool,
+    is_artifact: bool,
+) -> Result<(), RunError> {
+    if status == ExitStatus::SUCCESS {
+        return Ok(());
+    }
+    let carrier = if is_binary {
+        "binary"
+    } else if is_artifact {
+        "artifact"
+    } else {
+        return Ok(());
+    };
+    Err(status_without_a_carrier(status, carrier))
 }
 
 fn render_time_template(
@@ -162,10 +197,11 @@ pub(crate) fn render_handler_output<T: Serialize>(
     structured_output_projection: Option<&StructuredOutputProjection>,
     target: TargetProperties,
 ) -> Result<DispatchOutput, RunError> {
-    let output = match result {
-        Ok(output) => output,
+    let (output, status) = match result {
+        Ok(output) => output.split_exit_status(),
         Err(error) => return Err(handler_run_error(error)),
     };
+    reject_status_without_a_carrier(status, output.is_binary(), output.is_artifact())?;
 
     let command_path = ctx.command_path.join(".");
     let warnings = ctx
@@ -194,9 +230,13 @@ pub(crate) fn render_handler_output<T: Serialize>(
             let json_data = run_post_dispatch_hooks(json_data, matches, ctx, hooks)?;
             let request = request_for(json_data)?;
             let (formatted, raw) = render_via_request(&request)?;
-            Ok(DispatchOutput::Text { formatted, raw })
+            Ok(DispatchOutput::Text {
+                formatted,
+                raw,
+                status,
+            })
         }
-        HandlerOutput::Silent => Ok(DispatchOutput::Silent),
+        HandlerOutput::Silent => Ok(DispatchOutput::Silent { status }),
         HandlerOutput::Binary { data, filename } => Ok(DispatchOutput::Binary(data, filename)),
         HandlerOutput::Artifact(artifact) => {
             let (bytes, suggested_destination, stdout_allowed, report) = artifact.into_parts();

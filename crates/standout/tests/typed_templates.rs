@@ -846,7 +846,6 @@ fn structured_only_maps_machine_modes_and_rejects_human_modes() {
         OutputMode::Auto,
         OutputMode::Json,
         OutputMode::Yaml,
-        OutputMode::Xml,
         OutputMode::Csv,
     ] {
         let matches = command().try_get_matches_from(["app", "show"]).unwrap();

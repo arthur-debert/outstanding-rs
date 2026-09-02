@@ -105,7 +105,9 @@ where
               _theme: &crate::Theme,
               _target: crate::TargetProperties| {
             match (handler.borrow_mut())(matches, ctx) {
-                Ok(()) => Ok(super::dispatch::DispatchOutput::Silent),
+                Ok(()) => Ok(super::dispatch::DispatchOutput::Silent {
+                    status: super::handler::ExitStatus::SUCCESS,
+                }),
                 Err(e) => Err(super::dispatch::handler_run_error(e)),
             }
         },

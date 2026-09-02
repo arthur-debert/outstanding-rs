@@ -119,7 +119,7 @@ belong to `pnpmlike`, not to the script.
 
 | condition | resolved reporter |
 | --- | --- |
-| the output mode is a machine mode (`json`, `yaml`, `xml`, `csv`) | `ndjson` |
+| the output mode is a machine mode (`json`, `yaml`, `csv`) | `ndjson` |
 | stderr is an attended terminal | `default` |
 | otherwise | `append-only` |
 

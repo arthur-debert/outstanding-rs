@@ -208,12 +208,7 @@ mod tests {
 
     #[test]
     fn structured_modes_still_print_human_help() {
-        for mode in [
-            OutputMode::Json,
-            OutputMode::Yaml,
-            OutputMode::Csv,
-            OutputMode::Xml,
-        ] {
+        for mode in [OutputMode::Json, OutputMode::Yaml, OutputMode::Csv] {
             let output = render_help(
                 &cmd(),
                 Some(HelpConfig {
@@ -269,7 +264,6 @@ mod tests {
         assert_eq!(human_help_format(OutputMode::Json), OutputMode::Auto);
         assert_eq!(human_help_format(OutputMode::Yaml), OutputMode::Auto);
         assert_eq!(human_help_format(OutputMode::Csv), OutputMode::Auto);
-        assert_eq!(human_help_format(OutputMode::Xml), OutputMode::Auto);
         assert_eq!(human_help_format(OutputMode::Term), OutputMode::Term);
         assert_eq!(human_help_format(OutputMode::Text), OutputMode::Text);
         assert_eq!(human_help_format(OutputMode::Auto), OutputMode::Auto);

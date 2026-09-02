@@ -6,7 +6,7 @@
 
 Standout is designed to be flexible. It supports:
 
-- **8 Output Modes** (Auto, Term, Text, TermDebug, Json, Yaml, Xml, Csv)
+- **7 Output Modes** (Auto, Term, Text, TermDebug, Json, Yaml, Csv)
 - **3 Template Sources** (Embedded, File, None)
 - **4 Style Sources** (Embedded, File, Programmatic, None)
 - **2 Help Systems** (Standard, Topics)

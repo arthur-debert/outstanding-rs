@@ -1,11 +1,15 @@
 use serde::Serialize;
 
 use super::{Message, MessageLevel};
+use crate::cli::{ExitStatus, Output};
 use crate::tabular::TabularSpec;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ListViewResult<T> {
     pub items: Vec<T>,
+
+    #[serde(skip)]
+    pub empty_exit_status: Option<ExitStatus>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub intro: Option<String>,
@@ -30,6 +34,7 @@ impl<T> ListViewResult<T> {
     pub fn new(items: Vec<T>) -> Self {
         Self {
             items,
+            empty_exit_status: None,
             intro: None,
             ending: None,
             messages: Vec::new(),
@@ -48,6 +53,17 @@ impl<T> ListViewResult<T> {
     }
 }
 
+impl<T: Serialize> ListViewResult<T> {
+    /// The handler output for this list: `Output::Render(self)`, carrying
+    /// `empty_exit_status` when the list is empty and one was declared.
+    pub fn into_output(self) -> Output<Self> {
+        match self.empty_exit_status.filter(|_| self.items.is_empty()) {
+            Some(status) => Output::Render(self).with_exit_status(status),
+            None => Output::Render(self),
+        }
+    }
+}
+
 impl<T> Default for ListViewResult<T> {
     fn default() -> Self {
         Self::new(Vec::new())
@@ -57,6 +73,7 @@ impl<T> Default for ListViewResult<T> {
 #[derive(Debug)]
 pub struct ListViewBuilder<T> {
     items: Vec<T>,
+    empty_exit_status: Option<ExitStatus>,
     intro: Option<String>,
     ending: Option<String>,
     messages: Vec<Message>,
@@ -69,6 +86,7 @@ impl<T> ListViewBuilder<T> {
     pub fn new(items: impl IntoIterator<Item = T>) -> Self {
         Self {
             items: items.into_iter().collect(),
+            empty_exit_status: None,
             intro: None,
             ending: None,
             messages: Vec::new(),
@@ -76,6 +94,14 @@ impl<T> ListViewBuilder<T> {
             filter_summary: None,
             tabular_spec: None,
         }
+    }
+
+    /// The exit status a successful run declares when the list is empty; the
+    /// list still renders and is not a failure. Applied by
+    /// [`ListViewResult::into_output`].
+    pub fn empty_exit_status(mut self, status: impl Into<ExitStatus>) -> Self {
+        self.empty_exit_status = Some(status.into());
+        self
     }
 
     pub fn intro(mut self, text: impl Into<String>) -> Self {
@@ -127,6 +153,7 @@ impl<T> ListViewBuilder<T> {
     pub fn build(self) -> ListViewResult<T> {
         ListViewResult {
             items: self.items,
+            empty_exit_status: self.empty_exit_status,
             intro: self.intro,
             ending: self.ending,
             messages: self.messages,
@@ -134,6 +161,14 @@ impl<T> ListViewBuilder<T> {
             filter_summary: self.filter_summary,
             tabular_spec: self.tabular_spec,
         }
+    }
+}
+
+impl<T: Serialize> ListViewBuilder<T> {
+    /// Consume the builder into `Output::Render`, with the empty-list status
+    /// applied: `list_view(items).build().into_output()` in one step.
+    pub fn output(self) -> Output<ListViewResult<T>> {
+        self.build().into_output()
     }
 }
 
@@ -231,5 +266,23 @@ mod tests {
     fn test_list_view_default() {
         let result: ListViewResult<String> = ListViewResult::default();
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn empty_exit_status_applies_to_an_empty_list_only() {
+        let empty = list_view(Vec::<i32>::new()).empty_exit_status(3).output();
+        assert!(empty.is_render());
+        assert_eq!(empty.exit_status(), ExitStatus::from(3));
+
+        let filled = list_view(vec![1]).empty_exit_status(3).output();
+        assert_eq!(filled.exit_status(), ExitStatus::SUCCESS);
+
+        let undeclared = list_view(Vec::<i32>::new()).output();
+        assert_eq!(undeclared.exit_status(), ExitStatus::SUCCESS);
+
+        let json =
+            serde_json::to_string(&list_view(Vec::<i32>::new()).empty_exit_status(3).build())
+                .unwrap();
+        assert!(!json.contains("exit_status"), "{json}");
     }
 }
