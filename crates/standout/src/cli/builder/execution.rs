@@ -154,15 +154,25 @@ impl App {
                 Err(e) => return DispatchResult::Error(e),
             };
 
-            let (output, request) = match dispatch_output {
-                DispatchOutput::Text { formatted, raw } => {
-                    (RenderedOutput::Text(TextOutput::new(formatted, raw)), None)
+            let (output, request, status) = match dispatch_output {
+                DispatchOutput::Text {
+                    formatted,
+                    raw,
+                    status,
+                } => (
+                    RenderedOutput::Text(TextOutput::new(formatted, raw)),
+                    None,
+                    status,
+                ),
+                DispatchOutput::Binary(b, f) => {
+                    (RenderedOutput::Binary(b, f), None, ExitStatus::SUCCESS)
                 }
-                DispatchOutput::Binary(b, f) => (RenderedOutput::Binary(b, f), None),
-                DispatchOutput::Artifact { output, request } => {
-                    (RenderedOutput::Artifact(output), Some(request))
-                }
-                DispatchOutput::Silent => (RenderedOutput::Silent, None),
+                DispatchOutput::Artifact { output, request } => (
+                    RenderedOutput::Artifact(output),
+                    Some(request),
+                    ExitStatus::SUCCESS,
+                ),
+                DispatchOutput::Silent { status } => (RenderedOutput::Silent, None, status),
             };
 
             let mut final_output = if let Some(hooks) = hooks {
@@ -187,6 +197,11 @@ impl App {
             });
 
             if let RenderedOutput::Artifact(artifact) = final_output {
+                if status != ExitStatus::SUCCESS {
+                    return DispatchResult::Error(
+                        super::super::dispatch::status_without_a_carrier(status, "artifact"),
+                    );
+                }
                 // The artifact path renders its report inside `complete_artifact`,
                 // so the strict gate lives there, after that render and before any
                 // bytes are written.
@@ -228,12 +243,19 @@ impl App {
             }
 
             match final_output {
-                RenderedOutput::Text(t) => DispatchResult::Handled(RunOutput::command(t.formatted)),
+                RenderedOutput::Text(t) => DispatchResult::Handled(
+                    RunOutput::command(t.formatted).with_exit_status(status),
+                ),
+                RenderedOutput::Binary(_, _) if status != ExitStatus::SUCCESS => {
+                    DispatchResult::Error(super::super::dispatch::status_without_a_carrier(
+                        status, "binary",
+                    ))
+                }
                 RenderedOutput::Binary(b, f) => DispatchResult::Binary(b, f),
                 RenderedOutput::Artifact(_) => unreachable!("artifacts returned above"),
-                RenderedOutput::Silent => {
-                    DispatchResult::Handled(RunOutput::command(String::new()))
-                }
+                RenderedOutput::Silent => DispatchResult::Handled(
+                    RunOutput::command(String::new()).with_exit_status(status),
+                ),
             }
         } else {
             DispatchResult::NoMatch(matches)
@@ -463,7 +485,7 @@ impl App {
         self.seed_startup_warnings(&warnings);
         let _capture = standout_render::diagnostics::begin_capture();
         let (mut outcome, output_mode) = inner(warnings.clone());
-        if outcome.exit_status() == Some(ExitStatus::SUCCESS) {
+        if outcome.success_kind().is_some() {
             if let Some(error) = self.strict_style_tags_error(&warnings) {
                 outcome = DispatchResult::Error(error);
             }
@@ -1718,6 +1740,134 @@ mod tests {
         let (bytes, filename) = output.as_binary().unwrap();
         assert_eq!(bytes, &[0xDE, 0xAD]);
         assert_eq!(filename, "data.bin");
+    }
+
+    fn status_without_a_carrier_message(error: HookError) -> String {
+        let source = error.source.expect("the carrier error is the source");
+        source.to_string()
+    }
+
+    #[test]
+    fn run_command_rejects_a_declared_status_on_binary_output() {
+        let standout = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .build()
+            .unwrap();
+
+        let cmd = Command::new("app").subcommand(Command::new("export"));
+        let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
+        let sub_matches = matches.subcommand_matches("export").unwrap();
+
+        let result = standout.run_command::<_, ()>(
+            "export",
+            sub_matches,
+            |_m, _ctx| {
+                Ok(HandlerOutput::Binary {
+                    data: vec![0xDE, 0xAD],
+                    filename: "data.bin".into(),
+                }
+                .with_exit_status(ExitStatus::from(2)))
+            },
+            crate::TemplateRef::Absent,
+        );
+
+        let message = status_without_a_carrier_message(result.unwrap_err());
+        assert!(
+            message.contains("exit status 2 was declared on binary output"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn run_command_rejects_a_declared_status_on_artifact_output() {
+        let standout = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .build()
+            .unwrap();
+
+        let cmd = Command::new("app").subcommand(Command::new("export"));
+        let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
+        let sub_matches = matches.subcommand_matches("export").unwrap();
+
+        let result = standout.run_command::<_, ()>(
+            "export",
+            sub_matches,
+            |_m, _ctx| {
+                Ok(HandlerOutput::Artifact(
+                    crate::cli::Artifact::new(vec![1u8]).suggest_destination("out.bin"),
+                )
+                .with_exit_status(ExitStatus::from(2)))
+            },
+            crate::TemplateRef::Absent,
+        );
+
+        let message = status_without_a_carrier_message(result.unwrap_err());
+        assert!(
+            message.contains("exit status 2 was declared on artifact output"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn run_command_rejects_a_declared_status_a_post_output_hook_turns_into_bytes() {
+        let standout = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .hooks(
+                "test",
+                Hooks::new().post_output(|_, _ctx, output| match output {
+                    RenderedOutput::Text(text) => Ok(RenderedOutput::Binary(
+                        text.raw.into_bytes(),
+                        "rendered.bin".into(),
+                    )),
+                    other => Ok(other),
+                }),
+            )
+            .build()
+            .unwrap();
+
+        let cmd = Command::new("app").subcommand(Command::new("test"));
+        let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
+        let sub_matches = matches.subcommand_matches("test").unwrap();
+
+        let result = standout.run_command(
+            "test",
+            sub_matches,
+            |_m, _ctx| {
+                Ok(HandlerOutput::Render(serde_json::json!({"value": 1}))
+                    .with_exit_status(ExitStatus::from(2)))
+            },
+            crate::TemplateRef::Inline("{{ value }}".to_string()),
+        );
+
+        let message = status_without_a_carrier_message(result.unwrap_err());
+        assert!(
+            message.contains("exit status 2 was declared on binary output"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn run_command_drops_a_declared_status_on_render_output() {
+        let standout = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .build()
+            .unwrap();
+
+        let cmd = Command::new("app").subcommand(Command::new("test"));
+        let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
+        let sub_matches = matches.subcommand_matches("test").unwrap();
+
+        let result = standout.run_command(
+            "test",
+            sub_matches,
+            |_m, _ctx| {
+                Ok(HandlerOutput::Render(serde_json::json!({"value": 1}))
+                    .with_exit_status(ExitStatus::from(2)))
+            },
+            crate::TemplateRef::Inline("{{ value }}".to_string()),
+        );
+
+        assert_eq!(result.unwrap().as_text(), Some("1"));
     }
 
     #[test]

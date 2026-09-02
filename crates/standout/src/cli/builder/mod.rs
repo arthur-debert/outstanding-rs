@@ -1219,10 +1219,18 @@ impl App {
             hooks.run_pre_dispatch(matches, &mut ctx)?;
         }
 
-        let result = handler(matches, &ctx);
+        let (output, status) = match handler(matches, &ctx) {
+            Ok(output) => output.split_exit_status(),
+            Err(e) => return Err(HookError::post_output("Handler error").with_source(e)),
+        };
+        let reject_status_without_a_carrier = |is_binary: bool, is_artifact: bool| {
+            super::dispatch::reject_status_without_a_carrier(status, is_binary, is_artifact)
+                .map_err(|e| HookError::post_output("Render error").with_source(e))
+        };
+        reject_status_without_a_carrier(output.is_binary(), output.is_artifact())?;
 
-        let output = match result {
-            Ok(HandlerOutput::Render(data)) => {
+        let output = match output {
+            HandlerOutput::Render(data) => {
                 let mut json_data = serde_json::to_value(&data)
                     .map_err(|e| HookError::post_dispatch("Serialization error").with_source(e))?;
 
@@ -1253,12 +1261,9 @@ impl App {
                     Err(e) => return Err(HookError::post_output("Render error").with_source(e)),
                 }
             }
-            Err(e) => {
-                return Err(HookError::post_output("Handler error").with_source(e));
-            }
-            Ok(HandlerOutput::Silent) => RenderedOutput::Silent,
-            Ok(HandlerOutput::Binary { data, filename }) => RenderedOutput::Binary(data, filename),
-            Ok(HandlerOutput::Artifact(artifact)) => {
+            HandlerOutput::Silent => RenderedOutput::Silent,
+            HandlerOutput::Binary { data, filename } => RenderedOutput::Binary(data, filename),
+            HandlerOutput::Artifact(artifact) => {
                 let (bytes, suggested_destination, stdout_allowed, report) = artifact.into_parts();
                 let report = match report {
                     Some(report) => {
@@ -1279,18 +1284,19 @@ impl App {
                     report,
                 })
             }
-            Ok(_) => {
+            _ => {
                 return Err(HookError::post_output(
                     "Unsupported handler output variant: this standout version cannot present it",
                 ));
             }
         };
 
-        if let Some(hooks) = hooks {
-            hooks.run_post_output(matches, &ctx, output)
-        } else {
-            Ok(output)
-        }
+        let output = match hooks {
+            Some(hooks) => hooks.run_post_output(matches, &ctx, output)?,
+            None => output,
+        };
+        reject_status_without_a_carrier(output.is_binary(), output.is_artifact())?;
+        Ok(output)
     }
 
     pub fn verify_command(&self, cmd: &Command) -> Result<(), SetupError> {
@@ -1338,16 +1344,8 @@ fn duplicate_help_word(claim: &str) -> SetupError {
 const HELP_PROBE_SHORT: &str = "__standout_help_short";
 const HELP_PROBE_LONG: &str = "__standout_help_long";
 
-pub(crate) const OUTPUT_MODE_FLAG_VALUES: [&str; 8] = [
-    "auto",
-    "term",
-    "text",
-    "term-debug",
-    "json",
-    "yaml",
-    "xml",
-    "csv",
-];
+pub(crate) const OUTPUT_MODE_FLAG_VALUES: [&str; 7] =
+    ["auto", "term", "text", "term-debug", "json", "yaml", "csv"];
 
 fn parse_output_mode_flag(value: &str) -> Option<OutputMode> {
     match value {
@@ -1357,7 +1355,6 @@ fn parse_output_mode_flag(value: &str) -> Option<OutputMode> {
         "term-debug" => Some(OutputMode::TermDebug),
         "json" => Some(OutputMode::Json),
         "yaml" => Some(OutputMode::Yaml),
-        "xml" => Some(OutputMode::Xml),
         "csv" => Some(OutputMode::Csv),
         _ => None,
     }

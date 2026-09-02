@@ -7,21 +7,25 @@
 //! [`RunError::diagnostic`], and stderr carries nothing the framework wrote for
 //! it; under every human mode the failure is prose on stderr. An `App` or
 //! `External` failure writes its verbatim bytes to stderr in every mode and
-//! adds the stdout document in the structured ones. `xml` keeps the prose path:
-//! the mode is scheduled for deletion, not for a document shape.
+//! adds the stdout document in the structured ones. A status a successful
+//! handler declared (`Output::with_exit_status`) changes none of this: the
+//! outcome is `Handled`, emitted as any success is, and only the process
+//! status differs.
 //!
-//! The CSV form of the diagnostic is one row whose `range` is three columns,
-//! `range_filename`, `range_line` and `range_column`, empty when unset (D8).
+//! The CSV form of the diagnostic is a `CsvProjection` over the document
+//! (D8): one row whose `range` is three columns, `range_filename`,
+//! `range_line` and `range_column`, empty when unset.
 
 use std::io::Write;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::cli::handler::{
     ArtifactRun, Diagnostic, DiagnosticKind, DispatchResult, OutputKind, RunError, RunErrorKind,
     Severity,
 };
-use crate::OutputMode;
+use crate::tabular::{Column, Width};
+use crate::{CsvProjection, OutputMode};
 
 /// Write `result` to the two streams the way `run` does, honoring
 /// `output_mode` for failures. `Ok(handled)` reports whether a registered
@@ -109,11 +113,40 @@ pub fn carries_diagnostic_document(output_mode: OutputMode) -> bool {
 /// it to render.
 pub fn render_diagnostic(diagnostic: &Diagnostic, output_mode: OutputMode) -> String {
     let rendered = if output_mode == OutputMode::Csv {
-        standout_render::serialize_document(&DiagnosticRow::from(diagnostic), output_mode)
+        serde_json::to_value(diagnostic)
+            .map_err(|error| error.to_string())
+            .and_then(|document| {
+                diagnostic_csv_projection()
+                    .render(&document)
+                    .map_err(|error| error.to_string())
+            })
     } else {
         standout_render::serialize_document(diagnostic, output_mode)
+            .map_err(|error| error.to_string())
     };
     rendered.unwrap_or_else(|error| panic!("{output_mode:?} has no diagnostic document: {error}"))
+}
+
+/// The diagnostic's CSV row: the document itself is the row source, and the
+/// optional `range` becomes three columns that are empty when it is unset.
+fn diagnostic_csv_projection() -> CsvProjection {
+    let column = |key: &str, header: &str| {
+        Column::new(Width::default())
+            .key(key)
+            .header(header)
+            .null_repr("")
+    };
+    CsvProjection::builder(".")
+        .column(column("type", "type"))
+        .column(column("schema_version", "schema_version"))
+        .column(column("severity", "severity"))
+        .column(column("kind", "kind"))
+        .column(column("summary", "summary"))
+        .column(column("detail", "detail"))
+        .column(column("range.filename", "range_filename"))
+        .column(column("range.start.line", "range_line"))
+        .column(column("range.start.column", "range_column"))
+        .build()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -137,7 +170,8 @@ pub fn parse_diagnostic(
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+/// The CSV row read back, the inverse of [`diagnostic_csv_projection`].
+#[derive(Debug, Deserialize)]
 struct DiagnosticRow {
     #[serde(rename = "type")]
     document_type: String,
@@ -149,22 +183,6 @@ struct DiagnosticRow {
     range_filename: Option<String>,
     range_line: Option<u64>,
     range_column: Option<u64>,
-}
-
-impl From<&Diagnostic> for DiagnosticRow {
-    fn from(diagnostic: &Diagnostic) -> Self {
-        Self {
-            document_type: "diagnostic".into(),
-            schema_version: diagnostic.schema_version(),
-            severity: diagnostic.severity,
-            kind: diagnostic.kind,
-            summary: diagnostic.summary.clone(),
-            detail: diagnostic.detail.clone(),
-            range_filename: diagnostic.range.as_ref().map(|r| r.filename.clone()),
-            range_line: diagnostic.range.as_ref().map(|r| r.start.line),
-            range_column: diagnostic.range.as_ref().map(|r| r.start.column),
-        }
-    }
 }
 
 impl DiagnosticRow {
@@ -330,7 +348,6 @@ mod tests {
             OutputMode::Term,
             OutputMode::Text,
             OutputMode::TermDebug,
-            OutputMode::Xml,
         ] {
             let (handled, stdout, stderr) = emit(
                 &DispatchResult::Error(RunError::new("Error: boom", RunErrorKind::Handler)),

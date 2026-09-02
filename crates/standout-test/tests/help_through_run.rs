@@ -126,19 +126,6 @@ fn the_help_word_honours_the_output_flag_through_run() {
     tagged.assert_success();
     tagged.assert_stdout_contains("[header]USAGE[/header]");
     drop(tagged);
-    let xml = TestHarness::new().run(
-        fixture.app(),
-        fixture.command(),
-        ["lookma", "help", "--output", "xml"],
-    );
-    xml.assert_success();
-    xml.assert_stdout_contains("USAGE");
-    assert!(
-        !xml.stdout().contains("[header]"),
-        "xml carries no help document, so it prints the human page:\n{}",
-        xml.stdout()
-    );
-    drop(xml);
     for mode in ["json", "yaml"] {
         let result = TestHarness::new().run(
             fixture.app(),

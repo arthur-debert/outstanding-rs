@@ -17,6 +17,6 @@ OPTIONS
   --all                      Include archived notes
   --output <MODE>            Output format
                              default: auto
-                             possible values: auto, term, text, term-debug, json, yaml, xml, csv
+                             possible values: auto, term, text, term-debug, json, yaml, csv
   --output-file-path <PATH>  Write output to file instead of stdout
   -h, --help                 Print help

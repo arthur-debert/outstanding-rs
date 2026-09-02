@@ -1,15 +1,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const BANNED_SERIALIZER_CRATES: &[&str] = &["serde_yaml", "csv", "quick-xml"];
+const BANNED_SERIALIZER_CRATES: &[&str] = &["serde_yaml", "csv"];
 
 const ALLOWED_OUTPUT_MODE_ARM_FNS: &[&str] = &[];
 
-const BANNED_SERIALIZER_HELPERS: &[&str] = &[
-    "serialize_to_xml",
-    "flatten_json_for_csv",
-    "serialize_structured",
-];
+const BANNED_SERIALIZER_HELPERS: &[&str] = &["csv_records", "write_csv", "serialize_structured"];
 
 fn glue_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -360,11 +356,11 @@ fn production_dep_scan_flags_target_specific_deps() {
 [target.'cfg(unix)'.dependencies]
 csv = "1"
 
-[target.'cfg(windows)'.dependencies.quick-xml]
-version = "0.36"
+[target.'cfg(windows)'.dependencies.serde_yaml]
+version = "0.9"
 "#;
     let banned = banned_production_serializers(manifest).unwrap();
-    assert_eq!(banned, ["csv", "quick-xml"]);
+    assert_eq!(banned, ["csv", "serde_yaml"]);
 }
 
 #[test]
@@ -376,7 +372,6 @@ serde = "1"
 [dev-dependencies]
 serde_yaml = "0.9"
 csv = "1"
-quick-xml = "0.36"
 "#;
     let banned = banned_production_serializers(manifest).unwrap();
     assert!(
@@ -493,11 +488,11 @@ fn output_mode_arm_scan_handles_whitespace_and_or_patterns() {
         match mode {
             OutputMode::Yaml
                 => {}
-            OutputMode::Json | OutputMode::Xml => {}
+            OutputMode::Json | OutputMode::Toml => {}
         }
     "#;
     let variants = output_mode_arm_variants(src);
-    assert_eq!(variants, ["Yaml", "Json", "Xml"]);
+    assert_eq!(variants, ["Yaml", "Json", "Toml"]);
 }
 
 #[test]
@@ -506,7 +501,7 @@ fn output_mode_arm_scan_ignores_matches_macro_and_comments() {
         // OutputMode::Toml => would be a serializer copy
         /// OutputMode::Csv => documented, not code
         matches!(mode, OutputMode::Json | OutputMode::Yaml);
-        let _ = OutputMode::Xml;
+        let _ = OutputMode::Toml;
     "#;
     assert!(
         output_mode_arm_variants(src).is_empty(),
@@ -521,12 +516,12 @@ fn output_mode_arm_scan_rejects_guarded_arms() {
             OutputMode::Json if should_serialize() => drop("guarded copy"),
             OutputMode::Toml
                 if extra() => {}
-            OutputMode::Yaml | OutputMode::Xml if both() => {}
+            OutputMode::Yaml | OutputMode::Csv if both() => {}
         }
     "#;
     assert_eq!(
         output_mode_arm_variants(src),
-        ["Json", "Toml", "Yaml", "Xml"]
+        ["Json", "Toml", "Yaml", "Csv"]
     );
 }
 
@@ -567,22 +562,22 @@ fn serializer_use_scan_flags_crate_path() {
 fn serializer_use_scan_flags_helper_name() {
     let src = r#"
         fn copy_in_glue(data: &Value) {
-            serialize_to_xml(data).unwrap();
+            csv_records(data).unwrap();
         }
     "#;
     let uses: Vec<_> = banned_serializer_uses(src)
         .into_iter()
         .map(|(_, needle)| needle)
         .collect();
-    assert_eq!(uses, ["serialize_to_xml"]);
+    assert_eq!(uses, ["csv_records"]);
 }
 
 #[test]
 fn serializer_use_scan_allows_pub_use_and_ignores_comments() {
     let src = r#"
         // serde_yaml::to_string would be a serializer copy
-        /// flatten_json_for_csv documented, not code
-        pub use standout_render::{flatten_json_for_csv, serialize_to_xml};
+        /// csv_records documented, not code
+        pub use standout_render::{csv_records, write_csv};
     "#;
     assert!(
         banned_serializer_uses(src).is_empty(),

@@ -52,7 +52,7 @@ flowchart TB
             STRUCT_SER["Direct Serialization"]
             JSON_OUT["Json: serde_json::to_string_pretty()"]
             YAML_OUT["Yaml: serde_yaml::to_string()"]
-            OTHER_OUT["Xml/Csv: respective serializers"]
+            OTHER_OUT["Csv: flat records, or a CsvProjection"]
         end
 
         subgraph TextModes["Text Modes (Auto/Term/Text)"]
@@ -96,7 +96,7 @@ flowchart TB
     JSON --> POST
     POST --> MODE
 
-    MODE -->|"Json/Yaml/Xml/Csv"| STRUCT_SER
+    MODE -->|"Json/Yaml/Csv"| STRUCT_SER
     STRUCT_SER --> JSON_OUT
     STRUCT_SER --> YAML_OUT
     STRUCT_SER --> OTHER_OUT

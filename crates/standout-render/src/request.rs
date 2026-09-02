@@ -159,17 +159,7 @@ fn serialize_structured(
     let output = match format {
         OutputMode::Json => serde_json::to_string_pretty(data)?,
         OutputMode::Yaml => serde_yaml::to_string(data)?,
-        OutputMode::Xml => crate::util::serialize_to_xml(data)?,
-        OutputMode::Csv => {
-            let (headers, rows) = crate::util::flatten_json_for_csv(data);
-            let mut wtr = csv::Writer::from_writer(Vec::new());
-            wtr.write_record(&headers)?;
-            for row in rows {
-                wtr.write_record(&row)?;
-            }
-            let bytes = wtr.into_inner()?;
-            String::from_utf8(bytes)?
-        }
+        OutputMode::Csv => crate::util::write_csv(data)?,
         _ => unreachable!("serialize_structured requires a structured OutputMode"),
     };
     Ok(RenderResult::plain(output))

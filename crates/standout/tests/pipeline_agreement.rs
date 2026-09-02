@@ -49,16 +49,7 @@ fn greet_command_with_output() -> Command {
             .long("output")
             .value_name("MODE")
             .global(true)
-            .value_parser([
-                "auto",
-                "term",
-                "text",
-                "term-debug",
-                "json",
-                "yaml",
-                "xml",
-                "csv",
-            ])
+            .value_parser(["auto", "term", "text", "term-debug", "json", "yaml", "csv"])
             .default_value("auto"),
     )
 }
@@ -344,13 +335,6 @@ fn help_path_agrees_byte_for_byte_with_standalone_help_in_every_mode() {
         via_standalone.contains("USAGE") && via_standalone.contains("Demo"),
         "standalone render_help must render human help:\n{via_standalone}"
     );
-
-    let xml = help_page(&app, help_command(), ["app", "help", "--output=xml"]);
-    assert_eq!(
-        auto, xml,
-        "xml carries no help document, so it stays the page"
-    );
-    assert_eq!(standalone_help(OutputMode::Xml).unwrap(), via_standalone);
 
     let app_json = help_page(&app, help_command(), ["app", "help", "--output=json"]);
     let app_yaml = help_page(&app, help_command(), ["app", "help", "--output=yaml"]);

@@ -153,7 +153,7 @@ OPTIONS
   -c, --color <BOOL>  Enable ANSI color
   --output            Output format
                       default: auto
-                      possible values: auto, term, text, term-debug, json, yaml, xml, csv
+                      possible values: auto, term, text, term-debug, json, yaml, csv
   --output-file-path  Write output to file instead of stdout
 ```
 
@@ -229,7 +229,7 @@ COMMANDS
 OPTIONS
   --output      Output format
                 default: auto
-                possible values: auto, term, text, term-debug, json, yaml, xml, csv
+                possible values: auto, term, text, term-debug, json, yaml, csv
   -h, --help    Print help
 ```
 
@@ -563,4 +563,4 @@ $ myapp deps --help --output json
 
 The document lists clap's own `-h`/`--help` and `-V`/`--version` and the framework's `--output` flag, because a script reading it wants every argument the command accepts. It is `standout::cli::HelpDocument` (with `HelpArg` and `HelpSubcommand`), so a test can read it back with serde. `render_help` and `render_help_with_topics` produce the same document for a `HelpConfig` whose `output_mode` is `Json` or `Yaml`.
 
-`csv` has no help projection: `--help --output csv` is a render error, emitted as the diagnostic document of kind `render` that every structured-mode failure produces (see [Error Handling](./error-handling.md)). `xml` keeps the human page. Topic pages — `help topics` and `help <topic>` — are prose in every mode and stay so.
+`csv` has no help projection: `--help --output csv` is a render error, emitted as the diagnostic document of kind `render` that every structured-mode failure produces (see [Error Handling](./error-handling.md)). Topic pages — `help topics` and `help <topic>` — are prose in every mode and stay so.

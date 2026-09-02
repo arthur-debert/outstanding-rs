@@ -100,7 +100,7 @@ Two exceptions:
 - The `~` concatenation operator formats inside MiniJinja's evaluator, which
   exposes no hook: `{{ "x" ~ flag }}` yields `xTrue`. Write `{{ "x" }}{{ flag }}`
   or `{{ "x" ~ flag | string }}`.
-- Structured output (JSON, YAML, XML, CSV) skips templates entirely and
+- Structured output (JSON, YAML, CSV) skips templates entirely and
   serializes your data directly, so those modes follow their format's own rules.
 
 If you build a `minijinja::Environment` yourself, use

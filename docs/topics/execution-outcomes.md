@@ -12,6 +12,7 @@ runtime failure.
 | Help or version | stdout | `0` |
 | Successful rendered text or binary | stdout | `0` |
 | `Output::Silent` | none | `0` |
+| Success with a status the handler declared | stdout, as any success | exact declared status |
 | `--output-file-path` success | file only | `0` |
 | Artifact written to a file | bytes to the file, report to stdout | `0` |
 | Artifact written to stdout | bytes to stdout, report to stderr | `0` |
@@ -20,9 +21,41 @@ runtime failure.
 | Handler, hook, render, pipe, or write failure | stderr | `1` |
 | Application-declared external failure | stderr | exact declared nonzero status |
 
-The failure rows describe the human modes (`auto`, `term`, `text`, `term-debug`
-and, until its deletion, `xml`); under a structured mode a failure is the stdout
-document instead, [below](#failures-under-a-structured-mode).
+The framework names no exit code beyond `0`, `1` and `2`. A successful run that
+wants to say more — "planned, with changes", "checked, with findings",
+"listed nothing" — declares its own status, and that status is
+success-with-signal, never an error: the result still goes to stdout, nothing
+becomes a diagnostic, warnings flush as usual, and only the process status
+differs. The Rust ecosystem has no convention for such codes (`ExitCode` knows
+`0` and `1`, clap uses `2`, cargo's `101` marks a panic), so the meaning of a
+declared status is the application's to document.
+
+```rust,ignore
+// A plan with changes exits 2, the way `terraform plan -detailed-exitcode` does.
+let output = Output::Render(plan);
+if detailed_exitcode && has_changes {
+    return Ok(output.with_exit_status(ExitStatus::from(2)));
+}
+Ok(output)
+
+// A list that found nothing exits 3; a non-empty list exits 0.
+Ok(list_view(items).empty_exit_status(3).output())
+```
+
+`Output::with_exit_status(ExitStatus)` is the general form and applies to
+`Output::Render` and `Output::Silent`; calling it again replaces the status. A
+status declared on `Output::Binary` or `Output::Artifact` is a render error
+(`1`), since those outcomes carry no status of their own. `ListViewBuilder::
+empty_exit_status(n)` is the list case: `ListViewResult::into_output` (or the
+builder's `output()`) applies the status only when `items` is empty. The
+capture API (`App::run_command`) returns rendered output with no status (it
+still reports the binary and artifact case as an error), so a declared status
+is visible through `run`, `run_emitted`, `dispatch`, `run_with` and the test
+harness, which report it through `exit_status()`.
+
+The failure rows describe the human modes (`auto`, `term`, `text` and
+`term-debug`); under a structured mode a failure is the stdout document
+instead, [below](#failures-under-a-structured-mode).
 
 Framework warning flushing happens after the primary output and does not replace
 its status. Warnings cover non-fatal framework-owned setup, resource-loading,

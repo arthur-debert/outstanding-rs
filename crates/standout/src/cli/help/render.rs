@@ -288,17 +288,10 @@ mod tests {
     }
 
     #[test]
-    fn xml_still_prints_the_human_page() {
-        let output = help_in(OutputMode::Xml).unwrap();
-        assert!(output.contains("USAGE"), "{output}");
-    }
-
-    #[test]
     fn a_mode_is_either_the_page_or_the_document() {
         assert!(help_is_a_document(OutputMode::Json));
         assert!(help_is_a_document(OutputMode::Yaml));
         assert!(help_is_a_document(OutputMode::Csv));
-        assert!(!help_is_a_document(OutputMode::Xml));
         assert!(!help_is_a_document(OutputMode::Text));
         assert!(!help_is_a_document(OutputMode::Auto));
     }
@@ -339,7 +332,6 @@ mod tests {
         assert_eq!(human_help_format(OutputMode::Json), OutputMode::Auto);
         assert_eq!(human_help_format(OutputMode::Yaml), OutputMode::Auto);
         assert_eq!(human_help_format(OutputMode::Csv), OutputMode::Auto);
-        assert_eq!(human_help_format(OutputMode::Xml), OutputMode::Auto);
         assert_eq!(human_help_format(OutputMode::Term), OutputMode::Term);
         assert_eq!(human_help_format(OutputMode::Text), OutputMode::Text);
         assert_eq!(human_help_format(OutputMode::Auto), OutputMode::Auto);

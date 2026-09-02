@@ -52,14 +52,16 @@ deliberate: an item kept with a stated reason cannot be quietly removed as
 
 ### 2. The structural shape of each `--output` mode's bytes
 
-`--output` accepts `auto`, `term`, `text`, `term-debug`, `json`, `yaml`, `xml`
-and `csv`. All eight are classified here.
+`--output` accepts `auto`, `term`, `text`, `term-debug`, `json`, `yaml` and
+`csv`. All seven are classified here.
 
-**Structured modes** (`json`, `yaml`, `csv`, `xml`): the document a handler's
+**Structured modes** (`json`, `yaml`, `csv`): the document a handler's
 data produces — its field names and its nesting — is contract. Changing it
 changes what a consuming script parses. A document that carries a
 `schema_version` key says which version of that shape it satisfies; see
-[the versioned document](#the-versioned-document) below.
+[the versioned document](#the-versioned-document) below. `csv` takes flat
+records only: a nested value is a render error naming `CsvProjection`, never
+a flattened column ([Output Modes](./output-modes.md#csv-output)).
 
 **Human modes** (`text`, `term`): the bytes are **not** contract. Themes,
 wording, column widths and layout may change in any release. What is contract

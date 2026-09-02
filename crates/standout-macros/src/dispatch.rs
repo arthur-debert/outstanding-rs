@@ -531,30 +531,20 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                             quote! {
                                 |matches, _ctx| {
                                     let result = #handler_path(matches);
-                                    result.map(|output| {
-                                        match output {
-                                            ::standout::cli::handler::Output::Render(mut lv) => {
-                                                 lv.tabular_spec = Some(<#item_type_path as ::standout::tabular::Tabular>::tabular_spec());
-                                                 ::standout::cli::handler::Output::Render(lv)
-                                            }
-                                            o => o
-                                        }
-                                    })
+                                    result.map(|output| output.map_render(|mut lv| {
+                                        lv.tabular_spec = Some(<#item_type_path as ::standout::tabular::Tabular>::tabular_spec());
+                                        lv
+                                    }))
                                 }
                             }
                         } else {
                             quote! {
                                 |matches, ctx| {
                                     let result = #handler_path(matches, ctx);
-                                    result.map(|output| {
-                                        match output {
-                                            ::standout::cli::handler::Output::Render(mut lv) => {
-                                                 lv.tabular_spec = Some(<#item_type_path as ::standout::tabular::Tabular>::tabular_spec());
-                                                 ::standout::cli::handler::Output::Render(lv)
-                                            }
-                                            o => o
-                                        }
-                                    })
+                                    result.map(|output| output.map_render(|mut lv| {
+                                        lv.tabular_spec = Some(<#item_type_path as ::standout::tabular::Tabular>::tabular_spec());
+                                        lv
+                                    }))
                                 }
                             }
                         }

@@ -65,16 +65,6 @@ fn render_named_structured_without_registry_serializes() {
         .expect("structured render does not need a registry");
     assert!(yaml.contains("name: Ada"));
 
-    let xml = app
-        .render_with(
-            standout::TemplateRef::Named(("unused").to_string()),
-            &data,
-            standout::OutputMode::Xml,
-            standout::TargetProperties::detect(),
-        )
-        .expect("structured render does not need a registry");
-    assert!(xml.contains("<name>Ada</name>"));
-
     let csv = app
         .render_with(
             standout::TemplateRef::Named(("unused").to_string()),
@@ -101,7 +91,6 @@ fn render_named_structured_with_unregistered_name_serializes() {
     for mode in [
         standout::OutputMode::Json,
         standout::OutputMode::Yaml,
-        standout::OutputMode::Xml,
         standout::OutputMode::Csv,
     ] {
         app.render_with(

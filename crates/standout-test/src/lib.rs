@@ -370,7 +370,6 @@ fn output_mode_flag(mode: OutputMode) -> &'static str {
         OutputMode::TermDebug => "term-debug",
         OutputMode::Json => "json",
         OutputMode::Yaml => "yaml",
-        OutputMode::Xml => "xml",
         OutputMode::Csv => "csv",
     }
 }
