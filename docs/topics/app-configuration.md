@@ -349,10 +349,6 @@ Registering the same phase for one path through both `CommandConfig` and
 `AppBuilder::hooks` is a configuration error naming the path and the phase,
 rather than one hook set silently replacing the other.
 
-> Stating a single ordering rule for pre-dispatch hooks — including which
-> matches they receive — is issue #352 in the adopter-seams epic. What is
-> written above is today's behavior.
-
 ## Context Injection
 
 Add values available in all templates:

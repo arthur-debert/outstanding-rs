@@ -73,12 +73,9 @@ key first, beside its own fields:
 {"schema_version": 1, "items": [{"id": 1, "name": "Implement auth"}], "intro": "Your tasks:"}
 ```
 
-The key is the version of the document's shape (`1` today); a script that
-parses `--output json` reads it to tell a shape change from a data change.
 `ListViewResult<T>` implements `ContractSurface` with that version, and the
-same key sits in a template's context. Adding it is the breaking change of
-the 10.0 line for list-view consumers: a snapshot of the JSON document gains
-one top-level key. See [What Is Contract](./stability.md#the-versioned-document).
+same key sits in a template's context
+([What Is Contract](./stability.md#the-versioned-document)).
 
 Because it derives `Serialize` rather than requiring one, `ListViewResult<T>`
 is itself a valid handler return type: a handler can return

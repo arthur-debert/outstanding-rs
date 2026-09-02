@@ -36,24 +36,19 @@ fn list_is_machine_readable() {
 }
 ```
 
-The harness can control env vars, cwd and tempdir fixtures, terminal width, TTY/color detection, stdin, clipboard, scripted prompts, and output mode. It returns assertions and accessors for handled text, errors, no-match, and binary outcomes. There is no dedicated silent accessor: `run_to_string` currently exposes silent output as an empty handled string, so the harness cannot distinguish it from intentionally empty text.
+The harness can control env vars, cwd and tempdir fixtures, terminal width, color capability, stdin, clipboard, scripted prompts, and output mode. It returns assertions and accessors for handled text, errors, no-match, binary, artifact and silent outcomes (`result.outcome()`).
 
-Every test using `TestHarness` must use `#[serial]`: its seams mutate process-global state. Restoration occurs when the returned `TestResult` drops. Do not mix a harness run with manually installed detector or default-reader overrides in the same scope; those reset to library defaults, not prior custom overrides.
+Every test using `TestHarness` must use `#[serial]`: env and cwd are process-global. Restoration occurs when the returned `TestResult` drops.
 
 The harness cannot provide a real PTY, deliver signals, mock subprocesses launched by application code, or validate build/link integration. Keep those cases in a small end-to-end suite. Place subprocess calls behind an application-owned trait when unit tests need a fake.
 
-Under a structured mode a failed run's stdout is the diagnostic document and
-`stderr()` carries no framework prose for it (an `AppFailure` or
-`ExternalFailure` keeps its verbatim bytes there; warnings stay on stderr
-outside `ndjson`): read the failure with `result.diagnostic()` /
-`expect_diagnostic()` (`kind`, `summary`, `detail`, `range`) and pair it with
-`assert_error_kind` and `assert_exit_status`. Under `OutputMode::Ndjson`, `stdout()` is the whole stream,
-one entry per line with its newline kept; parse lines with `serde_json` and read
-the failure with `diagnostic()`, which finds the error entry in the stream. A
-status a handler declared with `with_exit_status` is a success:
-`assert_success()` holds, `exit_status()` reports the status, `diagnostic()` is
-`None`. `assert_schema_snapshot("list.json")` pins a document's key names and
-value types against `tests/schemas/list.json` and ignores values.
+Under a structured mode read a failure with `result.diagnostic()` (`kind`,
+`summary`, `detail`, `range`), not from `stderr()`; under `OutputMode::Ndjson`,
+`stdout()` is the whole stream and `diagnostic()` finds the error entry in it.
+A status a handler declared with `with_exit_status` is a success:
+`assert_success()` holds and `diagnostic()` is `None`.
+`assert_schema_snapshot("list.json")` pins a document's key names and value
+types (`docs/topics/stability.md`).
 
 Use JSON to assert returned shape, text/no-color for rendered strings, and
 terminal-debug for style tags. See `crates/standout-test/src/lib.rs`,

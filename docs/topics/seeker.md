@@ -219,7 +219,7 @@ impl SeekerSchema for Task {
 }
 ```
 
-`parse_query::<Task>` now accepts `status=pending` and `status-in=pending,active`
+`parse_query::<Task>` accepts `status=pending` and `status-in=pending,active`
 as well as the discriminants.
 
 ## Example

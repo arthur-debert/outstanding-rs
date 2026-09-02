@@ -460,29 +460,7 @@ pub fn create(
 }
 ```
 
-## Implementation Phases
-
-### Phase 1: Core Structure
-
-- `InputCollector<T>` trait
-- `InputChain<T>` builder
-- `InputError` type
-- Core sources: `ArgSource`, `StdinSource`, `EnvSource`, `ClipboardSource`, `DefaultSource`
-- Basic tests
-
-### Phase 2: Backends
-
-- `feature = "editor"`: `EditorCollector` with tempfile + which
-- `feature = "simple-prompts"`: `SimpleText`, `SimpleConfirm`
-- `feature = "inquire"`: Full inquire adapter suite
-
-### Phase 3: Standout Integration
-
-- Builder API support (`.input()` method)
-- Pre-dispatch resolution hook
-- Documentation and examples
-
-### Future Considerations
+## Future Considerations
 
 - `feature = "dialoguer"`: Dialoguer adapter (shares console with standout-render)
 - `feature = "validify"`: Deep validation integration
