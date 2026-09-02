@@ -41,11 +41,7 @@ impl CompletedRun {
         &self.inner
     }
 
-    /// The lines the handler wrote through `ctx.stream()`, each with its
-    /// newline, when the entry point captured them (`run_with`, `dispatch`):
-    /// a process writes these before the result or the diagnostic. Empty
-    /// under every mode but `ndjson`, and when an output file override took
-    /// the stream.
+    /// The `ctx.stream()` lines `run_with` and `dispatch` capture, newlines included.
     pub fn entries(&self) -> &str {
         &self.entries
     }

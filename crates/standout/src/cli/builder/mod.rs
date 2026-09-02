@@ -1159,12 +1159,8 @@ impl App {
             .unwrap_or(self.output_mode_fallback)
     }
 
-    /// Dispatch one handler by hand, with its hooks and its render, and
-    /// return the output for the caller to write. `sink` is where the
-    /// handler's `ctx.stream()` entries go, as it produces them, when the
-    /// mode `matches` resolves to is `ndjson`; the caller at a process edge
-    /// passes `StreamSink::process_stdout()`, a capture passes a
-    /// `StreamCapture`. Under every other mode the stream discards.
+    /// Dispatch one handler by hand, hooks and render included, and return the
+    /// output for the caller to write; `sink` takes `ctx.stream()` entries under `ndjson`.
     pub fn run_command<F, T>(
         &self,
         path: &str,

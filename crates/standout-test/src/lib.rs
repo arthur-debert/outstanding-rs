@@ -260,8 +260,7 @@ impl TestHarness {
         let theme = app.get_default_theme();
         // The sink is the harness's stdout, written the way `run_emitted`
         // writes the process's: the entries the handler streamed, then the
-        // result or the diagnostic, then the warning entries. An output file
-        // override under `ndjson` has retargeted it, and the file gets them all.
+        // result or the diagnostic, then the warning entries.
         let mut stderr = Vec::new();
         sink.with_writer(|stdout| {
             standout::cli::emit_run_result(&outcome, output_mode, stdout, &mut stderr)

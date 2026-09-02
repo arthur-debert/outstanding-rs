@@ -136,10 +136,11 @@ prose, and so does a `NoMatch` handoff in every mode, since Standout then owns
 no stdout. Entries a handler emits through `ctx.stream()` reach stdout while
 the handler runs, before either: `run_emitted` calls `run_with_sink` with a
 `StreamSink` over the process's stdout and writes the result and the warning
-entries through the same sink, so a `--output-file-path` that retargeted the
-sink receives the whole stream (entries, result or diagnostic, warnings) and
-stdout nothing. `run_with` captures the entries instead and returns them as
-`CompletedRun::entries()`.
+entries through the same sink. A `--output-file-path` under `ndjson` takes
+that stream (entries, result or diagnostic, warnings) and stdout carries
+nothing, unless the output is a binary or artifact payload, which takes the
+file itself while the stream stays on stdout. `run_with` captures the entries
+instead and returns them as `CompletedRun::entries()`.
 
 `ProcessOutcome` has two public fields. `handled` is the `bool` that `run`
 returns: `false` only for a `NoMatch` handoff. `status` is the final

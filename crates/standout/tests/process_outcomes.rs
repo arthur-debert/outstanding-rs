@@ -92,6 +92,44 @@ fn real_process_routes_artifact_bytes_and_reports_to_separate_channels() {
         format!("wrote 3 entries to {}\n", override_path.display())
     );
 
+    let stream_path = tempdir.path().join("stream.bin");
+    let stream_run = run_with_artifact_path(
+        &binary,
+        &[
+            "--output",
+            "ndjson",
+            "--output-file-path",
+            stream_path.to_str().unwrap(),
+            "artifact",
+        ],
+        &to_file,
+    );
+    assert_eq!(stream_run.status.code(), Some(0));
+    assert_eq!(std::fs::read(&stream_path).unwrap(), [0, 1, 2]);
+    let report: serde_json::Value = serde_json::from_slice(&stream_run.stdout).unwrap();
+    assert_eq!(report["type"], "result");
+    assert_eq!(
+        report["data"]["receipt"]["destination"],
+        stream_path.to_str().unwrap()
+    );
+    assert!(stream_run.stderr.is_empty());
+
+    let binary_path = tempdir.path().join("stream-binary.bin");
+    let binary_run = run(
+        &binary,
+        &[
+            "--output",
+            "ndjson",
+            "--output-file-path",
+            binary_path.to_str().unwrap(),
+            "binary",
+        ],
+    );
+    assert_eq!(binary_run.status.code(), Some(0));
+    assert_eq!(std::fs::read(&binary_path).unwrap(), [0, 1, 2]);
+    assert!(binary_run.stdout.is_empty());
+    assert!(binary_run.stderr.is_empty());
+
     let stdout_run = run_with_artifact_path(&binary, &["artifact-stdout"], &to_file);
     assert_eq!(stdout_run.status.code(), Some(0));
     assert_eq!(stdout_run.stdout, [0, 1, 2]);

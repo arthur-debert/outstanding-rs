@@ -2,13 +2,17 @@ use clap::Command;
 use serde::Serialize;
 use serde_json::json;
 use standout::cli::{
-    App, CommandContextInput, Diagnostic, DiagnosticKind, ExitStatus, FnHandler, HandlerResult,
-    Output, RunErrorKind, Severity,
+    App, Artifact, CommandContextInput, Diagnostic, DiagnosticKind, ExitStatus, FnHandler,
+    HandlerResult, Output, RunErrorKind, Severity,
 };
 use standout::{EmbeddedTemplates, OutputMode};
 use standout_test::TestHarness;
 
-const TEMPLATES: &[(&str, &str)] = &[("stream", "{{ applied }} applied"), ("warn", "{{ ok }}")];
+const TEMPLATES: &[(&str, &str)] = &[
+    ("stream", "{{ applied }} applied"),
+    ("warn", "{{ ok }}"),
+    ("artifact", "wrote {{ report.entries }} entries"),
+];
 
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -24,6 +28,8 @@ fn command() -> Command {
         .subcommand(Command::new("fail-mid-stream"))
         .subcommand(Command::new("warn"))
         .subcommand(Command::new("silent-stream"))
+        .subcommand(Command::new("binary"))
+        .subcommand(Command::new("artifact"))
 }
 
 fn app() -> App {
@@ -70,6 +76,31 @@ fn app() -> App {
                 Ok(Output::Silent)
             }),
             |cfg| cfg.silent(),
+        )
+        .unwrap()
+        .command_with(
+            "binary",
+            FnHandler::new(|_, ctx| -> HandlerResult<()> {
+                ctx.stream().emit(&Entry::Version { format_version: 1 })?;
+                ctx.warn("a soft warning");
+                Ok(Output::Binary {
+                    data: vec![0, 1, 2],
+                    filename: "out.bin".into(),
+                })
+            }),
+            |cfg| cfg.binary(),
+        )
+        .unwrap()
+        .command_with(
+            "artifact",
+            FnHandler::new(|_, ctx| {
+                ctx.stream().emit(&Entry::Version { format_version: 1 })?;
+                ctx.warn("a soft warning");
+                Ok(Output::Artifact(
+                    Artifact::new(vec![0, 1, 2]).with_report(json!({ "entries": 3 })),
+                ))
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -239,7 +270,7 @@ fn a_usage_error_under_ndjson_is_a_diagnostic_line_exiting_two() {
     assert_eq!(result.expect_diagnostic().kind, DiagnosticKind::ClapUsage);
 }
 
-fn run_to_file(subcommand: &str) -> (standout_test::TestResult, String) {
+fn run_to_file(subcommand: &str) -> (standout_test::TestResult, Vec<u8>) {
     let dir = tempfile::TempDir::new().unwrap();
     let path = dir.path().join("out.ndjson");
     let result = TestHarness::new().output_mode(OutputMode::Ndjson).run(
@@ -251,13 +282,18 @@ fn run_to_file(subcommand: &str) -> (standout_test::TestResult, String) {
             format!("--output-file-path={}", path.display()),
         ],
     );
-    let file = std::fs::read_to_string(&path).unwrap();
+    let file = std::fs::read(&path).unwrap();
     (result, file)
+}
+
+fn stream_file(subcommand: &str) -> (standout_test::TestResult, String) {
+    let (result, file) = run_to_file(subcommand);
+    (result, String::from_utf8(file).unwrap())
 }
 
 #[test]
 fn an_output_file_under_ndjson_takes_the_entries_and_the_result_and_stdout_stays_empty() {
-    let (result, file) = run_to_file("stream");
+    let (result, file) = stream_file("stream");
     result.assert_success();
     result.assert_stderr_empty();
     assert_eq!(result.stdout_bytes(), b"", "{}", result.stdout());
@@ -272,7 +308,7 @@ fn an_output_file_under_ndjson_takes_the_entries_and_the_result_and_stdout_stays
 
 #[test]
 fn an_output_file_under_ndjson_takes_the_diagnostic_after_the_entries() {
-    let (result, file) = run_to_file("fail-mid-stream");
+    let (result, file) = stream_file("fail-mid-stream");
     result.assert_error_kind(RunErrorKind::Handler);
     result.assert_stderr_empty();
     assert_eq!(result.stdout_bytes(), b"", "{}", result.stdout());
@@ -285,7 +321,7 @@ fn an_output_file_under_ndjson_takes_the_diagnostic_after_the_entries() {
 
 #[test]
 fn an_output_file_under_ndjson_takes_the_warning_entries_too() {
-    let (result, file) = run_to_file("warn");
+    let (result, file) = stream_file("warn");
     result.assert_success();
     result.assert_stderr_empty();
     assert_eq!(result.stdout_bytes(), b"", "{}", result.stdout());
@@ -294,4 +330,33 @@ fn an_output_file_under_ndjson_takes_the_warning_entries_too() {
     assert_eq!(entries[0]["type"], "result");
     assert_eq!(entries[1]["severity"], "warning");
     assert_eq!(entries[1]["summary"], "a soft warning");
+}
+
+#[test]
+fn a_binary_payload_takes_the_output_file_and_the_stream_stays_on_stdout() {
+    let (result, file) = run_to_file("binary");
+    result.assert_success();
+    result.assert_stderr_empty();
+    assert_eq!(file, [0, 1, 2]);
+    let entries = lines(result.stdout());
+    assert_eq!(entries.len(), 2, "{}", result.stdout());
+    assert_eq!(entries[0]["type"], "version");
+    assert_eq!(entries[1]["severity"], "warning");
+    assert_eq!(entries[1]["summary"], "a soft warning");
+}
+
+#[test]
+fn an_artifact_payload_takes_the_output_file_and_its_report_follows_the_entries_on_stdout() {
+    let (result, file) = run_to_file("artifact");
+    result.assert_success();
+    result.assert_stderr_empty();
+    assert_eq!(file, [0, 1, 2]);
+    let entries = lines(result.stdout());
+    assert_eq!(entries.len(), 3, "{}", result.stdout());
+    assert_eq!(entries[0]["type"], "version");
+    assert_eq!(entries[1]["type"], "result");
+    assert_eq!(entries[1]["data"]["report"]["entries"], 3);
+    assert_eq!(entries[1]["data"]["receipt"]["byte_count"], 3);
+    assert_eq!(entries[2]["severity"], "warning");
+    assert_eq!(entries[2]["summary"], "a soft warning");
 }

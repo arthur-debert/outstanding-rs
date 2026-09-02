@@ -12,8 +12,8 @@
 //! handler's entries, then the result or the diagnostic, then the warning
 //! entries. The process edge writes through it to stdout; a capture entry
 //! point hands it a [`StreamCapture`] and reads the bytes back; an output
-//! file override retargets it with [`StreamSink::redirect`] before the
-//! handler runs, so the file receives the whole stream and stdout nothing.
+//! file override retargets it with [`StreamSink::redirect`] once the run has
+//! shown its output is not a payload that takes the file itself.
 
 use serde::Serialize;
 use std::cell::RefCell;
