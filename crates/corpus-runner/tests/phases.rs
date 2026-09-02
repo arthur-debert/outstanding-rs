@@ -13,6 +13,7 @@ use common::script;
 use corpus_runner::archetype::{Archetype, InvariantCommand, InvariantContract, Invariants};
 use corpus_runner::report::{DocsSource, InvariantStatus, QuestionnaireReport, RunReport};
 use corpus_runner::{acceptance, questionnaire, session, workspace};
+use sha2::{Digest, Sha256};
 
 const NO_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -415,6 +416,14 @@ fn session_scrubs_the_environment_and_writes_the_transcript() {
     assert_eq!(report.transcript, session::TRANSCRIPT_FILENAME);
     assert!(!report.timed_out);
     assert_eq!(report.turns, None);
+    let expected_sha256: String = Sha256::digest(transcript.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    assert_eq!(
+        report.transcript_sha256.as_deref(),
+        Some(expected_sha256.as_str())
+    );
 }
 
 #[test]
@@ -902,6 +911,7 @@ fn report_round_trips_through_json() {
             input_tokens: None,
             output_tokens: None,
             transcript: "transcript.jsonl".into(),
+            transcript_sha256: None,
         },
         provenance: corpus_runner::provenance::recorded(
             "claude --model claude-opus-5 -p 'do the thing'",

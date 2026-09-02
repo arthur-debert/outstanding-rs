@@ -47,6 +47,14 @@
     "output_tokens": 0,
     "transcript": "transcript.jsonl"
   },
+  "recovered_provenance": {
+    "backend": "scripted-smoke-agent",
+    "executable_version": null,
+    "model_requested": null,
+    "model_observed": null,
+    "prompt": null,
+    "settings": []
+  },
   "acceptance": {
     "built": true,
     "build_detail": null,
