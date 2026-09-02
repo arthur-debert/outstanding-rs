@@ -1,8 +1,6 @@
 //! Convenience render entry points that build a [`crate::RenderRequest`]
 //! from detected or explicit settings and delegate to
-//! [`crate::render_request`]. They take a template string rather than a
-//! name, so `{% include %}` cannot resolve from them; use
-//! [`Renderer`](super::renderer::Renderer) for includes.
+//! [`crate::render_request`].
 
 use serde::Serialize;
 use standout_bbparser::{BBParser, TagTransform, UnknownTagBehavior};

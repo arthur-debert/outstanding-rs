@@ -279,7 +279,7 @@ Capture APIs return the run's warnings instead of rendering them
 ## Compound artifacts
 
 `Output::Artifact` extends the framework-owned write to commands that also have
-something to say about it: Standout selects the destination, writes, and only
-then renders the report, so a failed write produces `FinalWrite(Artifact)` and
-no report at all. The destination policy, the report envelope and the report
+something to say about it: Standout selects the destination, writes the bytes,
+and emits the report; a failed write produces `FinalWrite(Artifact)` and no
+report at all. The destination policy, the report envelope and the report
 channel are in [Handler Contract](../crates/dispatch/topics/handler-contract.md#outputartifact).
