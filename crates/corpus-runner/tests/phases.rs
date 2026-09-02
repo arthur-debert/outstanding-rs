@@ -442,6 +442,58 @@ case "$mode" in
 esac
 "#;
 
+// A binary whose help page advertises only `--output-file-path`, never
+// `--output` as its own token (#461's substring trap: naive matching would
+// read this as accepting `--output`).
+const HELP_ADVERTISES_ONLY_OUTPUT_FILE_PATH: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output-file-path <path>]'; exit 0; fi
+echo 'irrelevant'
+"#;
+
+// Well-behaved, but its `--help` names `--output` on stderr, not stdout
+// (clap does write `--help` to stdout, but the probe must not assume that of
+// every produced binary).
+const HELP_MENTIONS_OUTPUT_ON_STDERR: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]' 1>&2; exit 0; fi
+mode=text
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--output" ]; then mode="$a"; fi
+  prev="$a"
+done
+case "$mode" in
+  json) echo '{"ok": true}' ;;
+  term) printf '\033[1mHello\033[0m table\n' ;;
+  *) echo 'Hello table' ;;
+esac
+"#;
+
+// `--help` itself fails (nonzero exit, no mention of `--output` on either
+// stream) even though the binary otherwise accepts and honors `--output`.
+const HELP_FAILS_BUT_BINARY_ACCEPTS_OUTPUT: &str = r#"
+if [ "$1" = "--help" ]; then echo 'error: help unavailable' 1>&2; exit 1; fi
+mode=text
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--output" ]; then mode="$a"; fi
+  prev="$a"
+done
+case "$mode" in
+  json) echo '{"ok": true}' ;;
+  term) printf '\033[1mHello\033[0m table\n' ;;
+  *) echo 'Hello table' ;;
+esac
+"#;
+
+// Artifact-like (#467's opaque-bytes shape), but hangs under `NO_COLOR`
+// (i.e. `ColorState::Off`, the matrix's first color) so that color's cell
+// never completes. `either` must not lock in a contract from that cell.
+const ARTIFACT_LIKE_TIMES_OUT_WHEN_COLOR_OFF: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]'; exit 0; fi
+if [ -n "$NO_COLOR" ]; then sleep 30; fi
+echo 'kind: Pod  name: web-0'
+"#;
+
 #[test]
 fn invariant_matrix_passes_a_well_behaved_binary() {
     let dir = tempfile::tempdir().unwrap();
@@ -752,9 +804,175 @@ fn equal_across_modes_false_skips_the_cross_mode_check() {
     assert!(styling
         .iter()
         .all(|c| c.status == InvariantStatus::NotApplicable));
+    // Only the `term`-mode cells were kept from running by
+    // `equal_across_modes`; `text`/`json`-mode cells never applied to this
+    // check regardless, so they carry the generic mode-mismatch reason, not
+    // the mode-variance one.
     assert!(styling
         .iter()
+        .filter(|c| c.mode == "term")
         .all(|c| c.detail.as_deref() == Some("command's content varies by output mode")));
+    assert!(styling
+        .iter()
+        .filter(|c| c.mode != "term")
+        .all(
+            |c| c.detail.as_deref() == Some("check does not apply to text mode")
+                || c.detail.as_deref() == Some("check does not apply to json mode")
+        ));
+}
+
+// #461: a help page that only ever names `--output-file-path` does not
+// satisfy the probe for `--output` as its own flag: a substring match would
+// wrongly treat this as accepting `--output`.
+#[test]
+fn help_page_advertising_only_output_file_path_reads_no_output_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", HELP_ADVERTISES_ONLY_OUTPUT_FILE_PATH);
+    let invariants = Invariants {
+        commands: vec![rendered(&["greet"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    assert_eq!(cells.len(), 30);
+    assert!(cells
+        .iter()
+        .all(|c| c.status == InvariantStatus::NotApplicable));
+    assert!(cells
+        .iter()
+        .all(|c| c.detail.as_deref() == Some("no output flag")));
+}
+
+// #461: the probe reads stderr too — clap prints `--help` to stdout, but the
+// probe must not assume every produced binary does, or it would misclassify
+// a binary that documents `--output` on stderr as declining it.
+#[test]
+fn help_page_naming_output_on_stderr_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", HELP_MENTIONS_OUTPUT_ON_STDERR);
+    let invariants = Invariants {
+        commands: vec![rendered(&["greet"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    assert_eq!(cells.len(), 30);
+    assert!(cells.iter().all(|c| c.status != InvariantStatus::Fail));
+    assert!(cells
+        .iter()
+        .filter(|c| c.check == "exits 0")
+        .all(|c| c.status == InvariantStatus::Pass));
+}
+
+// #461: a `--help` invocation that itself fails (nonzero exit, no mention of
+// `--output` on either stream) must not be read as the binary declining
+// `--output` — it lets the matrix run so the real invocations report
+// whatever that failure actually is.
+#[test]
+fn failing_help_probe_lets_the_matrix_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", HELP_FAILS_BUT_BINARY_ACCEPTS_OUTPUT);
+    let invariants = Invariants {
+        commands: vec![rendered(&["greet"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    assert_eq!(cells.len(), 30);
+    assert!(cells
+        .iter()
+        .any(|c| c.status != InvariantStatus::NotApplicable));
+    assert!(cells.iter().all(|c| c.status != InvariantStatus::Fail));
+    assert_eq!(
+        cells
+            .iter()
+            .filter(|c| c.status == InvariantStatus::Pass)
+            .count(),
+        14
+    );
+}
+
+// The `equal_across_modes` reason is only correct when the contract and
+// mode would otherwise have let the check run: a rendered command's
+// "opaque output preserves text bytes" cells never apply to it, regardless
+// of `equal_across_modes`, so the reason must name the contract mismatch,
+// not claim the content varies by mode.
+#[test]
+fn applicability_reason_names_the_contract_mismatch_not_mode_variance() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", CONTENT_NAMES_THE_MODE);
+    let invariants = Invariants {
+        commands: vec![rendered_content_varies_by_mode(&["config", "list"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    let opaque_bytes_checks: Vec<_> = cells
+        .iter()
+        .filter(|c| c.check == "opaque output preserves text bytes")
+        .collect();
+    assert!(!opaque_bytes_checks.is_empty());
+    assert!(opaque_bytes_checks
+        .iter()
+        .all(|c| c.status == InvariantStatus::NotApplicable));
+    assert!(opaque_bytes_checks
+        .iter()
+        .all(|c| c.detail.as_deref() == Some("rendered command uses render invariants")));
+}
+
+// #467: `either` resolves from the first cell whose runs actually executed.
+// The matrix's first color (`off`, via `NO_COLOR`) times out on this binary
+// and locks in nothing; the second color (`on`) runs normally and reveals
+// the artifact-like, opaque-bytes shape. A resolver that locked in from the
+// failed first cell would default to `rendered` and fail "stdout parses as
+// JSON" on the `on` cells instead.
+#[test]
+fn either_contract_skips_a_first_cell_that_never_ran() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", ARTIFACT_LIKE_TIMES_OUT_WHEN_COLOR_OFF);
+    let invariants = Invariants {
+        commands: vec![either(&["get", "pods"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        Duration::from_millis(200),
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    let on_cells: Vec<_> = cells.iter().filter(|c| c.color == "on").collect();
+    assert!(!on_cells.is_empty());
+    assert!(on_cells.iter().all(|c| c.status != InvariantStatus::Fail));
+    assert!(on_cells
+        .iter()
+        .filter(|c| c.check == "stdout parses as JSON")
+        .all(|c| c.status == InvariantStatus::NotApplicable));
 }
 
 fn test_isolation_record() -> corpus_runner::report::IsolationRecord {

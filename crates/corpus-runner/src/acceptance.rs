@@ -126,9 +126,10 @@ pub fn not_run_invariants(invariants: &Invariants, reason: &str) -> Vec<Invarian
 
 // Declining `--output` entirely (#461) is a fact about the binary, not one
 // command: probed once, ahead of the matrix, against the binary's own
-// `--help`. A probe that cannot complete (the binary crashes, hangs, or is
-// missing) states nothing about that choice, so the matrix still runs and
-// lets the real invocations report whatever that failure actually is.
+// `--help`. A probe that cannot complete (the binary crashes, hangs, exits
+// nonzero, or is missing) states nothing about that choice, so the matrix
+// still runs and lets the real invocations report whatever that failure
+// actually is.
 fn accepts_output_flag(
     binary: &Path,
     timeout: Duration,
@@ -144,9 +145,32 @@ fn accepts_output_flag(
         &home,
         &[],
     ) {
-        Ok((_, page)) => page.contains("--output"),
+        Ok((Some(0), stdout, stderr)) => {
+            mentions_output_flag(&stdout) || mentions_output_flag(&stderr)
+        }
+        Ok(_) => true,
         Err(_) => true,
     }
+}
+
+// Matches `--output` as its own token (followed by whitespace, `=`, `,`, or
+// end of line), not as a prefix of a longer flag like `--output-file-path`.
+fn mentions_output_flag(page: &str) -> bool {
+    const FLAG: &str = "--output";
+    let mut rest = page;
+    while let Some(pos) = rest.find(FLAG) {
+        let after = &rest[pos + FLAG.len()..];
+        let is_boundary = after
+            .chars()
+            .next()
+            .map(|c| c.is_whitespace() || c == '=' || c == ',')
+            .unwrap_or(true);
+        if is_boundary {
+            return true;
+        }
+        rest = after;
+    }
+    false
 }
 
 type ModeRuns = BTreeMap<&'static str, Result<(Option<i32>, String), String>>;
@@ -159,13 +183,20 @@ fn sweep_plan(
 ) -> Vec<InvariantCell> {
     let mut cells = Vec::new();
     for command in &invariants.commands {
-        // `either` (#467) is resolved once, from the command's first evaluated
-        // cell, and held for the rest of that command's plan.
+        // `either` (#467) is resolved once, from the command's first cell
+        // whose runs actually executed, and held for the rest of that
+        // command's plan. A cell that never ran (spawn error, timeout) says
+        // nothing about the binary's behavior, so it locks in no contract;
+        // if every cell fails to run, no contract is ever locked and each
+        // cell's checks fail on their own errors instead.
         let mut resolved_either: Option<InvariantContract> = None;
         for color in &invariants.colors {
             for theme in &invariants.themes {
                 let runs = mode_runs(command, *color, theme);
-                if command.contract == InvariantContract::Either && resolved_either.is_none() {
+                if command.contract == InvariantContract::Either
+                    && resolved_either.is_none()
+                    && runs.values().any(|run| run.is_ok())
+                {
                     resolved_either = Some(resolve_either_contract(&runs));
                 }
                 let contract = match command.contract {
@@ -366,12 +397,11 @@ fn applicability_reason(
     check: &str,
     equal_across_modes: bool,
 ) -> String {
-    if !equal_across_modes
-        && matches!(
-            check,
-            "styling preserves text layout" | "opaque output preserves text bytes"
-        )
-    {
+    // `equal_across_modes` is the reason a check doesn't apply only when the
+    // contract and mode would otherwise have let it run: reusing
+    // `check_applies` with `equal_across_modes` forced true is what confirms
+    // that. Otherwise the mismatch is about contract or mode, handled below.
+    if !equal_across_modes && check_applies(contract, mode, check, true) {
         return "command's content varies by output mode".to_string();
     }
     match (contract, check) {
@@ -427,6 +457,7 @@ fn run_mode(
         }
     }
     run_binary(binary, &args, timeout, isolation, invocation.home, &env)
+        .map(|(exit_code, stdout, _stderr)| (exit_code, stdout))
 }
 
 fn run_binary(
@@ -436,7 +467,7 @@ fn run_binary(
     isolation: &workspace::Isolation,
     home: &Path,
     env: &[(String, String)],
-) -> Result<(Option<i32>, String), String> {
+) -> Result<(Option<i32>, String, String), String> {
     let mut command = Command::new(binary);
     command.args(args).current_dir(home);
     isolation.apply_check(&mut command, home)?;
@@ -448,7 +479,7 @@ fn run_binary(
     if outcome.timed_out {
         return Err(format!("timed out after {}s", timeout.as_secs()));
     }
-    Ok((outcome.exit_code, outcome.stdout))
+    Ok((outcome.exit_code, outcome.stdout, outcome.stderr))
 }
 
 // The panic hook is process-wide; concurrent swaps would restore a stale one.
