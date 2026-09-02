@@ -33,8 +33,7 @@ pub enum DispatchOutput {
     },
 }
 
-/// A handler-declared exit status has nowhere to ride on a binary or artifact
-/// outcome, so declaring one there is a render error rather than a lost status.
+/// A binary or artifact outcome has nowhere to carry a status, so it is a render error.
 pub(crate) fn status_without_a_carrier(status: ExitStatus, output: &str) -> RunError {
     RunError::new(
         format!(
@@ -46,7 +45,6 @@ pub(crate) fn status_without_a_carrier(status: ExitStatus, output: &str) -> RunE
     )
 }
 
-/// Fails when `status` was declared on an output that cannot carry it.
 pub(crate) fn reject_status_without_a_carrier(
     status: Option<ExitStatus>,
     is_binary: bool,
@@ -65,8 +63,7 @@ pub(crate) fn reject_status_without_a_carrier(
     Err(status_without_a_carrier(status, carrier))
 }
 
-/// Under `ndjson` stdout is a stream of JSON lines with no room for a
-/// payload, so binary or artifact output there is a render error.
+/// An `ndjson` stream has no room for a payload, so it is a render error.
 pub(crate) fn payload_without_a_stream(output: &str) -> RunError {
     RunError::new(
         format!(
@@ -77,7 +74,6 @@ pub(crate) fn payload_without_a_stream(output: &str) -> RunError {
     )
 }
 
-/// Fails when `output_mode` is a stream and the output is a payload.
 pub(crate) fn reject_payload_under_stream(
     output_mode: crate::OutputMode,
     is_binary: bool,

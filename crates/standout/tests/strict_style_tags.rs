@@ -1,7 +1,5 @@
-//! Integration coverage for `AppBuilder::strict_style_tags`: the opt-in gate
-//! that turns an unresolved style tag from a graceful degradation into a hard
-//! failure. The default path (off) must stay exactly as before — degrade to
-//! unstyled text plus a stderr warning.
+//! `AppBuilder::strict_style_tags`: an unresolved style tag fails the run instead of
+//! degrading to unstyled text plus a stderr warning.
 
 use clap::Command;
 use serde_json::json;
@@ -17,8 +15,7 @@ const COMMANDS: [&str; 4] = [
     "malformed-known",
 ];
 
-// `header` is styled by the `default` theme fixture; `bogus` is not defined in
-// any theme.
+// `header` is styled by the `default` theme fixture; `bogus` is defined in no theme.
 const TEMPLATES: &[(&str, &str)] = &[
     ("clean", "[header]{{ msg }}[/header]"),
     ("balanced-unknown", "[bogus]{{ msg }}[/bogus]"),
@@ -56,12 +53,7 @@ fn run(strict: bool, subcommand: &str) -> standout_test::TestResult {
         .run(&app(strict), command(), ["app", subcommand])
 }
 
-// Framework help renders through the app theme, so a style tag the theme does
-// not define — here `bogus`, carried in the root command's `about` text —
-// leaves the help page with an unresolved tag. Help is rendered on a path
-// (`intercept_display_help` / `intercept_help_word`) that returns before
-// command dispatch, so it exercises the run-completion strict sweep rather than
-// the per-command pre-write gate.
+// `bogus` in the root `about` leaves framework help, rendered before dispatch, unresolved.
 fn help_app(strict: bool) -> App {
     App::builder()
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
@@ -113,8 +105,7 @@ fn artifact_command() -> Command {
     Command::new("app").subcommand(Command::new("export"))
 }
 
-// A fixed, non-terminal target so the direct `run_with` tests stay deterministic
-// across environments — `TargetProperties::detect()` probes process/TTY state.
+// `TargetProperties::detect()` probes the TTY; a fixed target keeps `run_with` deterministic.
 fn fixed_target() -> standout::TargetProperties {
     standout::TargetProperties {
         width: Some(80),
@@ -147,8 +138,7 @@ fn strict_on_fails_and_names_a_balanced_unresolved_tag() {
 
 #[test]
 fn strict_on_fails_and_names_an_unbalanced_unresolved_tag() {
-    // An unbalanced unknown tag travels a different parse path than a balanced
-    // one, but is still recorded as unresolved — strict must catch both.
+    // An unbalanced unknown tag takes a different parse path than a balanced one.
     let result = run(true, "unbalanced-unknown");
     result.assert_exit_status(ExitStatus::FAILURE);
     result.assert_error_kind(RunErrorKind::Render);
@@ -189,9 +179,7 @@ fn strict_on_succeeds_on_a_clean_render() {
 
 #[test]
 fn strict_on_ignores_a_malformed_but_defined_tag() {
-    // `[header]hi` is unbalanced, but `header` is a defined tag, so it is
-    // malformed markup, not an unresolved tag. Strict keys on unresolved tags
-    // only, so this must still succeed.
+    // `[header]hi` is malformed markup on a defined tag, not an unresolved tag.
     let result = run(true, "malformed-known");
     result.assert_success();
     assert!(
@@ -203,9 +191,6 @@ fn strict_on_ignores_a_malformed_but_defined_tag() {
 
 #[test]
 fn strict_failure_leaves_a_preexisting_output_file_untouched() {
-    // The "no output is emitted" contract covers `--output-file-path` too: the
-    // gate runs before the file write, so a strict failure must not create or
-    // overwrite the requested file.
     let tempdir = tempfile::tempdir().unwrap();
     let output_file = tempdir.path().join("out.txt");
     std::fs::write(&output_file, "original contents").unwrap();
@@ -232,8 +217,6 @@ fn strict_failure_leaves_a_preexisting_output_file_untouched() {
 
 #[test]
 fn strict_on_fails_on_an_unresolved_tag_in_the_help_page() {
-    // `--help` renders framework help and returns before command dispatch. The
-    // run-completion sweep must still catch the unresolved tag and emit nothing.
     let result =
         TestHarness::new()
             .text_output()
@@ -250,8 +233,7 @@ fn strict_on_fails_on_an_unresolved_tag_in_the_help_page() {
 
 #[test]
 fn strict_on_fails_on_an_unresolved_tag_in_the_help_word_page() {
-    // The `help` word takes a different interception path than `--help`; strict
-    // mode must catch an unresolved tag on both.
+    // The `help` word takes a different interception path than `--help`.
     let result =
         TestHarness::new()
             .text_output()
@@ -268,8 +250,6 @@ fn strict_on_fails_on_an_unresolved_tag_in_the_help_word_page() {
 
 #[test]
 fn strict_off_still_renders_the_help_page() {
-    // With strict off, the same unresolved help tag degrades gracefully and the
-    // help page is still produced — the sweep only fires when strict is on.
     let result =
         TestHarness::new()
             .text_output()
@@ -284,10 +264,6 @@ fn strict_off_still_renders_the_help_page() {
 
 #[test]
 fn strict_failure_leaves_no_artifact_file_behind() {
-    // The artifact path renders its report and writes bytes inside
-    // `complete_artifact`; the gate runs after the report render and before the
-    // byte write, so a strict failure must leave a pre-existing artifact file
-    // untouched.
     let tempdir = tempfile::tempdir().unwrap();
     let output_file = tempdir.path().join("export.csv");
     std::fs::write(&output_file, "original artifact contents").unwrap();
@@ -324,10 +300,7 @@ fn strict_failure_leaves_no_artifact_file_behind() {
 
 #[test]
 fn strict_gate_fires_through_a_direct_run_with_call() {
-    // `run_with` is a public entry point that a caller may drive without opening
-    // a capture window of its own. The shared `collect_run_warnings` boundary now
-    // opens one, so strict mode enforces here just as it does through `run`,
-    // rather than silently passing for want of a window.
+    // `run_with` opens no capture window of its own.
     let result = app(true).run_with(
         command(),
         ["app", "balanced-unknown"],

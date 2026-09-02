@@ -22,8 +22,7 @@ pub(crate) fn add_inputs<H>(config: CommandConfig<H>) -> CommandConfig<H> {
     )
 }
 
-/// Appends the mutated todo's id to the file named by `TODO_AUDIT_LOG`, and
-/// fails the command when the append fails.
+/// Fails the command when the append to `TODO_AUDIT_LOG` fails.
 pub(crate) fn audit_hook(
     _matches: &ArgMatches,
     ctx: &CommandContext,

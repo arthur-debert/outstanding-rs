@@ -1,6 +1,4 @@
-//! The `formlike` pilot's failing invocations, replayed against the two seams
-//! that answer them: an app-defined answer-sheet format and a configurable
-//! confirmation gate.
+//! An app-defined answer-sheet format and a configurable confirmation gate, driven through `App`.
 
 use clap::Command;
 use serde_json::json;
@@ -27,8 +25,7 @@ struct EntryAnswers {
     region: String,
 }
 
-/// The sheet `formlike`'s spec defines: one question line per stable tag, the
-/// answer beneath, and no framework preamble.
+/// No framework preamble: a tagged question line, the answer beneath.
 const SPEC_SHEET: &str = "Your name <id:name>\nada\n\nWhich region? <id:region>\neu\n";
 
 struct SpecSheet;

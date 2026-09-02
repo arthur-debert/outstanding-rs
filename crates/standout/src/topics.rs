@@ -10,10 +10,6 @@
 //! registry.add_topic(Topic::new("Storage", "Notes live in ~/.notes/", TopicType::Text, Some("storage".into())));
 //! let output = render_topic(registry.get_topic("storage").unwrap(), None).unwrap();
 //! ```
-//!
-//! Key types: [`Topic`], [`TopicRegistry`], [`TopicType`], [`render_topic`] /
-//! [`render_topics_list`], [`display_with_pager`] (show long content through
-//! less/more).
 
 use deunicode::deunicode;
 use std::collections::HashMap;

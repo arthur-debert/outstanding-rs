@@ -18,9 +18,7 @@ pub enum PipeMode {
     Consume,
 }
 
-/// Runs `command` through the shell (`sh -c` / `cmd /C`). Never build
-/// `command` from untrusted input — it is shell-interpreted, so unsanitized
-/// interpolation is a shell-injection vector.
+/// Shell-interpreted (`sh -c` / `cmd /C`): never build `command` from untrusted input.
 pub struct SimplePipe {
     command: String,
     mode: PipeMode,

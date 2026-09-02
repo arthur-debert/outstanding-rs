@@ -138,8 +138,7 @@ impl App {
                     .map(PathBuf::from)
             });
 
-            // A stream's file override takes the whole stream, entries
-            // included, so the sink is retargeted before the handler runs.
+            // The file override takes the entries too, so the sink is retargeted first.
             let stream = if output_mode.is_stream() {
                 if let Some(path) = &override_path {
                     match open_output_file(path) {
@@ -234,15 +233,10 @@ impl App {
                         super::super::dispatch::status_without_a_carrier(status, "artifact"),
                     );
                 }
-                // The artifact path renders its report inside `complete_artifact`,
-                // so the strict gate lives there, after that render and before any
-                // bytes are written.
                 return self.complete_artifact(artifact, request, override_path, &warnings);
             }
 
-            // The render is complete and its diagnostics are in the capture
-            // window; enforce strict mode here, before committing to stdout or a
-            // file, so a strict failure leaves no output behind.
+            // Before committing to stdout or a file, so a strict failure leaves no output.
             if let Some(error) = self.strict_style_tags_error(&warnings) {
                 return DispatchResult::Error(error);
             }
@@ -440,8 +434,7 @@ impl App {
         outcome.handled
     }
 
-    /// Everything `run` does — detect, dispatch, page, write both streams,
-    /// flush warnings — except ending the process.
+    /// `run` without ending the process.
     pub fn run_emitted<I, T>(&self, cmd: Command, args: I) -> ProcessOutcome
     where
         I: IntoIterator<Item = T>,
@@ -523,23 +516,8 @@ impl App {
         }
     }
 
-    /// Run `inner` inside a fresh render-diagnostics capture window and collect
-    /// its warnings into a [`CompletedRun`]. The window is the boundary every
-    /// command entry point shares — [`App::dispatch`], [`App::run_with`], and
-    /// therefore [`App::run`] all route through here — so the `strict_style_tags`
-    /// gate, which reads the window, enforces uniformly regardless of which
-    /// entry point rendered. A fresh window per run also isolates the gate from
-    /// any window a caller left open around us.
-    ///
-    /// Command and artifact output is gated at its pre-commit site (in
-    /// [`App::dispatch_with_target`] and [`App::complete_artifact`]) so a strict
-    /// failure writes no file. But some successful rendered outcomes — framework
-    /// help from `intercept_display_help` / `intercept_help_word`, the
-    /// questionnaire answer sheet — return early from `dispatch_from_with_target`
-    /// without reaching those sites. They emit only later, in [`App::run`], so a
-    /// success-guarded sweep here escalates them before emission. Command and
-    /// artifact outcomes have already become errors upstream, so the guard leaves
-    /// them untouched and the run is never gated twice.
+    /// The capture window every entry point shares; help and answer-sheet outcomes, which
+    /// return before the pre-commit strict check, are checked here instead.
     fn collect_run_warnings(
         &self,
         inner: impl FnOnce(WarningBuffer) -> (DispatchResult, OutputMode),
@@ -556,21 +534,8 @@ impl App {
         crate::cli::CompletedRun::from_dispatch(outcome, warnings.take(), output_mode)
     }
 
-    /// The `strict_style_tags` gate, evaluated after a command has rendered but
-    /// before its output is committed to any destination. When strict mode is on
-    /// and this run's own render left a style tag unresolved, returns the
-    /// [`RunErrorKind::Render`] error to raise in place of the output (a non-zero
-    /// exit naming the offending tags), and drops the now-superseded "degraded to
-    /// unstyled text" warning from `warnings` so the failure is reported once.
-    /// Returns `None` — leaving the render to commit normally — when strict mode
-    /// is off or the render left nothing unresolved, so the graceful path is
-    /// untouched.
-    ///
-    /// Callers must invoke this before writing stdout, a file, or artifact bytes:
-    /// raising the error afterward would leave the promised-suppressed output on
-    /// disk. Reads the diagnostics captured for this run, so it is meaningful
-    /// only inside the capture window [`collect_run_warnings`] opens around every
-    /// entry point.
+    /// Call before any byte is written; `Some` replaces the output and drops the
+    /// superseded degrade warning. Reads the window [`collect_run_warnings`] opens.
     fn strict_style_tags_error(&self, warnings: &WarningBuffer) -> Option<RunError> {
         if !self.strict_style_tags {
             return None;
@@ -600,10 +565,7 @@ impl App {
         ))
     }
 
-    /// Dispatch without writing either process stream: the outcome, the
-    /// warnings and the `ctx.stream()` entries come back in the
-    /// [`CompletedRun`]. An output file override still writes the file, as
-    /// it does under every entry point.
+    /// Dispatch without writing either process stream; an output file override still writes.
     pub fn run_with<I, T>(
         &self,
         cmd: Command,
@@ -620,12 +582,7 @@ impl App {
         run.with_entries(String::from_utf8_lossy(&capture.take()).into_owned())
     }
 
-    /// `run_with` with the destination of `ctx.stream()` entries injected,
-    /// written as the handler produces them: `run_emitted` passes the process's
-    /// stdout, the test harness its stdout buffer. Under every mode but
-    /// `ndjson` the stream discards and `sink` is never written; under
-    /// `ndjson` an output file override retargets `sink` to the file, and the
-    /// caller writes the result and the warning entries through the same sink.
+    /// `run_with` with the destination of `ctx.stream()` entries; written only under `ndjson`.
     pub fn run_with_sink<I, T>(
         &self,
         cmd: Command,
@@ -691,11 +648,7 @@ impl App {
         }
     }
 
-    /// A registration path is `.`-separated command names, and the one path
-    /// with no names is the empty string: the root command of a flat app. A
-    /// leading, trailing or doubled `.` leaves a blank name, which dispatch
-    /// can never produce — it joins the names clap reports back — so the
-    /// registration would sit unreachable behind a path that reads as valid.
+    /// A blank name in a `.`-separated path can never match what dispatch joins from clap.
     pub(crate) fn malformed_registrations(&self) -> Result<(), SetupError> {
         let pending = self.pending_commands.borrow();
         let mut malformed: Vec<&str> = pending
@@ -719,15 +672,7 @@ impl App {
         )))
     }
 
-    /// A registration no invocation can reach: the app registered a handler
-    /// under a path its clap `Command` declares no subcommand for, so `run`
-    /// would report "no handler" for a command the app believes it owns. The
-    /// reverse direction — a clap subcommand with no registration — is partial
-    /// adoption and stays a `NoMatch` handoff to the fallback that owns it.
-    ///
-    /// A clap alias is not a name a registration can use: clap reports the
-    /// canonical command for an alias, so `ls` registered against
-    /// `Command::new("list").alias("ls")` is unreachable from either spelling.
+    /// A registration with no clap subcommand behind it; canonical names only, never aliases.
     pub(crate) fn unreachable_registrations(&self, cmd: &Command) -> Result<(), SetupError> {
         let mut unreachable: Vec<String> = self
             .pending_commands
@@ -799,10 +744,7 @@ impl App {
     }
 }
 
-/// The empty registration path is the root command of a flat app, which every
-/// clap `Command` has, so it walks to no segments rather than to one blank one.
-/// Every other path splits literally: `malformed_registrations` has already
-/// rejected the ones with a blank segment.
+/// The empty path is the root command and yields no segments.
 fn path_segments(path: &str) -> Vec<&str> {
     if path.is_empty() {
         return Vec::new();
@@ -810,10 +752,7 @@ fn path_segments(path: &str) -> Vec<&str> {
     path.split('.').collect()
 }
 
-/// What an unreachable registration names, when the CLI does declare the
-/// command under some other spelling: the same path modulo `-` versus `_` (the
-/// mismatch a kebab-case derive produces against a snake_case registration),
-/// or an alias of it. Both carry the declared path the app should register.
+/// The declared spelling an unreachable path matches modulo `-`/`_`, or by alias.
 enum DeclaredAs {
     SeparatorVariant(String),
     Alias(String),
@@ -892,11 +831,7 @@ fn report_envelope(
 }
 
 impl App {
-    /// Render an artifact's report, enforce the strict-style-tags gate, then
-    /// commit the artifact bytes to their destination. The report renders first
-    /// because its own tags feed the gate; the byte write comes last so that a
-    /// strict failure leaves no artifact file behind, matching the "no output is
-    /// emitted" guarantee the text and stdout paths already keep.
+    /// The report renders first (its tags feed the strict check); bytes are written last.
     fn complete_artifact(
         &self,
         artifact: ArtifactOutput,
@@ -938,8 +873,6 @@ impl App {
             }
         };
 
-        // The bytes and the report have both rendered; enforce strict mode
-        // before writing anything so a strict failure leaves no file behind.
         if let Some(error) = self.strict_style_tags_error(warnings) {
             return DispatchResult::Error(error);
         }

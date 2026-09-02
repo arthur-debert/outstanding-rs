@@ -1,8 +1,5 @@
-//! The exit statuses a successful handler can shape (spec D5), in the shape
-//! the tflike `-detailed-exitcode` cases assert: 0 for a plan with nothing to
-//! do, 2 when the plan has changes, 1 when planning fails. A declared status
-//! is a signal beside the result, never a failure: the document still goes to
-//! stdout and nothing becomes a diagnostic.
+//! A declared exit status is a signal beside the result, never a failure: the document
+//! still goes to stdout and nothing becomes a diagnostic.
 
 use clap::{Arg, ArgAction, Command};
 use serde_json::json;

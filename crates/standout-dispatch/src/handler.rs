@@ -75,8 +75,7 @@ impl fmt::Debug for Extensions {
     }
 }
 impl Clone for Extensions {
-    // Cloning always yields an empty container: `Box<dyn Any>` isn't `Clone`,
-    // so injected values are dropped rather than copied.
+    // `Box<dyn Any>` isn't `Clone`: a clone starts empty.
     fn clone(&self) -> Self {
         Self::new()
     }
@@ -101,8 +100,7 @@ impl CommandContext {
         self.stream = stream;
         self
     }
-    /// The entry stream of this run: live under `ndjson`, discarding in
-    /// every other mode.
+    /// Live under `ndjson`, discarding in every other mode.
     pub fn stream(&self) -> &EntryStream {
         &self.stream
     }
@@ -127,19 +125,14 @@ pub enum Output<T: Serialize> {
         filename: String,
     },
     Artifact(Artifact<T>),
-    /// A successful output whose process exit status the handler chose:
-    /// the run emits `output` exactly as it would alone and exits with
-    /// `status`, written verbatim. Built by [`Output::with_exit_status`].
+    /// Emitted as `output` alone would be; the process exits with `status`.
     WithStatus {
         output: Box<Output<T>>,
         status: ExitStatus,
     },
 }
 impl<T: Serialize> Output<T> {
-    /// Declare the exit status of this successful output. A status is a
-    /// signal beside the result, never a failure: nothing becomes a
-    /// diagnostic and the document still goes to stdout. Calling it again
-    /// replaces the earlier status.
+    /// A signal beside the result, never a failure; a later call replaces the earlier status.
     pub fn with_exit_status(self, status: ExitStatus) -> Self {
         let (output, _) = self.split_exit_status();
         Output::WithStatus {
@@ -147,7 +140,6 @@ impl<T: Serialize> Output<T> {
             status,
         }
     }
-    /// The output and the status it declares, if any.
     pub fn split_exit_status(self) -> (Self, Option<ExitStatus>) {
         match self {
             Output::WithStatus { output, status } => (output.split_exit_status().0, Some(status)),
@@ -160,7 +152,6 @@ impl<T: Serialize> Output<T> {
             _ => ExitStatus::SUCCESS,
         }
     }
-    /// Apply `f` to the rendered value, through a declared status.
     pub fn map_render(self, f: impl FnOnce(T) -> T) -> Self {
         match self {
             Output::Render(data) => Output::Render(f(data)),
@@ -368,7 +359,6 @@ impl RunOutput {
             status: ExitStatus::SUCCESS,
         }
     }
-    /// The status the handler declared through [`Output::with_exit_status`].
     pub fn with_exit_status(mut self, status: ExitStatus) -> Self {
         self.status = status;
         self
@@ -469,21 +459,13 @@ impl RunError {
         self.source = Some(Arc::new(source));
         self
     }
-    /// Carry the structured form of this failure, so `diagnostic()` reports
-    /// the error's own `summary`, `detail` and `range` instead of deriving a
-    /// summary from the prose message.
+    /// Replaces the summary `diagnostic()` would otherwise derive from the prose message.
     pub fn with_diagnostic(mut self, diagnostic: Diagnostic) -> Self {
         self.diagnostic = Some(Box::new(diagnostic));
         self
     }
-    /// The document this failure becomes under a structured output mode.
-    ///
-    /// The carried diagnostic wins when there is one. An `App` or `External`
-    /// failure keeps its verbatim bytes as `detail`, with the first line as
-    /// `summary`. Any other error splits its prose: one `Error: ` or `error: `
-    /// framing stripped, the first line is `summary` and the rest `detail`.
-    /// `kind` and `severity` always describe the failure as the framework
-    /// classified it.
+    /// The carried diagnostic wins; otherwise the first prose line (one `Error: ` framing
+    /// stripped) is `summary` and the rest `detail`.
     pub fn diagnostic(&self) -> Diagnostic {
         let mut diagnostic = match (&self.diagnostic, self.kind) {
             (Some(diagnostic), _) => (**diagnostic).clone(),
@@ -515,8 +497,7 @@ impl RunError {
     pub fn into_string(self) -> String {
         self.message
     }
-    // The message is a stderr payload its owner wrote: the shell adapter emits
-    // it as-is, with no `Error: ` framing and no trailing newline.
+    // A stderr payload its owner wrote: no `Error: ` framing, no trailing newline.
     pub const fn writes_diagnostic_verbatim(&self) -> bool {
         matches!(self.kind, RunErrorKind::External | RunErrorKind::App)
     }
