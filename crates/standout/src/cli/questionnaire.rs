@@ -17,10 +17,8 @@ use crate::SetupError;
 
 pub(crate) const QUESTIONNAIRE_INPUT_NAME: &str = "questionnaire";
 
-/// The clap id of the injected `--answers` argument.
 pub const QUESTIONNAIRE_ANSWERS_ARG: &str = "_standout_questionnaire_answers";
 
-/// The clap id of the injected `--yes` flag.
 pub const QUESTIONNAIRE_YES_ARG: &str = "_standout_questionnaire_yes";
 
 pub(crate) const QUESTIONS_FILE_ARG_ID: &str = "_standout_questionnaire_questions_file";
@@ -28,10 +26,7 @@ pub(crate) const QUESTIONS_SUBCOMMAND: &str = "questions";
 
 const CONFIRM_QUESTION: &str = "Continue? Type 'yes' to continue: ";
 
-/// Which reply the gate takes as consent. Both the reply and a configured
-/// `Word` are trimmed before they are matched, and a `Word` that is empty or
-/// all whitespace accepts nothing — pressing Enter cannot confirm, and the
-/// gate can only be declined. `Disabled` runs without asking, as `--yes` does.
+/// Reply and `Word` are trimmed before matching; a blank `Word` accepts nothing but a decline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfirmationAcceptance {
     Word(String),
@@ -39,18 +34,14 @@ pub enum ConfirmationAcceptance {
     Disabled,
 }
 
-/// Where a command's review is written. `Stderr` is the default, so stdout
-/// stays the data channel.
+/// `Stderr` is the default, so stdout stays the data channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReviewStream {
     Stderr,
     Stdout,
 }
 
-/// What a questionnaire command asks for after its review, set with
-/// [`CommandConfig::confirmation`](crate::cli::CommandConfig::confirmation).
-/// The prompt goes to the controlling terminal, not to either standard
-/// stream.
+/// The prompt goes to the controlling terminal, not to either standard stream.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Confirmation {
     prompt: String,

@@ -48,9 +48,7 @@ impl RawAnswers {
     }
 }
 
-/// How the bytes behind `--answers` become [`RawAnswers`]. An application whose
-/// own spec pins the sheet's shape implements this in place of the default
-/// [`StandoutAnswerSheet`].
+/// How the bytes behind `--answers` become [`RawAnswers`]; the default is [`StandoutAnswerSheet`].
 pub trait AnswerSheetFormat {
     fn parse(
         &self,

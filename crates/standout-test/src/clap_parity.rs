@@ -223,19 +223,11 @@ pub fn clap_facts(cmd: &Command, length: HelpLength) -> Vec<Fact> {
     }
     facts
 }
-/// Whether clap adds `sub` during `build()` rather than the application
-/// declaring it. Clap appends a `help` word to any command that has not called
-/// `disable_help_subcommand`, and rejects an application declaring its own
-/// `help` alongside it as a duplicate name — so the parent's setting decides
-/// the provenance, whatever build state the caller handed us.
+/// The parent's `disable_help_subcommand` setting decides, whatever build state it is in.
 fn clap_generates_subcommand(parent: &Command, sub: &Command) -> bool {
     sub.get_name() == "help" && !parent.is_disable_help_subcommand_set()
 }
-/// The same question for an argument: clap adds `-h/--help` unless the command
-/// calls `disable_help_flag`, and `-V/--version` unless it calls
-/// `disable_version_flag` (which `build()` does for itself when the command
-/// carries no version), rejecting an application's same-named argument as a
-/// duplicate id.
+/// `-h/--help` unless `disable_help_flag`; `-V/--version` unless `disable_version_flag`.
 fn clap_generates_argument(parent: &Command, arg: &Arg) -> bool {
     match arg.get_id().as_str() {
         "help" => !parent.is_disable_help_flag_set(),

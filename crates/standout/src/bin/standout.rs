@@ -1435,9 +1435,6 @@ fn handler_imports(spec: &ProjectSpec) -> String {
     imports.join("\n")
 }
 
-/// The handler's signature: its typed `#[handler]` parameters, plus the context
-/// the chain-resolved values are read from. Written the way rustfmt would — on
-/// one line while it fits `max_width`, one parameter per line when it does not.
 fn handler_signature(spec: &ProjectSpec) -> String {
     use unicode_width::UnicodeWidthStr;
 
@@ -1482,8 +1479,7 @@ fn handler_input_reads(spec: &ProjectSpec) -> String {
         .join("\n")
 }
 
-/// The `fn(CommandConfig) -> CommandConfig` the command's `#[dispatch(inputs =
-/// ...)]` names, empty when every value arrives as a typed parameter.
+/// Empty when every value arrives as a typed parameter.
 fn command_inputs_fn(spec: &ProjectSpec) -> String {
     let chained = spec
         .inputs
@@ -1518,11 +1514,7 @@ fn command_inputs_fn(spec: &ProjectSpec) -> String {
     )
 }
 
-/// The chain source that reads a value out of the file a path argument names.
-/// `standout-input` ships the argument and stdin sources; a file source is the
-/// application's own `InputCollector`. It reports the `file` source kind, so
-/// `ctx.input_source` tells a file-read value apart from a typed argument, and
-/// a failed read names the path it tried.
+/// The app's own `InputCollector`; it reports the `file` source kind and names the path on failure.
 fn file_source_item(spec: &ProjectSpec) -> String {
     if !has_file_source(spec) {
         return String::new();
@@ -1566,9 +1558,6 @@ fn handler_sample_value(index: usize) -> &'static str {
     }
 }
 
-/// The generated handler test's `let ... else` header, written the way rustfmt
-/// would: arguments on one line while they fit `fn_call_width` and the line
-/// fits `max_width`, then `else` on its own line, then one argument per line.
 fn handler_call(spec: &ProjectSpec) -> String {
     use unicode_width::UnicodeWidthStr;
 
@@ -1601,7 +1590,6 @@ fn handler_call(spec: &ProjectSpec) -> String {
     )
 }
 
-/// The `InputSourceKind` variant a declared source resolves to at run time.
 fn source_kind_variant(source: InputSource) -> &'static str {
     match source {
         InputSource::Argument => "Arg",
@@ -1610,10 +1598,7 @@ fn source_kind_variant(source: InputSource) -> &'static str {
     }
 }
 
-/// The chain-resolved values the generated handler test seeds the context with,
-/// standing in for the pre-dispatch resolution the app does. Each value carries
-/// the source kind its first source resolves to, which is the provenance the
-/// running app would record.
+/// Stands in for pre-dispatch resolution: each value carries its first source's kind.
 fn handler_test_inputs(spec: &ProjectSpec) -> String {
     if !has_chain_inputs(spec) {
         return String::new();
@@ -1674,13 +1659,11 @@ fn quote(value: &str) -> String {
     format!("{value:?}")
 }
 
+// rustfmt's defaults: generated code is laid out as rustfmt would, so a fresh project is clean.
 const ATTR_FN_LIKE_WIDTH: usize = 70;
 const MAX_WIDTH: usize = 100;
 const FN_CALL_WIDTH: usize = 60;
 
-/// One attribute, written the way rustfmt would: on one line while its
-/// arguments fit `attr_fn_like_width` at the attribute's own indent, split one
-/// argument per line when they do not.
 fn attribute(name: &str, arguments: &[String], indent: usize) -> String {
     use unicode_width::UnicodeWidthStr;
 
@@ -1697,15 +1680,9 @@ fn attribute(name: &str, arguments: &[String], indent: usize) -> String {
     format!("#[{name}(\n{lines}\n{pad})]")
 }
 
-/// The `#[dispatch(...)]` the generated command variant carries: the blessed
-/// registration reads the enum, `pure` points it at the wrapper `#[handler]`
-/// generates, `name` holds the derive to the spelling clap declares, and
-/// `inputs` names the command's input chains.
 fn dispatch_attribute(spec: &ProjectSpec) -> String {
     let mut arguments = vec!["pure".to_string(), "default".to_string()];
-    // The derive registers a variant under its kebab-case name, which is the
-    // command name back again unless the answer sheet spelled it with an
-    // underscore; that is the one case the registration has to be told.
+    // The derive registers the kebab-case name; only an underscore spelling needs `name`.
     if spec.command_name.contains('_') {
         arguments.push(format!("name = {}", quote(&spec.command_name)));
     }
@@ -1763,16 +1740,11 @@ fn rust_array(items: &[String], indent: usize, max_inline_len: usize) -> String 
 }
 
 impl CommandInput {
-    /// True when the value reaches the command through an `InputChain` rather
-    /// than a typed `#[handler]` parameter: it has a source other than the
-    /// argument, so more than one place can carry it.
+    /// Reaches the command through an `InputChain`, not a typed `#[handler]` parameter.
     fn is_chain(&self) -> bool {
         self.sources != [InputSource::Argument]
     }
 
-    /// The `InputChain` expression for this input, written the way rustfmt
-    /// would at `indent`: one line while the whole chain fits `chain_width`,
-    /// one source per line when it does not.
     fn chain_expr(&self, indent: usize) -> String {
         use unicode_width::UnicodeWidthStr;
 
@@ -1791,7 +1763,7 @@ impl CommandInput {
             })
             .collect::<Vec<_>>();
         let inline = format!("InputChain::<String>::new(){}", sources.concat());
-        // The chain sits on its own line, and a trailing comma follows it.
+        // A trailing comma follows the chain on its line.
         if indent + inline.width() < MAX_WIDTH {
             return inline;
         }
@@ -1804,10 +1776,7 @@ impl CommandInput {
         format!("InputChain::<String>::new()\n{lines}")
     }
 
-    /// The typed `#[handler]` parameter an argument-only input becomes. An
-    /// underscore in the name is the case the id rule splits on: clap's derive
-    /// ids the argument after the field, `#[handler]` hyphenates, so the name
-    /// is spelled out.
+    /// An underscored name is spelled out: clap ids after the field, `#[handler]` hyphenates.
     fn handler_param(&self) -> String {
         let attribute = if self.cardinality == InputCardinality::Boolean {
             "flag"
@@ -1822,7 +1791,6 @@ impl CommandInput {
         format!("{attribute} {}: {}", self.name, self.rust_type())
     }
 
-    /// The literal the generated handler test passes for this input.
     fn handler_test_value(&self, value: &str) -> String {
         match (self.value_type, self.cardinality) {
             (InputValueType::String, InputCardinality::Required) => {
@@ -3026,8 +2994,7 @@ mod tests {
             .clone()
     }
 
-    // The positive assertions carry the test: the negative half alone would
-    // pass on output that dropped the concern entirely.
+    // The negative assertions alone would pass on output that dropped the concern entirely.
     #[test]
     fn generated_project_uses_the_blessed_idioms() {
         let dir = TempDir::new().unwrap();
@@ -3036,7 +3003,6 @@ mod tests {
         let main = generated_source(&generated, "crates/inspect-tool/src/main.rs");
         let handlers = generated_source(&generated, "crates/inspect-tool/src/handlers.rs");
 
-        // Registration: one enum declares the command set, the derive writes it.
         assert!(cli.contains("#[derive(Subcommand, Dispatch)]"));
         assert!(cli.contains("#[dispatch(handlers = crate::handlers)]"));
         assert!(
@@ -3044,23 +3010,18 @@ mod tests {
         );
         assert!(main.contains(".commands(cli::Commands::dispatch_config())?"));
 
-        // Adaptation: a `#[handler]` fn with typed parameters.
         assert!(handlers.contains("#[handler]"));
         assert!(handlers.contains("#[flag] verbose: bool"));
         assert!(handlers.contains("#[arg] config: Option<std::path::PathBuf>"));
 
-        // Declaration: clap-derive owns the `Command`.
         assert!(cli.contains("#[derive(Parser)]"));
         assert!(cli.contains("Cli::command()"));
 
-        // Templates: embedded at compile time, selected by the convention.
         assert!(main.contains(".templates(embed_templates!(\"src/templates\"))"));
 
-        // Themes: embedded stylesheets, one named theme.
         assert!(main.contains(".styles(embed_styles!(\"src/styles\"))"));
         assert!(main.contains(".default_theme(\"inspect-tool\")"));
 
-        // Input: a chain per value that has more than one source.
         assert!(cli.contains("inputs = crate::handlers::inspect_inputs"));
         assert!(handlers.contains(
             "pub(crate) fn inspect_inputs<H>(config: CommandConfig<H>) -> CommandConfig<H>"
@@ -3070,11 +3031,9 @@ mod tests {
         assert!(handlers.contains(".try_source(StdinSource::new())"));
         assert!(handlers.contains("ctx.input(\"document\")?"));
 
-        // Entry point, version, and themed help by default.
         assert!(main.contains("app.run(cli::command(), std::env::args());"));
         assert!(main.contains(".version(env!(\"CARGO_PKG_VERSION\"))"));
 
-        // The unblessed forms, on top of the positive checks above.
         assert!(!main.contains("command_with"));
         assert!(!main.contains("FnHandler"));
         assert!(!main.contains("AppBuilder::default"));
@@ -3086,10 +3045,6 @@ mod tests {
         assert!(!cli.contains("#[derive(Subcommand)]"));
     }
 
-    /// A value read out of a file is not a value typed on the command line:
-    /// the generated collector reports the `file` source kind, so
-    /// `ctx.input_source` tells the two apart, and a failed read names the path
-    /// it tried rather than blaming the argument.
     #[test]
     fn file_source_reports_file_provenance_and_names_an_unreadable_path() {
         let dir = TempDir::new().unwrap();
@@ -3103,8 +3058,6 @@ mod tests {
         assert!(handlers.contains("source: standout_input::InputSourceKind::File,"));
     }
 
-    /// A command whose every value comes from its own argument reaches the
-    /// handler as typed parameters, with no chain and no context.
     #[test]
     fn argument_only_input_stays_a_typed_handler_parameter() {
         let dir = TempDir::new().unwrap();
@@ -3128,9 +3081,6 @@ mod tests {
         assert!(!cli.contains("inputs = "));
     }
 
-    /// An input name that carries an underscore is where clap's derive and
-    /// `#[handler]` disagree by default: clap ids the argument after the field,
-    /// `#[handler]` hyphenates. The generated parameter spells the id out.
     #[test]
     fn an_underscored_input_name_spells_out_the_argument_id() {
         let dir = TempDir::new().unwrap();
@@ -3150,9 +3100,7 @@ mod tests {
         assert!(handlers.contains("#[arg(name = \"note_text\")] note_text: String"));
     }
 
-    /// The blessed input entry resolves a value or fails, so an optional value
-    /// with a second source has no spelling in it and the wizard refuses the
-    /// combination rather than generating an unblessed fallback.
+    /// An optional value with a second source has no blessed spelling, so the wizard refuses it.
     #[test]
     fn an_optional_input_cannot_take_a_second_source() {
         let error = ProjectSpec::from_answers(TestProjectAnswers {
@@ -3316,8 +3264,6 @@ mod tests {
         let stdout = String::from_utf8(message_human.stdout).unwrap();
         assert!(stdout.contains("Processed Ada"));
 
-        // Themed help, from the default the generated project never sets: the
-        // page is standout's `USAGE` block, not clap's `Usage:` line.
         let help = run_binary(
             &message.destination,
             ["run", "-q", "-p", "hello-tool", "--", "--help"],
@@ -3326,7 +3272,6 @@ mod tests {
         assert!(help.contains("USAGE"), "unexpected help page:\n{help}");
         assert!(!help.contains("Usage:"), "unexpected help page:\n{help}");
 
-        // The default command answers a bare invocation.
         let bare = run_binary(
             &message.destination,
             ["run", "-q", "-p", "hello-tool", "--", "--name", "Ada"],

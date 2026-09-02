@@ -13,9 +13,17 @@
 //! inline code spans, because a template's `[tag]` vocabulary and a Rust
 //! example's `#` lines otherwise read as links and headings; outside code, a
 //! bare `[tag]` is a link only when a definition gives that label a
-//! destination. Anchors are computed with mdbook's own rule — keep
-//! alphanumerics, `_` and `-`, turn whitespace into `-`, lowercase, and suffix
-//! a repeated anchor with `-1`, `-2` and so on.
+//! destination. A page's prose is scanned as one string, not line by line,
+//! because a link's text may wrap while its destination sits on the last
+//! line. Anchors are computed with mdbook's own rule — keep alphanumerics,
+//! `_` and `-`, turn whitespace into `-`, lowercase, and suffix a repeated
+//! anchor with `-1`, `-2` and so on.
+//!
+//! Paths run through `docs/`, the directory a relative link resolves from;
+//! `docs/crates` holds one symlink per documented crate, so the walk sees
+//! `crates/*/docs` under the paths the book itself uses. Links from outside
+//! the book (the README) use the deployed URL: `<page>.html` is backed by
+//! `docs/<page>.md`, a directory URL by that directory's `index.md`.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -23,31 +31,23 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 /// Directories whose every `.md` page must be reachable from `SUMMARY.md`.
-///
-/// `docs/crates` holds one symlink per documented crate, so walking it reaches
-/// `crates/*/docs` under the paths the book itself uses.
 pub const PAGE_ROOTS: &[&str] = &["docs/topics", "docs/guides", "docs/crates"];
 
-/// The book's table of contents, relative to the repository root.
 pub const SUMMARY: &str = "docs/SUMMARY.md";
 
-/// A link found on a page.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Link {
-    /// The link target exactly as written.
+    /// As written, not normalized.
     pub target: String,
-    /// The 1-indexed line the link was written on.
+    /// 1-indexed.
     pub line: usize,
 }
 
-/// A link that does not resolve, and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Broken {
-    /// The page the link was written on, relative to the repository root.
+    /// Relative to the repository root.
     pub page: PathBuf,
-    /// The link itself.
     pub link: Link,
-    /// What went wrong, phrased for a test failure message.
     pub reason: String,
 }
 
@@ -64,13 +64,7 @@ impl std::fmt::Display for Broken {
     }
 }
 
-/// Every `.md` page the book mounts, named the way `SUMMARY.md` names it.
-///
-/// Paths run through `docs/` — including `docs/crates/<name>/…`, where the
-/// symlink lives — because that is the directory a relative link between two
-/// pages resolves from. The top level of `docs/` is included alongside
-/// [`PAGE_ROOTS`] because the book's introduction lives there; `SUMMARY.md`
-/// names itself and is excluded.
+/// Every `.md` page the book mounts, `SUMMARY.md` itself excluded.
 pub fn pages(root: &Path) -> io::Result<Vec<PathBuf>> {
     let mut found = Vec::new();
     let docs = root.join("docs");
@@ -166,15 +160,9 @@ pub fn broken_links(root: &Path) -> io::Result<Vec<Broken>> {
     Ok(broken)
 }
 
-/// The deployed book's origin, as the README spells it.
 pub const SITE: &str = "https://standout.magik.works/";
 
-/// Every link into the deployed book, from a page outside the book, that no
-/// page backs.
-///
-/// The README links the book by URL rather than by relative path, so nothing
-/// else here can see those links go stale. A `<page>.html` URL is backed by
-/// `docs/<page>.md`; a directory URL is backed by that directory's `index.md`.
+/// Every link from `page` (outside the book) into the deployed book that no page backs.
 pub fn broken_site_links(root: &Path, page: &Path) -> io::Result<Vec<Broken>> {
     let text = fs::read_to_string(root.join(page))?;
     let mut broken = Vec::new();
@@ -221,21 +209,6 @@ pub fn broken_site_links(root: &Path, page: &Path) -> io::Result<Vec<Broken>> {
 }
 
 /// Every markdown link on a page, in source order, skipping code.
-///
-/// Both link forms CommonMark defines are collected, because either one can go
-/// stale. Inline links carry their destination in `(…)`. Reference links —
-/// full (`[text][label]`), collapsed (`[label][]`) and shortcut (`[label]`) —
-/// carry a label that a `[label]: destination` definition elsewhere on the
-/// page resolves; each usage is reported at the line the usage opened on, not
-/// the line the definition was written on, because that is where a reader
-/// follows it from. A label with no definition is not a link at all, which is
-/// what keeps a template's `[tag]` vocabulary from reading as one.
-///
-/// The scan runs over the page's prose as one string rather than line by line,
-/// because a link's text may be wrapped across lines while its destination
-/// stays on the last of them. A link's text is scanned in turn, so an image
-/// wrapped in a link — `[![alt](diagram.png)](page.md)` — reports both
-/// destinations, innermost first.
 pub fn links(markdown: &str) -> Vec<Link> {
     let lines: Vec<(usize, String)> = prose_lines(markdown)
         .into_iter()
@@ -243,9 +216,7 @@ pub fn links(markdown: &str) -> Vec<Link> {
         .collect();
     let definitions = reference_definitions(&lines);
 
-    // Every line keeps an entry, so an offset still maps to its source line;
-    // a definition line contributes no text, so its own `[label]` is not read
-    // back as a shortcut usage of itself.
+    // A definition line keeps its entry but no text: its `[label]` is not a usage of itself.
     let mut prose = String::new();
     let mut starts: Vec<(usize, usize)> = Vec::new();
     for (index, line) in &lines {
@@ -261,12 +232,7 @@ pub fn links(markdown: &str) -> Vec<Link> {
     found
 }
 
-/// Collect the links in one span of a page's prose, innermost destination first.
-///
-/// A link's own text is scanned as its own span, because a link may wrap an
-/// image — `[![alt](diagram.png)](page.md)` — and both destinations can go
-/// stale independently. The text is scanned before the enclosing link is
-/// recorded, which keeps the two in source order.
+/// Innermost destination first: a link's text (`[![alt](img.png)](page.md)`) is scanned before it.
 fn scan_links(
     prose: &str,
     start: usize,
@@ -344,10 +310,7 @@ fn is_reference_definition(line: &str) -> bool {
     split_reference_definition(line).is_some()
 }
 
-/// A definition line split into its normalized label and its destination.
-///
-/// The destination stops at the first whitespace, which drops the optional
-/// title; [`split_target`] strips any `<…>` around what remains.
+/// The destination stops at the first whitespace, which drops the optional title.
 fn split_reference_definition(line: &str) -> Option<(String, String)> {
     let trimmed = line.trim_start();
     // More than three leading spaces would make it an indented code block.
@@ -467,10 +430,7 @@ fn target_path(page: &Path, target: &str) -> Option<PathBuf> {
     Some(normalize_dots(&page.parent()?.join(path)))
 }
 
-/// The offset of the `]` closing a `[` already consumed, counting nesting.
-///
-/// Link text may itself bracket something — `[![alt](img.png)][home]` — so the
-/// first `]` is not always the closing one.
+/// The offset of the `]` closing a `[` already consumed, counting nested brackets.
 fn matching_bracket(rest: &str) -> Option<usize> {
     let mut depth = 0usize;
     for (index, ch) in rest.char_indices() {
@@ -524,10 +484,7 @@ fn prose_lines(markdown: &str) -> Vec<(usize, String)> {
     lines
 }
 
-/// A code span opens on a run of backticks and closes on the next run of the
-/// same length, so the runs are counted rather than toggled: ``[a](b.md)`` is
-/// one span, not two empty ones with a link between them. A run that never
-/// closes is literal text, and a backslash escapes the character after it.
+/// Backtick runs are counted, not toggled: ``[a](b.md)`` is one span; an unclosed run is literal.
 fn blank_code_spans(line: &str) -> String {
     let chars: Vec<char> = line.chars().collect();
     let mut out = String::with_capacity(line.len());
@@ -615,10 +572,7 @@ fn relative_to(root: &Path, path: &Path) -> PathBuf {
     }
 }
 
-/// Collapse `a/b/../c` textually, the way a browser resolves a relative href.
-///
-/// The filesystem would resolve `..` through `docs/crates/<name>`, which is a
-/// symlink, and land outside the book; the rendered page's link does not.
+/// Textual, as a browser resolves an href; the filesystem would follow the symlink out.
 fn normalize_dots(path: &Path) -> PathBuf {
     let mut parts: Vec<std::ffi::OsString> = Vec::new();
     for component in path.components() {

@@ -82,9 +82,7 @@ fn multi_word_variant_registers_the_kebab_case_name() {
     assert!(!builder.contains("show_all"));
 }
 
-/// Digit/acronym runs and raw identifiers are where a hand-rolled word
-/// splitter and clap's `heck` conversion part ways, so this pins both derives
-/// against each other rather than against a literal.
+/// Digit/acronym runs and raw identifiers are where a hand-rolled splitter and `heck` part ways.
 #[derive(Subcommand, Dispatch)]
 #[dispatch(handlers = handlers)]
 enum ParityCommands {
@@ -122,8 +120,7 @@ fn derived_names_match_the_ones_clap_registers() {
     }
 }
 
-/// Every `#[dispatch(...)]` on a variant speaks for that variant, so the
-/// values of all of them apply rather than the first attribute winning.
+/// Every `#[dispatch(...)]` on a variant applies, not only the first.
 #[derive(Subcommand, Dispatch)]
 #[dispatch(handlers = handlers)]
 enum SplitAttrCommands {

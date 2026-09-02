@@ -423,16 +423,13 @@ impl<H> CommandConfig<H> {
         })
     }
 
-    /// Reword, relax, or disable the confirmation gate, and choose the stream
-    /// the review dump is written to. Order against the `questionnaire*` calls
-    /// does not matter.
+    /// Order against the `questionnaire*` calls does not matter.
     pub fn confirmation(self, confirmation: Confirmation) -> Self {
         self.questionnaire_settings.borrow_mut().confirmation = confirmation;
         self
     }
 
-    /// Read `--answers` in the application's own sheet format instead of the
-    /// framework's preamble/fingerprint sheet.
+    /// Replaces the framework's preamble/fingerprint sheet for `--answers`.
     pub fn answer_sheet_format(self, format: impl AnswerSheetFormat + 'static) -> Self {
         self.questionnaire_settings.borrow_mut().format = Rc::new(format);
         self

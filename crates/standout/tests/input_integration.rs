@@ -180,9 +180,7 @@ fn input_source_reports_arg_kind() {
     }
 }
 
-/// The wizard generates a file collector named `file` for a value that arrives
-/// through a path argument. That name is what the chain turns into provenance,
-/// so a value read out of a file must not report itself as a typed argument.
+/// A value read through the wizard's `file` collector must not report itself as a typed argument.
 #[test]
 fn input_source_reports_file_kind() {
     struct FileSource {

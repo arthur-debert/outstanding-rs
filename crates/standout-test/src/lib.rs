@@ -9,20 +9,11 @@
 //! resolutions that a text search can't get at; [`assert_page_snapshot!`]
 //! and [`matrix`] pin a rendered page across output-mode/color/theme cells.
 //!
-//! Unset `TargetProperties` fields take fixed defaults rather than calling
-//! `TargetProperties::detect`: `width: None`, `ColorMode::Dark`,
-//! `IconMode::Classic`, `AmbiguousWidth::Narrow`, color capability off, both
-//! streams non-terminal. `$COLUMNS`/`$NERD_FONT`/OS appearance cannot
-//! change an in-process run — there is no in-process TTY simulation; use
-//! [`TestHarness::run_process`] (spawns the real binary) or
-//! [`TestHarness::run_pty`] (Unix, real pseudo-terminal) for TTY-dependent
-//! behavior.
-//!
-//! `run` mutates process-global state (env vars, cwd) and a child process
-//! inherits the ambient environment/cwd at spawn time, so any test binary
-//! that mixes `run` with `run_process`/`run_pty` needs every such test
-//! annotated `#[serial]` (re-exported from `serial_test`) to avoid one
-//! run's overrides leaking into a concurrent spawn.
+//! There is no in-process TTY simulation: [`TestHarness::run_process`]
+//! spawns the real binary and [`TestHarness::run_pty`] (Unix) gives it a
+//! pseudo-terminal. The fixed `TargetProperties` defaults and the
+//! `#[serial]` rule for tests that mutate env or cwd are in
+//! `docs/topics/testing.md`.
 
 use clap::Command;
 use standout::cli::DispatchResult;
@@ -259,9 +250,6 @@ impl TestHarness {
         let outcome = run.into_outcome();
         let tag_resolutions = standout_render::diagnostics::take_captured();
         let theme = app.get_default_theme();
-        // The sink is the harness's stdout, written the way `run_emitted`
-        // writes the process's: the entries the handler streamed, then the
-        // result or the diagnostic, then the warning entries.
         let mut stderr = Vec::new();
         sink.with_writer(|stdout| {
             standout::cli::emit_run_result(&outcome, output_mode, stdout, &mut stderr)
@@ -270,9 +258,7 @@ impl TestHarness {
                 .expect("in-memory streams never fail a final write");
         });
         let mut stdout = captured.take();
-        // `stdout()` is the rendered text; a process gets it plus the one
-        // newline `emit_run_result` terminates rendered text with. A stream
-        // is kept whole: every line, its newline included.
+        // A process gets one more newline than `stdout()`: the one that terminates rendered text.
         if !output_mode.is_stream()
             && matches!(outcome, DispatchResult::Handled(_))
             && stdout.last() == Some(&b'\n')
@@ -457,15 +443,11 @@ impl TestResult {
     pub fn output_mode(&self) -> OutputMode {
         self.output_mode
     }
-    /// The diagnostic document the run wrote to stdout: `None` when the
-    /// resolved mode carries no document or stdout is not one.
+    /// `None` when the resolved mode carries no document or stdout is not one.
     pub fn diagnostic(&self) -> Option<Diagnostic> {
         standout::cli::parse_diagnostic(self.output_mode, &self.stdout).ok()
     }
-    /// Compare the key names and JSON value types of the stdout document
-    /// against `tests/schemas/<name>` in the crate under test, ignoring
-    /// values; a missing file is recorded and fails, and
-    /// `STANDOUT_UPDATE_SNAPSHOTS=1` accepts a changed schema.
+    /// Keys and value types vs `tests/schemas/<name>`; `STANDOUT_UPDATE_SNAPSHOTS=1` updates it.
     #[track_caller]
     pub fn assert_schema_snapshot(&self, name: &str) {
         schema::assert_schema_snapshot(self.output_mode, &self.stdout, name);
@@ -483,8 +465,7 @@ impl TestResult {
     pub fn stdout(&self) -> &str {
         &self.stdout
     }
-    /// What the run wrote to stdout, byte for byte; `stdout()` is its lossy
-    /// text, minus the newline that terminates rendered text.
+    /// Byte for byte; `stdout()` is the lossy text minus the newline that terminates rendered text.
     pub fn stdout_bytes(&self) -> &[u8] {
         &self.stdout_bytes
     }

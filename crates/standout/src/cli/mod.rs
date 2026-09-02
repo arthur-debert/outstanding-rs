@@ -14,24 +14,6 @@
 //! Standout to handle. Unmatched commands come back as
 //! [`DispatchResult::NoMatch`] with the `ArgMatches` for your own dispatch;
 //! [`CompletedRun`] wraps that outcome plus framework warnings.
-//!
-//! ```rust,ignore
-//! use standout::cli::{App, Output};
-//!
-//! App::builder()
-//!     .command("list", |_m, ctx| Ok(Output::Render(load_items()?)),
-//!         "{% for item in items %}{{ item }}\n{% endfor %}")?
-//!     .build()?
-//!     .run(cmd, std::env::args());
-//! ```
-//!
-//! Key types: [`AppBuilder`] (configuration), [`App`] (built application),
-//! [`Handler`] / [`FnHandler`] (command handlers), [`Output`] (what a
-//! handler produces), [`HandlerResult`], [`CompletedRun`] /
-//! [`DispatchResult`], [`ProcessOutcome`], [`Hooks`], [`CommandContext`].
-//!
-//! See also: [`crate::render`] for rendering without CLI integration,
-//! [`handler`], [`hooks`], [`help`].
 
 mod default_command;
 mod dispatch;

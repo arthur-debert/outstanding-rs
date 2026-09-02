@@ -1,9 +1,5 @@
-//! `preserve_order` (crates/standout/Cargo.toml) makes JSON, YAML, and CSV
-//! emit a handler's declared field order rather than sorting keys
-//! alphabetically — see docs/topics/output-modes.md "Key ordering". The
-//! order comes from serde's field-serialization order, so this asserts it
-//! against a `#[derive(Serialize)]` struct dispatched through `App`, not
-//! just a `json!` literal.
+//! `preserve_order` makes JSON, YAML and CSV emit a handler's declared field order
+//! (docs/topics/output-modes.md, "Key ordering"), asserted on a derived struct through `App`.
 
 use clap::Command;
 use serde::Serialize;
@@ -14,8 +10,7 @@ use standout::{AmbiguousWidth, ColorMode, IconMode, InputSources, OutputMode, Ta
 
 const TEMPLATES: &[(&str, &str)] = &[("info", "unused")];
 
-// Declared out of alphabetical order (alphabetical would be
-// machine_type, name, status, zone) so a sort would be visible.
+// Not alphabetical, so a sort would show.
 #[derive(Serialize)]
 struct Instance {
     name: &'static str,

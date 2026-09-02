@@ -195,8 +195,7 @@ impl ProcessResult {
     pub fn tempdir(&self) -> Option<&Path> {
         self._tempdir.as_ref().map(TempDir::path)
     }
-    /// The diagnostic document on stdout, read in `output_mode`: a process
-    /// result carries no resolved mode, so the caller names the one it asked for.
+    /// A process result carries no resolved mode, so the caller names the one it asked for.
     pub fn diagnostic(&self, output_mode: OutputMode) -> Option<Diagnostic> {
         standout::cli::parse_diagnostic(output_mode, &self.stdout).ok()
     }
