@@ -1,6 +1,6 @@
 [package]
 name = "standout-test"
-version = "9.0.0"
+version = "10.0.0"
 edition = "2021"
 description = "In-process test harness for applications built with the standout CLI framework"
 license = "MIT"
@@ -9,9 +9,9 @@ categories = ["command-line-interface", "development-tools::testing"]
 repository = "https://github.com/arthur-debert/standout"
 
 [dependencies]
-standout = { version = "9.0.0", path = "../standout" }
-standout-input = { version = "9.0.0", path = "../standout-input" }
-standout-render = { version = "9.0.0", path = "../standout-render" }
+standout = { version = "10.0.0", path = "../standout" }
+standout-input = { version = "10.0.0", path = "../standout-input" }
+standout-render = { version = "10.0.0", path = "../standout-render" }
 clap = { version = "4", features = ["derive", "help"] }
 console = "0.16"
 serde_json = { version = "1", features = ["preserve_order"] }
