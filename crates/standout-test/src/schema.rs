@@ -58,19 +58,14 @@ pub(crate) fn check_snapshot(path: &Path, actual: &Value, update: bool) -> Resul
         "{}\n",
         serde_json::to_string_pretty(actual).expect("a schema is JSON")
     );
-    let write = |why: &str| -> Result<(), String> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
-        }
-        std::fs::write(path, &rendered)
-            .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
-        Err(format!("{why} {}", path.display()))
-    };
     let stored = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return write("no schema snapshot was stored; recorded this run's schema at");
+            write_snapshot(path, &rendered)?;
+            return Err(format!(
+                "no schema snapshot was stored; recorded this run's schema at {}",
+                path.display()
+            ));
         }
         Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
     };
@@ -80,7 +75,7 @@ pub(crate) fn check_snapshot(path: &Path, actual: &Value, update: bool) -> Resul
         return Ok(());
     }
     if update {
-        return write("schema changed; rewrote");
+        return write_snapshot(path, &rendered);
     }
     Err(format!(
         "schema mismatch against {}\n--- stored ---\n{}--- actual ---\n{}--------------\nrun with {UPDATE_ENV}=1 to accept the change",
@@ -88,6 +83,15 @@ pub(crate) fn check_snapshot(path: &Path, actual: &Value, update: bool) -> Resul
         serde_json::to_string_pretty(&expected).expect("a schema is JSON"),
         rendered
     ))
+}
+
+fn write_snapshot(path: &Path, rendered: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+    }
+    std::fs::write(path, rendered)
+        .map_err(|error| format!("cannot write {}: {error}", path.display()))
 }
 
 #[track_caller]
@@ -171,8 +175,11 @@ mod tests {
         assert!(error.contains("\"title\""), "{error}");
         assert!(error.contains(UPDATE_ENV), "{error}");
 
-        let error = check_snapshot(&path, &renamed, true).unwrap_err();
-        assert!(error.contains("rewrote"), "{error}");
+        check_snapshot(&path, &renamed, true).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{\n  \"items\": [\n    {\n      \"title\": \"string\"\n    }\n  ]\n}\n"
+        );
         check_snapshot(&path, &renamed, false).unwrap();
         assert!(check_snapshot(&path, &stored, false).is_err());
     }

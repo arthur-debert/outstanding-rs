@@ -4,7 +4,8 @@
 //! It is built from the same clap tree as the human page, after `build()`,
 //! so clap's own `-h`/`--help` and `-V`/`--version` are among its `args`.
 //! `short` and `long` are the tokens as typed, dashes included; `name` is the
-//! clap id. `usage` and `path` name the full command path from the root.
+//! clap id. `usage` and `path` name the full command path from the root by
+//! its canonical names, whichever aliases the caller typed.
 
 use clap::Command;
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,7 @@ use super::config::HelpLength;
 use super::data::{
     about_line, build_root, default_value, possible_values, takes_values, usage_line,
 };
-use crate::cli::app::find_subcommand_recursive;
+use crate::cli::app::find_subcommand;
 use crate::ContractSurface;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,9 +56,12 @@ impl HelpDocument {
     /// sits at that path.
     pub fn extract(root: &Command, path: &[&str], length: HelpLength) -> Option<Self> {
         let built = build_root(root);
-        let cmd = find_subcommand_recursive(&built, path)?;
+        let mut cmd = &built;
         let mut full_path = vec![built.get_name().to_string()];
-        full_path.extend(path.iter().map(|word| word.to_string()));
+        for word in path {
+            cmd = find_subcommand(cmd, word)?;
+            full_path.push(cmd.get_name().to_string());
+        }
 
         let mut args: Vec<_> = cmd.get_arguments().filter(|a| !a.is_hide_set()).collect();
         args.sort_by_key(|a| (!a.is_positional(), a.get_display_order()));
@@ -116,8 +120,9 @@ mod tests {
 
     fn tree() -> Command {
         Command::new("app").about("The root").subcommand(
-            Command::new("nest").about("A level").subcommand(
+            Command::new("nest").about("A level").alias("n").subcommand(
                 Command::new("leaf")
+                    .alias("lf")
                     .about("The leaf")
                     .long_about("The leaf, at length")
                     .arg(Arg::new("formula").required(true).help("Which one"))
@@ -149,6 +154,14 @@ mod tests {
         assert_eq!(document.usage, "app nest leaf [OPTIONS] <formula>");
         assert_eq!(document.about, "The leaf");
         assert!(document.subcommands.is_empty());
+    }
+
+    #[test]
+    fn an_aliased_path_names_the_canonical_commands() {
+        let document = HelpDocument::extract(&tree(), &["n", "lf"], HelpLength::Short).unwrap();
+        assert_eq!(document.name, "leaf");
+        assert_eq!(document.path, ["app", "nest", "leaf"]);
+        assert_eq!(document.usage, "app nest leaf [OPTIONS] <formula>");
     }
 
     #[test]

@@ -5,8 +5,6 @@ use super::{Message, MessageLevel};
 use crate::tabular::TabularSpec;
 use crate::ContractSurface;
 
-/// Serializes as a versioned framework document: `schema_version` first,
-/// then `items`, then each optional field that is set.
 #[derive(Debug, Clone)]
 pub struct ListViewResult<T> {
     pub items: Vec<T>,
