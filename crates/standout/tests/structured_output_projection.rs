@@ -128,6 +128,7 @@ fn run_command_and_dispatch_agree_on_csv_projection() {
             standout::TemplateRef::Inline(
                 ("{{ totals.files }} files / {{ totals.code }} lines").to_string(),
             ),
+            standout::cli::StreamSink::new(Vec::new()),
         )
         .expect("run_command should render csv");
 

@@ -29,7 +29,7 @@ expression: result.stdout_plain()
                              [values]possible values: brief, full, none[/values]
   [item]--output[/item] [metavar]<MODE>[/metavar]            [desc]Output format[/desc]
                              [default]default: auto[/default]
-                             [values]possible values: auto, term, text, term-debug, json, yaml, csv[/values]
+                             [values]possible values: auto, term, text, term-debug, json, yaml, csv, ndjson[/values]
   [item]--output-file-path[/item] [metavar]<PATH>[/metavar]  [desc]Write output to file instead of stdout[/desc]
   [item]-h, --help[/item]                 [desc]Print help (see more with '--help')[/desc]
 

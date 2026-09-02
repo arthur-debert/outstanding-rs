@@ -15,7 +15,7 @@
 //!
 //! ## Auto-Dispatch (render or serialize based on mode)
 //!
-//! For structured modes (Json, Yaml, Csv), these skip templating and
+//! For structured modes (Json, Yaml, Csv, Ndjson), these skip templating and
 //! serialize data directly. For text modes, they render the template.
 //!
 //! | Function | Extra Features |
@@ -97,7 +97,8 @@ fn output_mode_to_transform(mode: OutputMode) -> TagTransform {
         | OutputMode::Text
         | OutputMode::Json
         | OutputMode::Yaml
-        | OutputMode::Csv => TagTransform::Remove,
+        | OutputMode::Csv
+        | OutputMode::Ndjson => TagTransform::Remove,
     }
 }
 
@@ -540,6 +541,7 @@ fn render_auto_with_engine_split_kind(
             OutputMode::Json => serde_json::to_string_pretty(data)?,
             OutputMode::Yaml => serde_yaml::to_string(data)?,
             OutputMode::Csv => crate::util::write_csv(data)?,
+            OutputMode::Ndjson => crate::document::result_entry(data)?,
             _ => unreachable!("is_structured() returned true for non-structured mode"),
         };
         Ok(RenderResult::plain(output))

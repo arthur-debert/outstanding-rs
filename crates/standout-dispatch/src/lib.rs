@@ -17,6 +17,7 @@ mod diagnostic;
 mod dispatch;
 mod handler;
 mod hooks;
+mod stream;
 pub mod verify;
 pub use artifact::{Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun};
 pub use contract::{ContractSurface, Envelope};
@@ -34,3 +35,4 @@ pub use hooks::{
     ArtifactOutput, HookError, HookPhase, Hooks, PostDispatchFn, PostOutputFn, PreDispatchFn,
     RenderedOutput, TextOutput,
 };
+pub use stream::{EntryStream, StreamCapture, StreamError, StreamSink};

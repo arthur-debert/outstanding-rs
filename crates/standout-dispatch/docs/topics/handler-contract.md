@@ -523,6 +523,7 @@ pub struct CommandContext {
     pub command_path: Vec<String>,
     pub app_state: Rc<Extensions>,
     pub extensions: Extensions,
+    pub stream: EntryStream,
 }
 ```
 
@@ -531,6 +532,8 @@ pub struct CommandContext {
 **app_state**: Shared, immutable state configured at app build time via `AppBuilder::app_state()`. Held in an `Rc<Extensions>` for cheap cloning; the dispatch pipeline is single-threaded, so app state is not `Send`/`Sync`. Use for database connections, configuration, API clients.
 
 **extensions**: Per-request, mutable state injected by pre-dispatch hooks. Use for user sessions, request IDs, computed values.
+
+**stream** (`ctx.stream()`): The run's entry stream. `emit(&value)` writes the value as one JSON line when the consuming framework resolved a stream output mode and does nothing otherwise; `is_live()` says which. The dispatch layer never writes to it itself.
 
 > For comprehensive coverage of state management, see [App State and Extensions](app-state.md).
 

@@ -1,6 +1,7 @@
 use crate::artifact::{Artifact, ArtifactRun};
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::hooks::HookPhase;
+use crate::stream::EntryStream;
 use crate::verify::ExpectedArg;
 use clap::ArgMatches;
 use serde::Serialize;
@@ -85,6 +86,7 @@ pub struct CommandContext {
     pub command_path: Vec<String>,
     pub app_state: Rc<Extensions>,
     pub extensions: Extensions,
+    pub stream: EntryStream,
 }
 impl CommandContext {
     pub fn new(command_path: Vec<String>, app_state: Rc<Extensions>) -> Self {
@@ -92,7 +94,17 @@ impl CommandContext {
             command_path,
             app_state,
             extensions: Extensions::new(),
+            stream: EntryStream::discarding(),
         }
+    }
+    pub fn with_stream(mut self, stream: EntryStream) -> Self {
+        self.stream = stream;
+        self
+    }
+    /// The entry stream of this run: live under `ndjson`, discarding in
+    /// every other mode.
+    pub fn stream(&self) -> &EntryStream {
+        &self.stream
     }
 }
 impl Default for CommandContext {
@@ -101,6 +113,7 @@ impl Default for CommandContext {
             command_path: Vec::new(),
             app_state: Rc::new(Extensions::new()),
             extensions: Extensions::new(),
+            stream: EntryStream::discarding(),
         }
     }
 }
@@ -134,11 +147,11 @@ impl<T: Serialize> Output<T> {
             status,
         }
     }
-    /// The output and the status it declares, `SUCCESS` when it declares none.
-    pub fn split_exit_status(self) -> (Self, ExitStatus) {
+    /// The output and the status it declares, if any.
+    pub fn split_exit_status(self) -> (Self, Option<ExitStatus>) {
         match self {
-            Output::WithStatus { output, status } => (output.split_exit_status().0, status),
-            other => (other, ExitStatus::SUCCESS),
+            Output::WithStatus { output, status } => (output.split_exit_status().0, Some(status)),
+            other => (other, None),
         }
     }
     pub fn exit_status(&self) -> ExitStatus {
@@ -734,6 +747,7 @@ mod tests {
             command_path: vec!["config".into(), "get".into()],
             app_state: Rc::new(Extensions::new()),
             extensions: Extensions::new(),
+            stream: EntryStream::discarding(),
         };
         assert_eq!(ctx.command_path, vec!["config", "get"]);
     }
@@ -836,6 +850,7 @@ mod tests {
             command_path: vec!["list".into()],
             app_state: app_state.clone(),
             extensions: Extensions::new(),
+            stream: EntryStream::discarding(),
         };
         let db = ctx.app_state.get::<Database>().unwrap();
         assert_eq!(db.url, "postgres://localhost");
@@ -852,6 +867,7 @@ mod tests {
             command_path: vec![],
             app_state: Rc::new(app_state),
             extensions: Extensions::new(),
+            stream: EntryStream::discarding(),
         };
         assert!(ctx.app_state.get_required::<Present>().is_ok());
         #[derive(Debug)]
@@ -1008,6 +1024,7 @@ mod tests {
     fn a_declared_status_rides_beside_the_output_and_the_last_one_wins() {
         let plain: Output<String> = Output::Render("found nothing".into());
         assert_eq!(plain.exit_status(), ExitStatus::SUCCESS);
+        assert_eq!(plain.split_exit_status().1, None);
 
         let signalled = Output::Render(String::from("changes"))
             .with_exit_status(ExitStatus::from(3))
@@ -1018,12 +1035,12 @@ mod tests {
 
         let stamped = signalled.map_render(|text| format!("{text}!"));
         let (output, status) = stamped.split_exit_status();
-        assert_eq!(status, ExitStatus::from(2));
+        assert_eq!(status, Some(ExitStatus::from(2)));
         assert!(matches!(output, Output::Render(ref text) if text == "changes!"));
 
         let silent: Output<()> = Output::Silent.with_exit_status(ExitStatus::from(4));
         assert!(silent.is_silent());
-        assert_eq!(silent.split_exit_status().1, ExitStatus::from(4));
+        assert_eq!(silent.split_exit_status().1, Some(ExitStatus::from(4)));
     }
     #[test]
     fn a_handled_run_reports_the_status_its_output_declared() {

@@ -397,8 +397,12 @@ dependencies = [
 name = "corpus-gap-suites"
 version = "9.0.0"
 dependencies = [
+ "anyhow",
+ "clap",
  "libc",
+ "serde",
  "serde_json",
+ "standout",
  "tempfile",
  "toml 0.8.23",
 ]

@@ -160,6 +160,7 @@ fn serialize_structured(
         OutputMode::Json => serde_json::to_string_pretty(data)?,
         OutputMode::Yaml => serde_yaml::to_string(data)?,
         OutputMode::Csv => crate::util::write_csv(data)?,
+        OutputMode::Ndjson => crate::document::result_entry(data)?,
         _ => unreachable!("serialize_structured requires a structured OutputMode"),
     };
     Ok(RenderResult::plain(output))

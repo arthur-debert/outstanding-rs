@@ -61,7 +61,17 @@ impl CsvProjection {
             }
         })?;
         let rows: Vec<&Value> = match rows {
-            Value::Array(items) => items.iter().collect(),
+            Value::Array(items) => items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| match item {
+                    Value::Object(_) => Ok(item),
+                    _ => Err(ProjectionError::RowNotARecord {
+                        path: self.row_source.clone(),
+                        index,
+                    }),
+                })
+                .collect::<Result<_, _>>()?,
             Value::Object(_) => vec![rows],
             _ => {
                 return Err(ProjectionError::RowSourceNotRecords {
@@ -206,6 +216,8 @@ pub enum ProjectionError {
     MissingRowSource { path: String },
     #[error("projection row source `{path}` is neither a record nor an array of records")]
     RowSourceNotRecords { path: String },
+    #[error("projection row source `{path}` element {index} is not a record")]
+    RowNotARecord { path: String, index: usize },
     #[error(transparent)]
     Csv(#[from] csv::Error),
     #[error(transparent)]
@@ -327,6 +339,42 @@ mod tests {
         assert!(
             matches!(error, ProjectionError::RowSourceNotRecords { ref path } if path == "."),
             "{error}"
+        );
+    }
+
+    #[test]
+    fn every_array_element_must_be_a_record() {
+        let projection = CsvProjection::builder("items")
+            .column(column("name", "name"))
+            .build();
+
+        let mixed = projection
+            .render(&json!({ "items": [{ "name": "ok" }, 42] }))
+            .unwrap_err();
+        assert!(
+            matches!(
+                mixed,
+                ProjectionError::RowNotARecord { ref path, index: 1 } if path == "items"
+            ),
+            "{mixed}"
+        );
+        assert_eq!(
+            mixed.to_string(),
+            "projection row source `items` element 1 is not a record"
+        );
+
+        let primitives = projection.render(&json!({ "items": [1, 2] })).unwrap_err();
+        assert!(
+            matches!(primitives, ProjectionError::RowNotARecord { index: 0, .. }),
+            "{primitives}"
+        );
+
+        let nested = projection
+            .render(&json!({ "items": [[{ "name": "inner" }]] }))
+            .unwrap_err();
+        assert!(
+            matches!(nested, ProjectionError::RowNotARecord { index: 0, .. }),
+            "{nested}"
         );
     }
 

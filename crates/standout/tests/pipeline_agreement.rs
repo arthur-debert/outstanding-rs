@@ -61,6 +61,7 @@ fn run_command_greet(app: &App, matches: &clap::ArgMatches) -> RenderedOutput {
         sub,
         |_m, _ctx| Ok(Output::Render(json!({"name": "Ada", "label": "hi"}))),
         standout::TemplateRef::Inline((COMPOSITION_TEMPLATE).to_string()),
+        standout::cli::StreamSink::new(Vec::new()),
     )
     .expect("run_command should render")
 }

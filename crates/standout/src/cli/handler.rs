@@ -1,9 +1,9 @@
 pub use standout_dispatch::{
     AppFailure, Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext,
     ContractSurface, Diagnostic, DiagnosticKind, DiagnosticPosition, DiagnosticRange,
-    DispatchResult, Envelope, ExitStatus, Extensions, ExternalFailure, FnHandler, Handler,
-    HandlerResult, InvalidAppStatus, InvalidExternalStatus, Output, OutputKind, RunError,
-    RunErrorKind, RunOutput, Severity, SuccessKind,
+    DispatchResult, EntryStream, Envelope, ExitStatus, Extensions, ExternalFailure, FnHandler,
+    Handler, HandlerResult, InvalidAppStatus, InvalidExternalStatus, Output, OutputKind, RunError,
+    RunErrorKind, RunOutput, Severity, StreamCapture, StreamError, StreamSink, SuccessKind,
 };
 
 use standout_input::{InputSourceKind, Inputs, MissingInput};

@@ -27,7 +27,8 @@
 use clap::Command;
 use standout::cli::DispatchResult;
 use standout::cli::{
-    App, ArtifactDestination, ArtifactRun, Diagnostic, ExitStatus, RunErrorKind, SuccessKind,
+    App, ArtifactDestination, ArtifactRun, Diagnostic, ExitStatus, RunErrorKind, StreamCapture,
+    StreamSink, SuccessKind,
 };
 use standout::{ColorMode, IconMode, InputSources, TargetProperties};
 use standout_input::env::{MockClipboard, MockStdin};
@@ -250,28 +251,43 @@ impl TestHarness {
             argv.push(format!("--{}={}", self.output_flag_name, output_mode_flag(mode)).into());
         }
         let target = self.target_properties();
-        let run = app.run_with(cmd, argv, target, sources);
+        let captured = StreamCapture::default();
+        let sink = StreamSink::new(captured.clone());
+        let run = app.run_with_sink(cmd, argv, target, sources, sink.clone());
         let warnings = run.warnings().to_vec();
         let output_mode = run.output_mode();
         let outcome = run.into_outcome();
         let tag_resolutions = standout_render::diagnostics::take_captured();
         let theme = app.get_default_theme();
-        let mut stdout = Vec::new();
+        // The sink is the harness's stdout, written the way `run_emitted`
+        // writes the process's: the entries the handler streamed, then the
+        // result or the diagnostic, then the warning entries.
         let mut stderr = Vec::new();
-        standout::cli::emit_run_result(&outcome, output_mode, &mut stdout, &mut stderr)
-            .expect("in-memory streams never fail a final write");
+        sink.with_writer(|stdout| {
+            standout::cli::emit_run_result(&outcome, output_mode, stdout, &mut stderr)
+                .expect("in-memory streams never fail a final write");
+            standout::cli::emit_warning_entries(&outcome, &warnings, output_mode, stdout)
+                .expect("in-memory streams never fail a final write");
+        });
+        let mut stdout = captured.take();
         // `stdout()` is the rendered text; a process gets it plus the one
-        // newline `emit_run_result` terminates rendered text with.
-        if matches!(outcome, DispatchResult::Handled(_)) && stdout.last() == Some(&b'\n') {
+        // newline `emit_run_result` terminates rendered text with. A stream
+        // is kept whole: every line, its newline included.
+        if !output_mode.is_stream()
+            && matches!(outcome, DispatchResult::Handled(_))
+            && stdout.last() == Some(&b'\n')
+        {
             stdout.pop();
         }
         let mut stderr = String::from_utf8_lossy(&stderr).into_owned();
-        stderr.push_str(&standout_render::warnings::render_block_for_target(
-            theme,
-            output_mode,
-            target,
-            &warnings,
-        ));
+        if !standout::cli::carries_warning_entries(&outcome, output_mode) {
+            stderr.push_str(&standout_render::warnings::render_block_for_target(
+                theme,
+                output_mode,
+                target,
+                &warnings,
+            ));
+        }
         TestResult {
             stdout: String::from_utf8_lossy(&stdout).into_owned(),
             stdout_bytes: stdout,
@@ -371,6 +387,7 @@ fn output_mode_flag(mode: OutputMode) -> &'static str {
         OutputMode::Json => "json",
         OutputMode::Yaml => "yaml",
         OutputMode::Csv => "csv",
+        OutputMode::Ndjson => "ndjson",
     }
 }
 #[derive(Default)]

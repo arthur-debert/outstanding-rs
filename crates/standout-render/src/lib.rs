@@ -55,7 +55,9 @@ pub use style::{
 
 pub use theme::{ColorMode, IconDefinition, IconMode, IconSet, Theme};
 
-pub use output::{write_binary_output, write_output, OutputDestination, OutputMode};
+pub use output::{
+    open_output_file, write_binary_output, write_output, OutputDestination, OutputMode,
+};
 pub use projection::{
     CsvProjection, CsvProjectionBuilder, ProjectionError, StructuredOutputProjection,
 };
@@ -78,7 +80,7 @@ pub use standout_bbparser::{
 };
 
 pub use diagnostics::TagResolution;
-pub use document::{deserialize_document, serialize_document};
+pub use document::{deserialize_document, result_entry, serialize_document};
 
 pub use util::{
     csv_records, rgb_to_ansi256, rgb_to_truecolor, truncate_to_width,

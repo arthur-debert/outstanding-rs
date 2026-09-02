@@ -34,7 +34,9 @@ use std::rc::Rc;
 use super::default_command::ParseFailure;
 use super::dispatch::DispatchFn;
 use super::group::CommandRecipe;
-use super::handler::{CommandContext, Extensions, HandlerResult, Output as HandlerOutput};
+use super::handler::{
+    CommandContext, EntryStream, Extensions, HandlerResult, Output as HandlerOutput, StreamSink,
+};
 use super::help::data::{extract_help_data, extract_help_data_with_topics};
 use super::help::{
     default_help_theme, help_is_a_document, human_help_format, named_or_inline_template,
@@ -1193,21 +1195,31 @@ impl App {
             .unwrap_or(self.output_mode_fallback)
     }
 
+    /// Dispatch one handler by hand, hooks and render included, and return the
+    /// output for the caller to write; `sink` takes `ctx.stream()` entries under `ndjson`.
     pub fn run_command<F, T>(
         &self,
         path: &str,
         matches: &ArgMatches,
         handler: F,
         template: crate::TemplateRef,
+        sink: StreamSink,
     ) -> Result<RenderedOutput, HookError>
     where
         F: FnOnce(&ArgMatches, &CommandContext) -> HandlerResult<T>,
         T: Serialize,
     {
+        let output_mode = self.extract_output_mode(matches);
+        let stream = if output_mode.is_stream() {
+            EntryStream::writing_to(sink)
+        } else {
+            EntryStream::discarding()
+        };
         let mut ctx = CommandContext::new(
             path.split('.').map(String::from).collect(),
             self.app_state.clone(),
-        );
+        )
+        .with_stream(stream);
         let warnings = WarningBuffer::new();
         self.seed_startup_warnings(&warnings);
         ctx.extensions.insert(InputSources::from_process());
@@ -1244,7 +1256,7 @@ impl App {
                     data: json_data,
                     template: template.clone(),
                     theme: self.theme.clone(),
-                    format: self.extract_output_mode(matches),
+                    format: output_mode,
                     color_policy: ColorPolicy::Auto,
                     target,
                     engine: self.template_engine.clone(),
@@ -1296,6 +1308,12 @@ impl App {
             None => output,
         };
         reject_status_without_a_carrier(output.is_binary(), output.is_artifact())?;
+        super::dispatch::reject_payload_under_stream(
+            output_mode,
+            output.is_binary(),
+            output.is_artifact(),
+        )
+        .map_err(|e| HookError::post_output("Render error").with_source(e))?;
         Ok(output)
     }
 
@@ -1344,8 +1362,16 @@ fn duplicate_help_word(claim: &str) -> SetupError {
 const HELP_PROBE_SHORT: &str = "__standout_help_short";
 const HELP_PROBE_LONG: &str = "__standout_help_long";
 
-pub(crate) const OUTPUT_MODE_FLAG_VALUES: [&str; 7] =
-    ["auto", "term", "text", "term-debug", "json", "yaml", "csv"];
+pub(crate) const OUTPUT_MODE_FLAG_VALUES: [&str; 8] = [
+    "auto",
+    "term",
+    "text",
+    "term-debug",
+    "json",
+    "yaml",
+    "csv",
+    "ndjson",
+];
 
 fn parse_output_mode_flag(value: &str) -> Option<OutputMode> {
     match value {
@@ -1356,6 +1382,7 @@ fn parse_output_mode_flag(value: &str) -> Option<OutputMode> {
         "json" => Some(OutputMode::Json),
         "yaml" => Some(OutputMode::Yaml),
         "csv" => Some(OutputMode::Csv),
+        "ndjson" => Some(OutputMode::Ndjson),
         _ => None,
     }
 }

@@ -66,12 +66,18 @@ final rendered command text to stdout is successful early consumer termination.
 
 ## Failures under a structured mode
 
-When the resolved output mode is `json`, `yaml` or `csv`, stdout is one document
-per run — the result or the diagnostic, never both — and stderr carries nothing
-the framework wrote for the failure. Statuses do not change. An `App` or
-`External` failure still writes its verbatim bytes to stderr (ADR-0035) and adds
-the stdout document, kind `app` or `external`, with the bytes as `detail`.
-Warnings stay prose on stderr in these modes, because the document has one root.
+When the resolved output mode is `json`, `yaml`, `csv` or `ndjson`, stdout
+carries the result or the diagnostic, never both, and stderr carries nothing
+the framework wrote for the failure. In the single-document modes that is one
+document per run; under `ndjson` the diagnostic is one compact line at the
+point in the stream where the run failed, after the entries the handler already
+wrote ([Output Modes](./output-modes.md#ndjson-mode)). Statuses do not change.
+An `App` or `External` failure still writes its verbatim bytes to stderr
+(ADR-0035) and adds the stdout document, kind `app` or `external`, with the
+bytes as `detail`. Warnings stay prose on stderr in the single-document modes,
+because the document has one root; under `ndjson` each is a `severity:
+warning` diagnostic entry of kind `framework` on stdout, after the result or
+the failure.
 
 The document is `Diagnostic`, serialized flat; `range` is present only when set:
 
@@ -90,11 +96,13 @@ The document is `Diagnostic`, serialized flat; `range` is present only when set:
 `kind` is a `DiagnosticKind`, the `RunErrorKind` projected onto the fixed wire
 vocabulary: `clap-usage`, `default-command`, `handler`, `hook-pre-dispatch`,
 `hook-post-dispatch`, `hook-post-output`, `render`, `final-write` (for every
-`FinalWrite` payload), `external`, `app`. In `csv` the
+`FinalWrite` payload), `external`, `app` — plus `framework`, the kind of a
+warning entry, which no run failure produces. In `csv` the
 document is one row whose header ends in `range_filename`, `range_line` and
 `range_column`, empty when there is no range. `RunError::diagnostic()` is the
 value, `emit_run_result` writes it, and `standout::cli::parse_diagnostic` reads
-it back, which is what `TestResult::diagnostic()` does. How an error fills
+it back (under `ndjson`, out of the whole stream), which is what
+`TestResult::diagnostic()` does. How an error fills
 `summary` and `detail` is in [Error Handling](./error-handling.md#the-diagnostic-document).
 
 A failure clap reports before a parse completes — an unknown flag, a
@@ -122,7 +130,16 @@ std::process::exit(outcome.status.code().into());
 output_mode, &mut stdout, &mut stderr)`, which is public: `standout-test`'s
 harness writes its two streams with it, and an adopter that keeps its own
 process edge can too. It returns `Ok(handled)` or the final-write failure whose
-status replaces the run's own.
+status replaces the run's own. Under `ndjson` the warnings follow through
+`standout::cli::emit_warning_entries`; every other mode flushes them as stderr
+prose, and so does a `NoMatch` handoff in every mode, since Standout then owns
+no stdout. Entries a handler emits through `ctx.stream()` reach stdout while
+the handler runs, before either: `run_emitted` calls `run_with_sink` with a
+`StreamSink` over the process's stdout and writes the result and the warning
+entries through the same sink, so a `--output-file-path` that retargeted the
+sink receives the whole stream (entries, result or diagnostic, warnings) and
+stdout nothing. `run_with` captures the entries instead and returns them as
+`CompletedRun::entries()`.
 
 `ProcessOutcome` has two public fields. `handled` is the `bool` that `run`
 returns: `false` only for a `NoMatch` handoff. `status` is the final
@@ -137,7 +154,10 @@ output and the exit.
 ## Capturing typed metadata
 
 `run_with` keeps output in-process and returns `CompletedRun`: the dispatch
-outcome plus any framework warnings collected during the run. `Deref` keeps
+outcome, any framework warnings collected during the run, and under `ndjson`
+the lines the handler streamed (`entries()`, each with its newline), which a
+process would have written before the result. `App::dispatch` captures the
+same way; `run_command` takes the `StreamSink` as a parameter. `Deref` keeps
 string-oriented accessors and typed methods (`exit_status()`, `success_kind()`,
 `error_kind()`) working on the wrapper. Pattern matching needs `outcome()` or
 `into_outcome()`, because `CompletedRun` is not the variant enum.

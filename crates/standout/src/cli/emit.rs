@@ -2,19 +2,28 @@
 //!
 //! `run_emitted` and `standout-test`'s harness both call [`emit_run_result`],
 //! so what a test observes is what a process writes. The output mode decides
-//! where a failure goes (spec `parity-machine-contract.md`, D2): under `json`,
-//! `yaml` and `csv` the failure is the stdout document, serialized from
-//! [`RunError::diagnostic`], and stderr carries nothing the framework wrote for
-//! it; under every human mode the failure is prose on stderr. An `App` or
-//! `External` failure writes its verbatim bytes to stderr in every mode and
-//! adds the stdout document in the structured ones. A status a successful
-//! handler declared (`Output::with_exit_status`) changes none of this: the
-//! outcome is `Handled`, emitted as any success is, and only the process
-//! status differs.
+//! where a failure goes: under `json`, `yaml`, `csv` and `ndjson` the failure
+//! is the stdout document, serialized from [`RunError::diagnostic`], and
+//! stderr carries nothing the framework wrote for it; under every human mode
+//! the failure is prose on stderr. An `App` or `External` failure writes its
+//! verbatim bytes to stderr in every mode and adds the stdout document in the
+//! structured ones. A status a successful handler declared
+//! (`Output::with_exit_status`) changes none of this: the outcome is
+//! `Handled`, emitted as any success is, and only the process status differs.
 //!
-//! The CSV form of the diagnostic is a `CsvProjection` over the document
-//! (D8): one row whose `range` is three columns, `range_filename`,
-//! `range_line` and `range_column`, empty when unset.
+//! Under `ndjson` the document is one compact line, and it is the only mode
+//! whose warnings are stdout entries too: [`emit_warning_entries`] writes each
+//! as a `severity: warning` diagnostic of kind `framework` after the result or
+//! the failure. The single-document modes keep warnings as stderr prose,
+//! which `standout_render::warnings::flush_to_stderr` owns, and so does a
+//! `NoMatch` handoff in every mode, since the framework then owns no stdout.
+//! Both callers write the `ndjson` bytes through the run's `StreamSink`, the
+//! destination the handler's entries already went to, so an output file
+//! override that retargeted the sink receives the whole stream.
+//!
+//! The CSV form of the diagnostic is a `CsvProjection` over the document:
+//! one row whose `range` is three columns, `range_filename`, `range_line` and
+//! `range_column`, empty when unset.
 
 use std::io::Write;
 
@@ -32,7 +41,7 @@ use crate::{CsvProjection, OutputMode};
 /// command owned the invocation (`false` only for a `NoMatch` handoff);
 /// `Err` is a final-write failure, already reported on stderr, whose status
 /// replaces the run's own.
-pub fn emit_run_result<W: Write, E: Write>(
+pub fn emit_run_result<W: Write + ?Sized, E: Write + ?Sized>(
     result: &DispatchResult,
     output_mode: OutputMode,
     stdout: &mut W,
@@ -70,7 +79,7 @@ pub fn emit_run_result<W: Write, E: Write>(
     }
 }
 
-fn emit_failure<W: Write, E: Write>(
+fn emit_failure<W: Write + ?Sized, E: Write + ?Sized>(
     error: &RunError,
     output_mode: OutputMode,
     stdout: &mut W,
@@ -104,8 +113,42 @@ fn emit_failure<W: Write, E: Write>(
 pub fn carries_diagnostic_document(output_mode: OutputMode) -> bool {
     matches!(
         output_mode,
-        OutputMode::Json | OutputMode::Yaml | OutputMode::Csv
+        OutputMode::Json | OutputMode::Yaml | OutputMode::Csv | OutputMode::Ndjson
     )
+}
+
+/// Whether the run's warnings are stdout entries rather than stderr prose:
+/// only under `ndjson`, whose stream has room for more than one root, and
+/// never for a `NoMatch` handoff, which owns no stdout to write them to.
+pub fn carries_warning_entries(result: &DispatchResult, output_mode: OutputMode) -> bool {
+    output_mode.is_stream() && !matches!(result, DispatchResult::NoMatch(_))
+}
+
+/// Write each of `warnings` as a `severity: warning` diagnostic entry of kind
+/// `framework`, one line each, when `carries_warning_entries`; do nothing
+/// otherwise. `Err` is a final-write failure on stdout.
+pub fn emit_warning_entries<W: Write + ?Sized>(
+    result: &DispatchResult,
+    warnings: &[String],
+    output_mode: OutputMode,
+    stdout: &mut W,
+) -> Result<(), RunError> {
+    if !carries_warning_entries(result, output_mode) || warnings.is_empty() {
+        return Ok(());
+    }
+    let written = warnings.iter().try_for_each(|warning| {
+        let mut entry = Diagnostic::warning(warning.clone());
+        entry.kind = DiagnosticKind::Framework;
+        stdout.write_all(render_diagnostic(&entry, output_mode).as_bytes())
+    });
+    match written
+        .and_then(|()| stdout.flush())
+        .err()
+        .and_then(|error| final_write_error_unless_broken_pipe(error, OutputKind::Text))
+    {
+        Some(failure) => Err(failure),
+        None => Ok(()),
+    }
 }
 
 /// The diagnostic document in `output_mode`, newline-terminated. Panics on a
@@ -154,14 +197,28 @@ fn diagnostic_csv_projection() -> CsvProjection {
 pub struct DiagnosticDocumentError(String);
 
 /// Read a diagnostic document back from `text`, the inverse of
-/// [`render_diagnostic`] for the same `output_mode`.
+/// [`render_diagnostic`] for the same `output_mode`. Under `ndjson`, `text`
+/// is the whole stream and the document is its first error-severity
+/// diagnostic entry; the handler's own entries and warning entries are
+/// skipped.
 pub fn parse_diagnostic(
     output_mode: OutputMode,
     text: &str,
 ) -> Result<Diagnostic, DiagnosticDocumentError> {
     let malformed =
         |error: standout_render::RenderError| DiagnosticDocumentError(error.to_string());
-    if output_mode == OutputMode::Csv {
+    if output_mode.is_stream() {
+        text.lines()
+            .filter_map(|line| {
+                standout_render::deserialize_document::<Diagnostic>(output_mode, line).ok()
+            })
+            .find(|entry| entry.severity == Severity::Error)
+            .ok_or_else(|| {
+                DiagnosticDocumentError(
+                    "the stream carries no error-severity diagnostic entry".into(),
+                )
+            })
+    } else if output_mode == OutputMode::Csv {
         let row: DiagnosticRow =
             standout_render::deserialize_document(output_mode, text).map_err(malformed)?;
         row.into_diagnostic()
@@ -213,7 +270,7 @@ impl DiagnosticRow {
     }
 }
 
-fn emit_artifact<W: Write, E: Write>(
+fn emit_artifact<W: Write + ?Sized, E: Write + ?Sized>(
     run: &ArtifactRun,
     stdout: &mut W,
     stderr: &mut E,
@@ -395,7 +452,12 @@ mod tests {
             .range("main.tfl", 2, 1);
         let plain = Diagnostic::error("boom, with a \"quote\" and a, comma");
         for diagnostic in [ranged, plain] {
-            for mode in [OutputMode::Json, OutputMode::Yaml, OutputMode::Csv] {
+            for mode in [
+                OutputMode::Json,
+                OutputMode::Yaml,
+                OutputMode::Csv,
+                OutputMode::Ndjson,
+            ] {
                 let text = render_diagnostic(&diagnostic, mode);
                 assert!(text.ends_with('\n'), "{mode:?}: {text:?}");
                 assert_eq!(
@@ -433,6 +495,80 @@ mod tests {
             error.to_string().contains("all set or all empty"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn under_ndjson_the_failure_is_one_compact_line_on_stdout() {
+        let error = RunError::new("Error: boom", RunErrorKind::Handler).with_diagnostic(
+            Diagnostic::error("line 2 does not parse")
+                .detail("expected `resource <name> <state>`")
+                .range("main.tfl", 2, 1),
+        );
+        let (handled, stdout, stderr) = emit(&DispatchResult::Error(error), OutputMode::Ndjson);
+        assert!(handled.unwrap());
+        assert!(stderr.is_empty(), "{stderr}");
+        assert_eq!(
+            stdout,
+            "{\"type\":\"diagnostic\",\"schema_version\":1,\"severity\":\"error\",\"kind\":\"handler\",\"summary\":\"line 2 does not parse\",\"detail\":\"expected `resource <name> <state>`\",\"range\":{\"filename\":\"main.tfl\",\"start\":{\"line\":2,\"column\":1}}}\n"
+        );
+        assert!(carries_diagnostic_document(OutputMode::Ndjson));
+    }
+
+    #[test]
+    fn the_stream_parser_finds_the_error_entry_among_handler_and_warning_lines() {
+        let stream = "{\"type\":\"version\",\"format_version\":1}\n\
+                      {\"type\":\"diagnostic\",\"schema_version\":1,\"severity\":\"warning\",\"kind\":\"framework\",\"summary\":\"soft\",\"detail\":\"\"}\n\
+                      {\"type\":\"diagnostic\",\"schema_version\":1,\"severity\":\"error\",\"kind\":\"handler\",\"summary\":\"boom\",\"detail\":\"\"}\n";
+        let document = parse_diagnostic(OutputMode::Ndjson, stream).unwrap();
+        assert_eq!(document.summary, "boom");
+        assert_eq!(document.kind, DiagnosticKind::Handler);
+        let error = parse_diagnostic(
+            OutputMode::Ndjson,
+            "{\"type\":\"version\",\"format_version\":1}\n",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("no error-severity"), "{error}");
+    }
+
+    #[test]
+    fn warnings_are_stdout_entries_under_ndjson_and_nothing_elsewhere() {
+        let warnings = vec!["first".to_string(), "second".to_string()];
+        let handled = DispatchResult::Handled(RunOutput::command("{}".to_string()));
+        let mut stdout = Vec::new();
+        emit_warning_entries(&handled, &warnings, OutputMode::Ndjson, &mut stdout).unwrap();
+        let stdout = String::from_utf8(stdout).unwrap();
+        assert_eq!(
+            stdout,
+            "{\"type\":\"diagnostic\",\"schema_version\":1,\"severity\":\"warning\",\"kind\":\"framework\",\"summary\":\"first\",\"detail\":\"\"}\n\
+             {\"type\":\"diagnostic\",\"schema_version\":1,\"severity\":\"warning\",\"kind\":\"framework\",\"summary\":\"second\",\"detail\":\"\"}\n"
+        );
+        assert!(carries_warning_entries(&handled, OutputMode::Ndjson));
+        for mode in [
+            OutputMode::Text,
+            OutputMode::Json,
+            OutputMode::Yaml,
+            OutputMode::Csv,
+        ] {
+            let mut stdout = Vec::new();
+            emit_warning_entries(&handled, &warnings, mode, &mut stdout).unwrap();
+            assert!(stdout.is_empty(), "{mode:?}");
+            assert!(!carries_warning_entries(&handled, mode), "{mode:?}");
+        }
+        let failure =
+            emit_warning_entries(&handled, &warnings, OutputMode::Ndjson, &mut ClosedWriter)
+                .unwrap_err();
+        assert_eq!(failure.kind(), RunErrorKind::FinalWrite(OutputKind::Text));
+        emit_warning_entries(&handled, &warnings, OutputMode::Ndjson, &mut FailingWriter).unwrap();
+    }
+
+    #[test]
+    fn a_no_match_handoff_writes_no_warning_entries_under_ndjson() {
+        let warnings = vec!["startup".to_string()];
+        let handoff = DispatchResult::NoMatch(clap::ArgMatches::default());
+        assert!(!carries_warning_entries(&handoff, OutputMode::Ndjson));
+        let mut stdout = Vec::new();
+        emit_warning_entries(&handoff, &warnings, OutputMode::Ndjson, &mut stdout).unwrap();
+        assert!(stdout.is_empty());
     }
 
     #[test]

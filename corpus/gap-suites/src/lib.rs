@@ -96,6 +96,23 @@ pub fn expect_gap(
     }
 }
 
+/// Resolves the archetype binary a promoted assertion — a plain requirement, its
+/// `expect_gap` wrapper gone — runs against.
+///
+/// Panics when `binary_env` names nothing: a promoted assertion may never pass by
+/// not running, so a missing binary is a broken suite, not an open gap. For tflike
+/// the workspace's `.cargo/config.toml` points the variable at the fixture built
+/// with this crate (`src/bin/tflike.rs`).
+pub fn required_binary(binary_env: &str) -> PathBuf {
+    produced_binary(binary_env).unwrap_or_else(|| {
+        panic!(
+            "suite broken: ${binary_env} does not name a produced binary; the workspace's \
+             .cargo/config.toml sets it to the in-repo fixture (target/debug), so export \
+             it yourself under a custom CARGO_TARGET_DIR"
+        )
+    })
+}
+
 /// Resolves the archetype binary from `binary_env`, if one has been produced.
 ///
 /// Returns `None` when the variable is unset, empty, or names a path that does not
