@@ -45,6 +45,12 @@ pub fn batch(config: &BatchConfig) -> anyhow::Result<Vec<(String, ArchetypeOutco
             config.out_dir.display()
         )
     })?;
+    crate::require_outside_checkout(
+        &config.out_dir,
+        &config.docs_dir,
+        "batch output directory",
+        "--out",
+    )?;
 
     let outcomes: Vec<(String, ArchetypeOutcome)> = config
         .archetypes
@@ -73,14 +79,33 @@ fn run_one(config: &BatchConfig, archetype: &str) -> ArchetypeOutcome {
     crate::print_summary(&report);
 
     let dest = config.out_dir.join(&report.run_id);
-    sanitize(
+    sanitize_and_cleanup(
         &config.sanitize_script,
         &run_dir,
         &dest,
         config.account.as_deref(),
-    )
-    .map_err(|err| format!("sanitizing {}: {err:#}", run_dir.display()))?;
+    )?;
     Ok(report.run_id)
+}
+
+/// Sanitizes `run_dir`'s evidence into `dest`, then removes `run_dir` — the
+/// scratch copy under `--runs-dir` — since it now only duplicates what
+/// sanitizing wrote. A sanitize failure returns before the removal and
+/// leaves `run_dir` in place for inspection.
+fn sanitize_and_cleanup(
+    script: &Path,
+    run_dir: &Path,
+    dest: &Path,
+    account: Option<&str>,
+) -> Result<(), String> {
+    sanitize(script, run_dir, dest, account)
+        .map_err(|err| format!("sanitizing {}: {err:#}", run_dir.display()))?;
+    std::fs::remove_dir_all(run_dir).map_err(|err| {
+        format!(
+            "removing scratch run directory {}: {err}",
+            run_dir.display()
+        )
+    })
 }
 
 fn sanitize(
@@ -129,4 +154,61 @@ fn python3(script: &Path, args: &[std::ffi::OsString]) -> anyhow::Result<String>
     }
     String::from_utf8(output.stdout)
         .with_context(|| format!("{} wrote non-UTF-8 output", script.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn python_script(dir: &Path, name: &str, body: &str) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, body).unwrap();
+        path
+    }
+
+    #[test]
+    fn sanitize_and_cleanup_removes_scratch_dir_on_success() {
+        let scratch = tempfile::tempdir().unwrap();
+        let run_dir = scratch.path().join("run");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        std::fs::write(run_dir.join("report.json"), "{}").unwrap();
+        let dest = scratch.path().join("out").join("run-id");
+        let script = python_script(
+            scratch.path(),
+            "sanitize-ok.py",
+            "import os, shutil, sys\n\
+             src, dst = sys.argv[1], sys.argv[2]\n\
+             os.makedirs(dst, exist_ok=True)\n\
+             shutil.copy(os.path.join(src, 'report.json'), os.path.join(dst, 'report.json'))\n",
+        );
+
+        sanitize_and_cleanup(&script, &run_dir, &dest, None).unwrap();
+
+        assert!(
+            !run_dir.exists(),
+            "scratch run directory should be removed once sanitized"
+        );
+        assert!(dest.join("report.json").is_file());
+    }
+
+    #[test]
+    fn sanitize_and_cleanup_keeps_scratch_dir_on_sanitize_failure() {
+        let scratch = tempfile::tempdir().unwrap();
+        let run_dir = scratch.path().join("run");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let dest = scratch.path().join("out").join("run-id");
+        let script = python_script(
+            scratch.path(),
+            "sanitize-fail.py",
+            "import sys\nsys.exit(1)\n",
+        );
+
+        let err = sanitize_and_cleanup(&script, &run_dir, &dest, None).unwrap_err();
+
+        assert!(
+            run_dir.exists(),
+            "scratch run directory should survive a sanitize failure"
+        );
+        assert!(err.contains(&run_dir.display().to_string()), "{err}");
+    }
 }

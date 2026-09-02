@@ -332,16 +332,18 @@ fn extract_tag_tree(repo_root: &Path, tag: &str, extract_root: &Path) -> anyhow:
         .spawn()
         .with_context(|| format!("spawning git archive for tag {tag}"))?;
     let stdout = archive.stdout.take().expect("piped stdout");
-    let tar_status = Command::new("tar")
+    let tar_result = Command::new("tar")
         .arg("-x")
         .arg("-C")
         .arg(extract_root)
         .stdin(stdout)
-        .status()
-        .with_context(|| format!("extracting archive for tag {tag}"))?;
+        .status();
+    // Wait on the archive child before returning on any path, tar's included:
+    // an early `?` on tar_result would otherwise leave it unwaited.
     let archive_status = archive
         .wait()
         .with_context(|| format!("waiting for git archive of tag {tag}"))?;
+    let tar_status = tar_result.with_context(|| format!("extracting archive for tag {tag}"))?;
     if !archive_status.success() {
         bail!("git archive {tag} exited with {archive_status}");
     }

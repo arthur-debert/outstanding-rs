@@ -130,6 +130,57 @@ fn batch_smoke_writes_both_scorecards_and_sanitized_evidence() {
     assert!(!transcript.contains(scratch.path().to_str().unwrap()));
     let report_text = std::fs::read_to_string(run_dir.join("report.json")).unwrap();
     assert!(!report_text.contains(scratch.path().to_str().unwrap()));
+
+    // The scratch run directory under --runs-dir held only what sanitizing
+    // duplicated into --out; nothing survives there once the run completes.
+    let scratch_runs: Vec<_> = std::fs::read_dir(&runs_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert!(scratch_runs.is_empty(), "{scratch_runs:?}");
+}
+
+#[test]
+fn batch_rejects_an_out_dir_inside_the_source_checkout() {
+    let scratch = tempfile::tempdir().unwrap();
+    let out_dir = repo()
+        .join("target")
+        .join("corpus-batch-out-inside-checkout-test");
+    let _cleanup = RemoveOnDrop(out_dir.clone());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_corpus-runner"))
+        .args([
+            "batch",
+            "smoke",
+            "--framework-version",
+            env!("CARGO_PKG_VERSION"),
+            "--agent-cmd",
+            "agent.sh",
+            "--runs-dir",
+        ])
+        .arg(scratch.path().join("runs"))
+        .arg("--out")
+        .arg(&out_dir)
+        .current_dir(repo())
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "batch should refuse an --out inside the source checkout"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("inside source checkout"), "{stderr}");
+}
+
+/// Deletes `out_dir` on drop: `batch` creates it (via `create_dir_all`)
+/// before rejecting it as being inside the checkout.
+struct RemoveOnDrop(std::path::PathBuf);
+
+impl Drop for RemoveOnDrop {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
