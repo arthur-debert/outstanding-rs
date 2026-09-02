@@ -329,7 +329,9 @@ modes write their document:
 A failure is one `diagnostic` entry — the same flat document `json`, `yaml`
 and `csv` write, [Execution Outcomes](./execution-outcomes.md#failures-under-a-structured-mode)
 — at the point in the stream where the run failed, after whatever the handler
-already emitted, and stderr carries nothing for it. A warning is a
+already emitted, and stderr carries nothing the framework wrote for it (an
+`AppFailure` or `ExternalFailure` still writes its verbatim bytes there). A
+warning is a
 `severity: warning` diagnostic entry of kind `framework` on stdout, after the
 result or the failure, instead of the stderr prose the single-document modes
 keep. `Output::Silent` writes nothing, so a handler whose entries are its whole

@@ -434,7 +434,8 @@ let output = render_auto(template, &data, &theme, OutputMode::Json)?;
 | `TermDebug` | Render template, keep style tags |
 | `Json` | `serde_json::to_string_pretty(data)` |
 | `Yaml` | `serde_yaml::to_string(data)` |
-| `Csv` | Flatten and format as CSV |
+| `Csv` | One row per flat record; a nested value is a render error |
+| `Ndjson` | One compact line, `{"type":"result","data":…}` |
 
 This means your serializable data types automatically support structured output without additional code.
 

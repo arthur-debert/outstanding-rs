@@ -59,10 +59,12 @@ Argument parsing is clap's responsibility, and clap has an extensive test suite 
 Its `TestResult` also exposes `exit_status()`, `success_kind()`, and
 `error_kind()`, with assertions for typed status and failure origin. `NoMatch`
 returns no framework status because the fallback dispatcher still owns the
-command. For an `AppFailure` or an `ExternalFailure`, `stdout()` is empty,
-`error()` and `stderr()` are the verbatim diagnostic, `error_kind()` is
+command. For an `AppFailure` or an `ExternalFailure`, `error()` and
+`stderr()` are the verbatim diagnostic in every mode, `error_kind()` is
 `RunErrorKind::App` or `RunErrorKind::External`, and `exit_status()` retains the
-declared value (including values such as `128`).
+declared value (including values such as `128`); `stdout()` is empty in a human
+mode and, under a structured mode, carries a diagnostic document of kind `app`
+or `external` whose `detail` is the bytes.
 
 - Env vars (real `std::env::set_var`, originals captured and restored on drop)
 - Working directory (real `std::env::set_current_dir`, original restored on drop)
