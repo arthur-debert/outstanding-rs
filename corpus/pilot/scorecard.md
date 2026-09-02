@@ -290,7 +290,8 @@ cargo run -p corpus-runner -- run validity --broker \
 ```
 
 then `corpus/sanitize-run.py <run-dir> corpus/pilot/runs/<run-id>/
---account <host account name>` and `pixi run lint --fix` (the committed report
+--transcript-dest /tmp/standout-corpus-runs-validity/sanitized --account <host
+account name>` and `pixi run lint --fix` (the committed report
 is checked like any other JSON in the tree), and replace this subsection with
 the sanitized report's outcomes, anchored to transcript moments.
 
