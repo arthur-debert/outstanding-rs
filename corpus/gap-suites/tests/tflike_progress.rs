@@ -1,24 +1,16 @@
-//! `tflike` acceptance suite — **progress milestone**, gating **PAR03** (terminal
-//! citizenship, `docs/spec/parity-terminal-citizenship.md`). PAR03 is done when this
-//! group turns green; the diagnostic milestone in `tflike_diagnostic.rs` belongs to
-//! PAR02, not here. Behavior under test: `corpus/archetypes/tflike/spec.md`
-//! (apply-lifecycle events in the stream, the rewritten state file, and total progress
-//! suppression under structured modes). Every assertion is black-box against the
-//! binary named by `CORPUS_TFLIKE_BIN` and runs with expected-fail semantics
-//! (`corpus_gap_suites::expect_gap`).
+//! `tflike` acceptance suite, progress milestone: black-box against the binary
+//! named by `CORPUS_TFLIKE_BIN`. Behavior under test is
+//! `corpus/archetypes/tflike/spec.md`; the gate and its owner are recorded in
+//! `gaps.toml`.
 
 use std::path::Path;
 
 use corpus_gap_suites::{expect_gap, parse_ndjson, reject_ansi, run, Output};
 
-/// Milestone group and owning epic, printed with every outcome.
 const GATE: &str = "tflike/progress -> PAR03 (terminal citizenship)";
-/// Env var locating the produced archetype binary.
 const BIN: &str = "CORPUS_TFLIKE_BIN";
 
-/// Applies `config` (against `state` recorded at the default `main.tfl.state` path, or
-/// empty state when `None`) in a fresh tempdir, returning the tempdir *alongside* the
-/// output so callers can inspect the rewritten state file before the dir is dropped.
+/// `state` is written at the default `main.tfl.state` path; the tempdir is returned to inspect.
 fn apply_in_tempdir(
     binary: &Path,
     config: &str,
@@ -39,28 +31,23 @@ fn apply_in_tempdir(
     Ok((dir, out))
 }
 
-/// Applies the two-resource config against empty state: two create changes, so the
-/// stream must carry one lifecycle pair each for `web` and `db`.
 fn apply_two_changes(binary: &Path) -> Result<(tempfile::TempDir, Output), String> {
     apply_in_tempdir(binary, "resource web present\nresource db present\n", None)
 }
 
-/// Reads the rewritten default state file as the list of present resource names.
 fn state_resources(dir: &Path) -> Result<Vec<String>, String> {
     let contents = std::fs::read_to_string(dir.join("main.tfl.state"))
         .map_err(|err| format!("apply left no readable state file: {err}"))?;
     Ok(contents.lines().map(str::to_string).collect())
 }
 
-/// Index of the first stream entry with this `type` and `resource`, if any.
 fn position(entries: &[serde_json::Value], entry_type: &str, resource: &str) -> Option<usize> {
     entries
         .iter()
         .position(|e| e["type"] == entry_type && e["resource"] == resource)
 }
 
-/// Asserts exactly one `apply_start`/`apply_complete` pair for `resource`, start
-/// preceding complete — duplicated lifecycle entries are a mismatch, not extra credit.
+/// Exactly one `apply_start`/`apply_complete` pair, in that order; duplicates are a mismatch.
 fn assert_lifecycle_pair(entries: &[serde_json::Value], resource: &str) -> Result<(), String> {
     for entry_type in ["apply_start", "apply_complete"] {
         let count = entries
@@ -83,7 +70,6 @@ fn assert_lifecycle_pair(entries: &[serde_json::Value], resource: &str) -> Resul
     Ok(())
 }
 
-/// Asserts the terminal stream entry is a `change_summary` counting `add`/`remove`.
 fn assert_terminal_summary(
     entries: &[serde_json::Value],
     add: i64,
@@ -122,8 +108,7 @@ fn expected_fail_apply_lifecycle_events_ride_the_stream_and_state_is_rewritten()
                 assert_lifecycle_pair(&entries, resource)?;
             }
             assert_terminal_summary(&entries, 2, 0)?;
-            // Printing plausible events without applying anything may not pass: the
-            // state file must now record the desired state.
+            // Plausible events without applying anything may not pass.
             let mut state = state_resources(dir.path())?;
             state.sort();
             if state != ["db", "web"] {
@@ -178,13 +163,10 @@ fn expected_fail_progress_is_suppressed_under_structured_mode() {
                     out.code
                 ));
             }
-            // Machine stdout: nothing but parseable stream entries, no escapes.
             parse_ndjson(&out.stdout)?;
             reject_ansi(&out.stdout, "stdout")?;
-            // "Progress reporting ... is suppressed entirely": this known-success
-            // structured invocation has no legitimate stderr traffic at all, so plain
-            // prose progress lines (no ANSI, no \r) are just as much a mismatch as a
-            // spinner redraw.
+            // A known-success structured invocation has no legitimate stderr traffic:
+            // plain prose progress is as much a mismatch as a spinner redraw.
             if !out.stderr.is_empty() {
                 return Err(format!(
                     "structured mode must silence stderr entirely, got {:?}",

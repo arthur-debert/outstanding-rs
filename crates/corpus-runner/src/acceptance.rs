@@ -1,4 +1,4 @@
-// Objective evaluation of the produced binary: build it and sweep the ROB01
+// Objective evaluation of the produced binary: build it and sweep the
 // invariant matrix. Everything here is black-box and treats the produced
 // code as untrusted.
 
@@ -334,8 +334,7 @@ fn run_binary(
     Ok((outcome.exit_code, outcome.stdout))
 }
 
-// The hook is process-wide, so concurrent swaps (parallel test threads)
-// could restore a stale hook or mute an unrelated thread's panic report.
+// The panic hook is process-wide; concurrent swaps would restore a stale one.
 static PANIC_HOOK_LOCK: Mutex<()> = Mutex::new(());
 
 fn caught(assertion: impl FnOnce()) -> Result<(), String> {

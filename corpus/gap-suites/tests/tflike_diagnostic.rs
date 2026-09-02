@@ -1,32 +1,24 @@
-//! `tflike` acceptance suite — **diagnostic milestone**, gating **PAR02** (the machine
-//! contract, `docs/spec/implemented/parity-machine-contract.md`). PAR02 is done when this group
-//! turns green; the progress milestone in `tflike_progress.rs` belongs to PAR03, not
-//! here. Behavior under test: `corpus/archetypes/tflike/spec.md`. Every assertion is
-//! black-box against the binary named by `CORPUS_TFLIKE_BIN`, which `.cargo/config.toml`
-//! points at the in-repo fixture (`src/bin/tflike.rs`). Every assertion is a plain
-//! requirement: the gate is closed in `gaps.toml`.
+//! `tflike` acceptance suite, diagnostic milestone: black-box against the binary
+//! named by `CORPUS_TFLIKE_BIN`. Behavior under test is
+//! `corpus/archetypes/tflike/spec.md`; the gate is closed in `gaps.toml`, so
+//! every assertion is a plain requirement.
 
 use std::path::Path;
 
 use corpus_gap_suites::{parse_ndjson, required_binary, run, Output};
 
-/// Env var locating the produced archetype binary.
 const BIN: &str = "CORPUS_TFLIKE_BIN";
 
-/// A config whose two resources are absent from (missing) state: a two-change plan.
 const CONFIG_TWO_CHANGES: &str = "resource web present\nresource db present\n";
-/// A config whose second line breaks the `resource <name> <state>` grammar.
 const CONFIG_LINE_2_BROKEN: &str = "resource web present\nresurce db present\n";
 
-/// Writes `contents` as `name` inside `dir`, returning the relative path the suite
-/// passes on the command line (diagnostic ranges must echo the path as given).
+/// Returns the relative path: diagnostic ranges must echo the path as given.
 fn fixture(dir: &Path, name: &str, contents: &str) -> String {
     std::fs::write(dir.join(name), contents)
         .unwrap_or_else(|err| panic!("suite broken: writing fixture {name}: {err}"));
     name.to_string()
 }
 
-/// Runs `tflike` in a fresh tempdir holding a config (and optionally a state file).
 fn plan_in_tempdir(
     binary: &Path,
     config: &str,
@@ -44,10 +36,7 @@ fn plan_in_tempdir(
     run(binary, &args, dir.path())
 }
 
-/// Asserts the stream shape the spec fixes for every successful plan: a leading
-/// `version` entry, one `planned_change` per difference (`expected_changes` as
-/// `(resource, action)` pairs, order between resources unspecified), and a terminal
-/// `change_summary` whose counts match.
+/// Order between resources is unspecified.
 fn assert_plan_stream(
     entries: &[serde_json::Value],
     expected_changes: &[(&str, &str)],
@@ -119,7 +108,7 @@ fn plan_deletion_with_explicit_state_streams_a_delete() {
     let binary = required_binary(BIN);
     let dir = tempfile::tempdir().expect("suite broken: creating tempdir");
     let config_path = fixture(dir.path(), "main.tfl", "resource web absent\n");
-    // A non-default name proves --state is honored rather than <config>.state.
+    // A non-default name: --state, not <config>.state.
     let state_path = fixture(dir.path(), "recorded.state", "web\n");
     let out = run(
         &binary,
@@ -235,14 +224,11 @@ fn handler_error_yields_a_well_formed_diagnostic_not_prose() {
         dir.path(),
     )
     .unwrap();
-    // The whole stream must still parse — prose leaking in breaks this first.
     let entries = parse_ndjson(&out.stdout).unwrap();
     let diagnostic = entries
         .iter()
         .find(|e| e["type"] == "diagnostic" && e["severity"] == "error")
         .unwrap_or_else(|| panic!("no error diagnostic entry in {}", out.stdout));
-    // Well-formed per the spec's diagnostic shape, not merely typed: summary
-    // and detail are non-empty strings.
     for field in ["summary", "detail"] {
         assert!(
             diagnostic[field]
@@ -252,8 +238,6 @@ fn handler_error_yields_a_well_formed_diagnostic_not_prose() {
             diagnostic[field]
         );
     }
-    // "Failures are stream entries, never prose": the old prose error path may
-    // not survive on stderr alongside the stream diagnostic.
     assert_eq!(
         out.stderr, "",
         "a structured-mode failure must not leak prose"

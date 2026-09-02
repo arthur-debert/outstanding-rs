@@ -1,7 +1,5 @@
 // The committed-pilot sanitizer as an external command, plus a secret-shape
-// scan over every committed run artifact under the roots in `SCANNED_ROOTS`:
-// the pilot runs and scorecard, the rerun evidence, the completion runs, and
-// the demo.
+// scan over every committed run artifact under `SCANNED_ROOTS`.
 
 #![cfg(unix)]
 
@@ -69,9 +67,7 @@ fn sanitizer_prefers_specific_paths_without_rewriting_bare_usernames() {
     assert!(!transcript.contains("12345678-ABCD-1234-ABCD-123456789ABC"));
 }
 
-// A session with a shell prints file owners, so the account name has to be
-// scrubbable — but only when the operator names it, or the fixture words
-// above would go with it.
+// Scrubbed only when the operator names it, or the fixture words above would go too.
 #[test]
 fn a_named_account_is_replaced_everywhere_it_appears_as_a_word() {
     let temp = tempfile::tempdir().unwrap();
@@ -109,8 +105,6 @@ fn a_named_account_is_replaced_everywhere_it_appears_as_a_word() {
 
     let report = fs::read_to_string(dest.join("report.json")).unwrap();
     assert!(report.contains("4 [user] wheel"), "{report}");
-    // A longer word that merely starts with the account name is not the
-    // account.
     assert!(report.contains("\"hostpersonal\""), "{report}");
     let transcript = fs::read_to_string(dest.join("transcript.jsonl")).unwrap();
     assert!(transcript.contains("total 8 [user] wheel"), "{transcript}");
@@ -130,11 +124,8 @@ fn committed_pilot_transcripts_use_the_specific_workspace_placeholder() {
     }
 }
 
-// Known fixture strings that match a secret shape but are not leaks; each
-// entry is the exact matched value, so vouching one never silences another.
-// The two `example.com` addresses are values the gcloudlike agent wrote into
-// its own tests for a CLI whose config carries an account property; that domain
-// is reserved (RFC 2606) and resolves to nobody.
+// Exact matched values, so vouching one never silences another; `example.com` is
+// reserved (RFC 2606) and resolves to nobody.
 const ALLOWED_MATCHES: &[&str] = &["valid@email.com", "me@example.com", "who@example.com"];
 
 const SCANNED_ROOTS: &[&str] = &[
@@ -153,9 +144,7 @@ fn is_email_domain(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '.' | '-')
 }
 
-// rustc names a closure's type after where it was written — `{closure@main.rs:39:29}` —
-// so that `@` joins a file to a line and column, never a mailbox to a host. Demanding
-// every part of the form fails toward a false positive, never toward a missed mailbox.
+// `{closure@main.rs:39:29}`: rustc's `@` joins a file to a line, not a mailbox to a host.
 fn is_rustc_closure_type(local: &str, before: &str, domain: &str, after: &str) -> bool {
     if local != "closure" || !before.ends_with('{') || !domain.ends_with(".rs") {
         return false;
@@ -238,8 +227,7 @@ fn home_path_hits(text: &str, hits: &mut Vec<Hit>) {
             .chars()
             .take_while(|&c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
             .collect();
-        // A leading dot is a dotfile under some literal `home/` directory
-        // (agents write those into their own sandboxes), not an account name.
+        // A leading dot is a dotfile under a literal `home/` directory, not an account.
         if !name.is_empty() && !name.starts_with('.') && name != "user" {
             hits.push(Hit {
                 value: path_token(text, at),
