@@ -13,11 +13,6 @@ use crate::manifest::GapEntry;
 use crate::report::{AcceptanceReport, CaseOutcome, CaseResult};
 use crate::workspace;
 
-/// Runs every case in `cases` against `binary`. `gaps` is the archetype
-/// manifest's `[gaps]` table (D17): a gap case that passes is reported
-/// `hand-rolled-pass` rather than `unexpected-pass` when its evidence claim
-/// names a crate `app_cargo_toml` (the produced app's `Cargo.toml`, when
-/// readable) does not depend on.
 pub fn run_cases(
     binary: &Path,
     cases: &[Case],

@@ -16,8 +16,6 @@ pub struct Archetype {
     pub name: String,
     pub spec: String,
     pub suite: CaseSuite,
-    /// The manifest's `[gaps]` table (D17), keyed by gap id. Empty for
-    /// `smoke`, which carries no manifest.
     pub gaps: BTreeMap<String, GapEntry>,
     acceptance_sha256: String,
 }
@@ -204,12 +202,8 @@ pub struct CaseExpect {
     pub stderr_not_contains: Vec<String>,
     #[serde(default)]
     pub stdout_lines_end_with_once: Vec<String>,
-    /// Post-run sandbox assertions (D25): path (relative to the case
-    /// sandbox) to exact content, LF-normalized like `stdout`/`stderr`.
     #[serde(default)]
     pub files: BTreeMap<String, String>,
-    /// Post-run sandbox assertions (D25): paths that must not exist after
-    /// the process exits.
     #[serde(default)]
     pub files_absent: Vec<String>,
 }
@@ -255,7 +249,6 @@ impl Archetype {
         })
     }
 
-    /// The evidence claim (D17) a gap case's `gap` id names, if any.
     pub fn gap_evidence(&self, gap: &str) -> Option<crate::manifest::Evidence<'_>> {
         self.gaps.get(gap).and_then(GapEntry::evidence)
     }

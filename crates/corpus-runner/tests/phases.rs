@@ -280,9 +280,6 @@ fn provisioning_refuses_symlinks_from_a_published_root_into_internal_docs() {
     assert!(format!("{err:#}").contains("symlink"), "{err:#}");
 }
 
-// A synthetic repo with one tagged commit, so tag-mode provisioning (D26)
-// is tested hermetically rather than against this checkout's own history
-// (which a shallow CI clone may not carry tags for).
 fn git(repo: &Path, args: &[&str]) {
     let status = Command::new("git")
         .arg("-C")

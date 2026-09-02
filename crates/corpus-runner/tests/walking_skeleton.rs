@@ -72,9 +72,6 @@ fn smoke_archetype_completes_the_loop() {
     assert_eq!(report.archetype.name, "smoke");
     assert_eq!(report.pins.framework_version, "8.1.1");
     assert_ne!(report.pins.docs_commit, "unknown");
-    // "8.1.1" differs from this build's own version (env!("CARGO_PKG_VERSION")),
-    // so D26 sources the docs snapshot from the `v8.1.1` tag rather than the
-    // live checkout.
     assert_eq!(
         report.pins.docs_source,
         corpus_runner::report::DocsSource::Tag

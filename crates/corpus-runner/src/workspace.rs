@@ -16,12 +16,6 @@ use crate::sandbox::{self, Policy};
 
 const PUBLISHED_DOCS: &[&str] = &["index.md", "intro.md", "guides", "topics", "crates"];
 
-// The version this build of corpus-runner is itself part of — the monorepo
-// keeps every crate's `version` in lockstep, so this is also the checkout's
-// own framework version (D26): `--framework-version` pinning this value
-// means "the checkout's own docs"; any other value means "a published
-// version other than the one checked out", whose docs come from that
-// version's git tag instead (`provision_docs`).
 const RUNNER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // CLAUDE_CODE_TMPDIR is added for the agent phase alone, by `Isolation::apply_agent`.
@@ -208,8 +202,6 @@ pub struct Workspace {
     pub root: PathBuf,
     pub app_dir: PathBuf,
     pub docs_sha256: String,
-    /// The commit the docs snapshot came from: the checkout's `HEAD` in
-    /// checkout mode, or the pinned version's tag commit in tag mode (D26).
     pub docs_commit: String,
     pub docs_source: DocsSource,
     pub isolation: Isolation,
@@ -240,14 +232,6 @@ pub fn provision(
         .map(Path::to_path_buf)
         .unwrap_or_default();
 
-    // D26: a pin other than the checkout's own version reads docs from that
-    // version's tag rather than the live checkout, so the agent never sees
-    // documentation for a surface its pinned dependency does not have. The
-    // tag's full tree is archived into a system temp directory (never
-    // admitted into the agent's sandbox, and never left in the run artifact)
-    // so the same published-docs filter below can resolve its
-    // `docs/crates/*` symlinks exactly as it does for the live checkout;
-    // `_tag_archive_guard` removes it once `provision` returns.
     let mut _tag_archive_guard = None;
     let (docs_source_dir, docs_filter_root, docs_source, resolved_docs_commit) =
         if framework_version == RUNNER_VERSION {
@@ -313,8 +297,6 @@ pub fn provision(
     })
 }
 
-/// The tag's commit sha, and a check that the tag exists — a missing tag
-/// (D26) is refused here, before the agent phase starts.
 fn resolve_tag_commit(repo_root: &Path, tag: &str) -> anyhow::Result<String> {
     let output = Command::new("git")
         .arg("-C")
