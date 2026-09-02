@@ -392,7 +392,15 @@ fn evaluate_binary(
 ) -> Evaluation {
     match binary {
         Ok(binary) => {
-            let app_cargo_toml = std::fs::read_to_string(app_dir.join("Cargo.toml")).ok();
+            // Read through the same no-follow, regular-file-only primitive
+            // the sandbox inventory reads case files with (D17): a symlink,
+            // a non-regular file, or a read error is "evidence unknown",
+            // not "evidence absent".
+            let app_cargo_toml = cases::read_regular_file_no_follow(
+                &app_dir.join("Cargo.toml"),
+                cases::MAX_INVENTORIED_BYTES,
+            )
+            .and_then(|bytes| String::from_utf8(bytes).map_err(|err| err.to_string()));
             Evaluation {
                 acceptance: cases::run_cases(
                     &binary,
@@ -400,7 +408,7 @@ fn evaluate_binary(
                     cases_dir,
                     isolation,
                     &archetype.gaps,
-                    app_cargo_toml.as_deref(),
+                    app_cargo_toml.as_deref().map_err(String::as_str),
                 ),
                 invariants: acceptance::run_invariants(
                     &binary,

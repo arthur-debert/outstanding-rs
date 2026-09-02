@@ -244,9 +244,7 @@ pub fn provision(
         } else {
             let tag = format!("v{framework_version}");
             let commit = resolve_tag_commit(&repo_root, &tag)?;
-            let archive_dir = tempfile::tempdir().with_context(|| {
-                format!("creating docs archive scratch directory for tag {tag}")
-            })?;
+            let archive_dir = create_docs_archive_scratch_dir(&repo_root, &tag)?;
             extract_tag_tree(&repo_root, &tag, archive_dir.path())?;
             // Canonicalized so `is_published_docs_target`'s `strip_prefix`
             // agrees with the canonicalized symlink targets `copy_recursive`
@@ -312,6 +310,24 @@ fn resolve_tag_commit(repo_root: &Path, tag: &str) -> anyhow::Result<String> {
         );
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// A scratch directory to archive a tag's tree into, created *inside*
+/// `repo_root` rather than the system temp directory: `repo_root` is the one
+/// item in `Isolation::denied_read` this run controls the placement of, so a
+/// scratch path under it is covered by the agent's deny-read policy for the
+/// whole time it exists, including a crash that skips the RAII cleanup.
+/// The system temp directory carries no such guarantee — nothing denies it
+/// by default, so a curious agent could read an archived checkout sitting
+/// there even briefly.
+fn create_docs_archive_scratch_dir(
+    repo_root: &Path,
+    tag: &str,
+) -> anyhow::Result<tempfile::TempDir> {
+    tempfile::Builder::new()
+        .prefix(".corpus-docs-tag-archive-")
+        .tempdir_in(repo_root)
+        .with_context(|| format!("creating docs archive scratch directory for tag {tag}"))
 }
 
 /// Extracts the tag's whole tree into `extract_root`, so relative symlinks
@@ -497,5 +513,22 @@ fn is_published_docs_target(target: &Path, repo_root: &Path) -> bool {
             components.next().as_deref() == Some("docs")
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn docs_archive_scratch_dir_is_created_under_repo_root() {
+        let repo_root = tempfile::tempdir().unwrap();
+        let scratch = create_docs_archive_scratch_dir(repo_root.path(), "v1.2.3").unwrap();
+        assert!(
+            scratch.path().starts_with(repo_root.path()),
+            "scratch dir {} must sit under the denied-read repo root {}, not the system temp dir",
+            scratch.path().display(),
+            repo_root.path().display()
+        );
     }
 }

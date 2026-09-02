@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 pub const CAPTURE_CAP_BYTES: usize = 2 * 1024 * 1024;
 
 const READER_GRACE: Duration = Duration::from_secs(2);
+const GROUP_KILL_GRACE: Duration = Duration::from_millis(500);
 
 #[derive(Debug)]
 pub struct Outcome {
@@ -112,15 +113,37 @@ pub fn supervise(
 }
 
 fn kill_group(child: &mut Child) {
+    kill_process_group(child.id());
+    let _ = child.kill();
+}
+
+/// Sends `SIGKILL` to the process group led by `pid` and blocks, bounded by
+/// `GROUP_KILL_GRACE`, until nothing in it answers a signal-0 probe. The
+/// group's pgid stays valid even after the leader (the pid a caller tracked)
+/// has exited, as long as a descendant it forked before exiting is still
+/// alive — call this after a child exits, and before anything reads what
+/// that child's sandbox holds, so a surviving descendant can't still be
+/// writing there.
+pub fn kill_process_group(pid: u32) {
     #[cfg(unix)]
     {
-        // SAFETY: the child was made its own process-group leader before
-        // spawn, so the negative pid targets only that run's descendants.
+        // SAFETY: pid was made its own process-group leader (via
+        // `place_in_own_group`) before spawn, so this reaches only that
+        // run's descendants.
         unsafe {
-            libc::killpg(child.id() as libc::pid_t, libc::SIGKILL);
+            libc::killpg(pid as libc::pid_t, libc::SIGKILL);
+        }
+        let deadline = Instant::now() + GROUP_KILL_GRACE;
+        while Instant::now() < deadline {
+            // signal 0 is an existence probe: killpg returns an error (ESRCH)
+            // once nothing in the group is left to signal.
+            let anything_left = unsafe { libc::killpg(pid as libc::pid_t, 0) } == 0;
+            if !anything_left {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
         }
     }
-    let _ = child.kill();
 }
 
 pub struct Capture {
