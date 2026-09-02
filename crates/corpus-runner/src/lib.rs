@@ -3,6 +3,7 @@
 
 pub mod acceptance;
 pub mod archetype;
+pub mod batch;
 pub mod broker;
 pub mod cases;
 mod digest;
@@ -50,6 +51,7 @@ pub struct ReevaluationConfig {
     pub timeouts: Timeouts,
 }
 
+#[derive(Clone, Copy)]
 pub struct Timeouts {
     pub agent: Duration,
     pub build: Duration,
@@ -76,24 +78,13 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
 
     std::fs::create_dir_all(&config.runs_dir)
         .with_context(|| format!("creating runs directory {}", config.runs_dir.display()))?;
-    let source_root = config
-        .docs_dir
-        .canonicalize()
-        .with_context(|| format!("resolving docs directory {}", config.docs_dir.display()))?
-        .parent()
-        .map(Path::to_path_buf)
-        .context("docs directory has no repository parent")?;
-    let canonical_runs = config
-        .runs_dir
-        .canonicalize()
-        .with_context(|| format!("resolving runs directory {}", config.runs_dir.display()))?;
-    if canonical_runs.starts_with(&source_root) {
-        anyhow::bail!(
-            "runs directory {} is inside source checkout {}; choose an external --runs-dir",
-            canonical_runs.display(),
-            source_root.display()
-        );
-    }
+    require_outside_checkout(
+        &config.runs_dir,
+        &config.docs_dir,
+        "runs directory",
+        "--runs-dir",
+    )?;
+    let source_root = checkout_root(&config.docs_dir)?;
     let base = format!("{}-{}", archetype.name, unix_timestamp());
     let (run_id, run_dir) = claim_run_dir(&config.runs_dir, &base)?;
 
@@ -493,6 +484,43 @@ pub fn print_summary(report: &RunReport) {
             cell.command, cell.check
         );
     }
+}
+
+/// The repository root that owns `docs_dir` (its canonical parent): the
+/// boundary a blind workspace's isolation is verified against, and the
+/// boundary [`require_outside_checkout`] rejects external paths for
+/// resolving inside.
+fn checkout_root(docs_dir: &Path) -> anyhow::Result<PathBuf> {
+    docs_dir
+        .canonicalize()
+        .with_context(|| format!("resolving docs directory {}", docs_dir.display()))?
+        .parent()
+        .map(Path::to_path_buf)
+        .context("docs directory has no repository parent")
+}
+
+/// Rejects `path` when it resolves inside the source checkout that owns
+/// `docs_dir`: a workspace or scratch output living there would leak into
+/// the blind sandbox's exclusion boundary. `what` and `flag` name the
+/// rejected path and the CLI flag that set it, for the error.
+pub(crate) fn require_outside_checkout(
+    path: &Path,
+    docs_dir: &Path,
+    what: &str,
+    flag: &str,
+) -> anyhow::Result<PathBuf> {
+    let source_root = checkout_root(docs_dir)?;
+    let canonical = path
+        .canonicalize()
+        .with_context(|| format!("resolving {what} {}", path.display()))?;
+    if canonical.starts_with(&source_root) {
+        anyhow::bail!(
+            "{what} {} is inside source checkout {}; choose an external {flag}",
+            canonical.display(),
+            source_root.display()
+        );
+    }
+    Ok(canonical)
 }
 
 fn unix_timestamp() -> u64 {

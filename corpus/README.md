@@ -94,6 +94,10 @@ override it, but the runner refuses a directory beneath the framework
 checkout: a nested workspace would let parent traversal and Git discovery
 cross the blindness boundary.
 
+`corpus-runner batch <archetype>...` runs a whole set through this loop in
+one command, one archetype at a time, and sanitizes and scores the results —
+see [`docs/dev/running-a-set.md`](../docs/dev/running-a-set.md).
+
 Every external process (agent, cargo build, produced binary) runs under a
 deadline — an overrun is killed (whole process group) and recorded in the
 report as a finding, so a prompting or looping produced CLI can never
