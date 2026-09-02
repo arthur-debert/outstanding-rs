@@ -207,17 +207,15 @@ fn execute(
     .into_iter()
     .flatten()
     .collect();
+    // `supervise` kills the case's whole process group before returning,
+    // whether the case exits on its own or hits its deadline, so nothing in
+    // it can still be writing into the sandbox by the time the one
+    // inventory read below runs.
     let supervised = exec::supervise(
         &mut child,
         Duration::from_secs(case.run.timeout_seconds),
         &captures,
     )?;
-    // `supervise` only kills the process group on a timeout; on a normal
-    // exit a descendant the case's process left running is still free to
-    // write into the sandbox out from under the assertions below. Nothing
-    // in the sandbox's process group can still be writing once this
-    // returns, which is what makes the one inventory read below safe.
-    exec::kill_process_group(child.id());
     drop(master); // release an attended-but-silent terminal, if any
 
     let master_text = master_capture.map(exec::Capture::text);
@@ -393,16 +391,21 @@ fn build_sandbox_inventory(root: &Path) -> Result<SandboxInventory, String> {
             let entry = entry
                 .map_err(|err| format!("reading sandbox directory {}: {err}", rel_dir.display()))?;
             let rel = rel_dir.join(entry.file_name());
-            // `DirEntry::metadata` does not follow a final symlink, same as
-            // `symlink_metadata` on the assembled path.
-            let metadata = entry
-                .metadata()
+            // `DirEntry::file_type` reads the directory-entry type directly
+            // (no extra syscall on most platforms) and, like
+            // `symlink_metadata`, never follows a final symlink — unlike
+            // `DirEntry::metadata`/`std::fs::metadata`, which do.
+            let file_type = entry
+                .file_type()
                 .map_err(|err| format!("inspecting sandbox entry {}: {err}", rel.display()))?;
-            let file_type = metadata.file_type();
             if file_type.is_dir() {
                 entries.insert(rel.clone(), SandboxEntry::Directory);
                 pending.push(rel);
             } else if file_type.is_file() {
+                let metadata = entry
+                    .metadata()
+                    .map_err(|err| format!("inspecting sandbox entry {}: {err}", rel.display()))?;
+                let remaining = MAX_INVENTORIED_BYTES.saturating_sub(total_bytes);
                 total_bytes = total_bytes.saturating_add(metadata.len());
                 if total_bytes > MAX_INVENTORIED_BYTES {
                     return Err(format!(
@@ -411,7 +414,12 @@ fn build_sandbox_inventory(root: &Path) -> Result<SandboxInventory, String> {
                         rel.display()
                     ));
                 }
-                let bytes = read_regular_file_no_follow(&root.join(&rel), MAX_INVENTORIED_BYTES)
+                // Capped at the sandbox's remaining budget, not just this
+                // file's own reported size: belt (the process-group kill
+                // ensures nothing is still writing) and braces (a file that
+                // somehow still grew past this stat still can't blow past
+                // the sandbox-wide limit during the read itself).
+                let bytes = read_regular_file_no_follow(&root.join(&rel), remaining)
                     .map_err(|err| format!("reading sandbox entry {}: {err}", rel.display()))?;
                 entries.insert(rel, SandboxEntry::File(bytes));
             } else {
@@ -435,15 +443,18 @@ pub(crate) fn read_regular_file_no_follow(path: &Path, max_bytes: u64) -> Result
     if !metadata.is_file() {
         return Err("not a regular file".to_string());
     }
-    if metadata.len() > max_bytes {
-        return Err(format!(
-            "file is {} bytes, over the {max_bytes}-byte read budget",
-            metadata.len()
-        ));
-    }
-    let mut file = open_no_follow(path).map_err(|err| err.to_string())?;
+    let file = open_no_follow(path).map_err(|err| err.to_string())?;
     let mut buf = Vec::new();
-    file.read_to_end(&mut buf).map_err(|err| err.to_string())?;
+    // Capped at the stream level, not just by the stat above: a file that
+    // grows between the stat and this read still can't make the read
+    // itself unbounded. The extra byte lets an oversized file be detected
+    // as a mismatch without reading past the cap.
+    Read::take(file, max_bytes + 1)
+        .read_to_end(&mut buf)
+        .map_err(|err| err.to_string())?;
+    if buf.len() as u64 > max_bytes {
+        return Err(format!("file is over the {max_bytes}-byte read budget"));
+    }
     Ok(buf)
 }
 

@@ -983,6 +983,35 @@ files_absent = ["conf/config_default"]
 }
 
 #[test]
+fn files_absent_ignores_content_behind_a_symlinked_directory() {
+    // A naive symlink-following walk would find `conf/secret.txt` (via
+    // `elsewhere/secret.txt`) and fail this files_absent; the inventory
+    // records the symlinked `conf` as `Other` and never descends into it,
+    // so the case passes.
+    let results = run_suite(
+        r#"
+[[case]]
+name = "symlinked-parent-hides-content"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["alpha"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+files_absent = ["conf/secret.txt"]
+"#,
+        r#"mkdir -p elsewhere; echo leaked > elsewhere/secret.txt; ln -s elsewhere conf"#,
+    );
+    assert_eq!(
+        results[0].outcome,
+        CaseOutcome::Pass,
+        "{:?}",
+        results[0].detail
+    );
+}
+
+#[test]
 fn files_assertion_accepts_a_crlf_file_normalizing_to_the_expectation() {
     let results = run_suite(
         r#"
