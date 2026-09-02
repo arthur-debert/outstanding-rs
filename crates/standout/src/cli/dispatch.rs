@@ -46,6 +46,25 @@ pub(crate) fn status_without_a_carrier(status: ExitStatus, output: &str) -> RunE
     )
 }
 
+/// Fails when `status` was declared on an output that cannot carry it.
+pub(crate) fn reject_status_without_a_carrier(
+    status: ExitStatus,
+    is_binary: bool,
+    is_artifact: bool,
+) -> Result<(), RunError> {
+    if status == ExitStatus::SUCCESS {
+        return Ok(());
+    }
+    let carrier = if is_binary {
+        "binary"
+    } else if is_artifact {
+        "artifact"
+    } else {
+        return Ok(());
+    };
+    Err(status_without_a_carrier(status, carrier))
+}
+
 fn render_time_template(
     command_path: &str,
     template: &TemplateRef,
@@ -182,14 +201,7 @@ pub(crate) fn render_handler_output<T: Serialize>(
         Ok(output) => output.split_exit_status(),
         Err(error) => return Err(handler_run_error(error)),
     };
-    if status != ExitStatus::SUCCESS && (output.is_binary() || output.is_artifact()) {
-        let carrier = if output.is_binary() {
-            "binary"
-        } else {
-            "artifact"
-        };
-        return Err(status_without_a_carrier(status, carrier));
-    }
+    reject_status_without_a_carrier(status, output.is_binary(), output.is_artifact())?;
 
     let command_path = ctx.command_path.join(".");
     let warnings = ctx

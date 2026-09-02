@@ -1742,6 +1742,134 @@ mod tests {
         assert_eq!(filename, "data.bin");
     }
 
+    fn status_without_a_carrier_message(error: HookError) -> String {
+        let source = error.source.expect("the carrier error is the source");
+        source.to_string()
+    }
+
+    #[test]
+    fn run_command_rejects_a_declared_status_on_binary_output() {
+        let standout = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .build()
+            .unwrap();
+
+        let cmd = Command::new("app").subcommand(Command::new("export"));
+        let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
+        let sub_matches = matches.subcommand_matches("export").unwrap();
+
+        let result = standout.run_command::<_, ()>(
+            "export",
+            sub_matches,
+            |_m, _ctx| {
+                Ok(HandlerOutput::Binary {
+                    data: vec![0xDE, 0xAD],
+                    filename: "data.bin".into(),
+                }
+                .with_exit_status(ExitStatus::from(2)))
+            },
+            crate::TemplateRef::Absent,
+        );
+
+        let message = status_without_a_carrier_message(result.unwrap_err());
+        assert!(
+            message.contains("exit status 2 was declared on binary output"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn run_command_rejects_a_declared_status_on_artifact_output() {
+        let standout = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .build()
+            .unwrap();
+
+        let cmd = Command::new("app").subcommand(Command::new("export"));
+        let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
+        let sub_matches = matches.subcommand_matches("export").unwrap();
+
+        let result = standout.run_command::<_, ()>(
+            "export",
+            sub_matches,
+            |_m, _ctx| {
+                Ok(HandlerOutput::Artifact(
+                    crate::cli::Artifact::new(vec![1u8]).suggest_destination("out.bin"),
+                )
+                .with_exit_status(ExitStatus::from(2)))
+            },
+            crate::TemplateRef::Absent,
+        );
+
+        let message = status_without_a_carrier_message(result.unwrap_err());
+        assert!(
+            message.contains("exit status 2 was declared on artifact output"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn run_command_rejects_a_declared_status_a_post_output_hook_turns_into_bytes() {
+        let standout = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .hooks(
+                "test",
+                Hooks::new().post_output(|_, _ctx, output| match output {
+                    RenderedOutput::Text(text) => Ok(RenderedOutput::Binary(
+                        text.raw.into_bytes(),
+                        "rendered.bin".into(),
+                    )),
+                    other => Ok(other),
+                }),
+            )
+            .build()
+            .unwrap();
+
+        let cmd = Command::new("app").subcommand(Command::new("test"));
+        let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
+        let sub_matches = matches.subcommand_matches("test").unwrap();
+
+        let result = standout.run_command(
+            "test",
+            sub_matches,
+            |_m, _ctx| {
+                Ok(HandlerOutput::Render(serde_json::json!({"value": 1}))
+                    .with_exit_status(ExitStatus::from(2)))
+            },
+            crate::TemplateRef::Inline("{{ value }}".to_string()),
+        );
+
+        let message = status_without_a_carrier_message(result.unwrap_err());
+        assert!(
+            message.contains("exit status 2 was declared on binary output"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn run_command_drops_a_declared_status_on_render_output() {
+        let standout = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .build()
+            .unwrap();
+
+        let cmd = Command::new("app").subcommand(Command::new("test"));
+        let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
+        let sub_matches = matches.subcommand_matches("test").unwrap();
+
+        let result = standout.run_command(
+            "test",
+            sub_matches,
+            |_m, _ctx| {
+                Ok(HandlerOutput::Render(serde_json::json!({"value": 1}))
+                    .with_exit_status(ExitStatus::from(2)))
+            },
+            crate::TemplateRef::Inline("{{ value }}".to_string()),
+        );
+
+        assert_eq!(result.unwrap().as_text(), Some("1"));
+    }
+
     #[test]
     fn test_dispatch_with_post_dispatch_hook() {
         use serde_json::json;

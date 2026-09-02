@@ -48,9 +48,10 @@ status declared on `Output::Binary` or `Output::Artifact` is a render error
 (`1`), since those outcomes carry no status of their own. `ListViewBuilder::
 empty_exit_status(n)` is the list case: `ListViewResult::into_output` (or the
 builder's `output()`) applies the status only when `items` is empty. The
-capture API (`App::run_command`) returns rendered output with no status, so a
-declared status is visible through `run`, `run_emitted`, `dispatch`,
-`run_with` and the test harness, which report it through `exit_status()`.
+capture API (`App::run_command`) returns rendered output with no status (it
+still reports the binary and artifact case as an error), so a declared status
+is visible through `run`, `run_emitted`, `dispatch`, `run_with` and the test
+harness, which report it through `exit_status()`.
 
 The failure rows describe the human modes (`auto`, `term`, `text` and
 `term-debug`); under a structured mode a failure is the stdout document
