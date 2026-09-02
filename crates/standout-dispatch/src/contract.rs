@@ -1,4 +1,4 @@
-//! The versioned contract surface (`docs/spec/parity-machine-contract.md`, D4).
+//! The versioned contract surface (`docs/topics/stability.md`).
 //!
 //! A type that implements [`ContractSurface`] names the version of the shape
 //! it serializes to. `T::envelope(self)` wraps a value as an [`Envelope`],

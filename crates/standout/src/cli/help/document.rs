@@ -1,5 +1,5 @@
 //! The help document: what `--help`, `-h` and the `help` word answer with
-//! under `json` and `yaml` (`docs/spec/parity-machine-contract.md`, D9).
+//! under `json` and `yaml` (`docs/topics/standout-help.md`).
 //!
 //! It is built from the same clap tree as the human page, after `build()`,
 //! so clap's own `-h`/`--help` and `-V`/`--version` are among its `args`.

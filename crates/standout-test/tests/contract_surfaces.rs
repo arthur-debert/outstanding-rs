@@ -1,6 +1,6 @@
-//! The versioned contract surfaces of `docs/spec/parity-machine-contract.md`
-//! (D4, D9) as a process observes them: the app-declared envelope, the
-//! framework documents carrying `schema_version`, and the help document.
+//! The versioned contract surfaces as a process observes them: the
+//! app-declared envelope, the framework documents carrying `schema_version`,
+//! and the help document.
 //! The two `brewlike` cases tagged `group = "schema-version"` in
 //! `corpus/archetypes/brewlike/acceptance.toml` are mirrored here verbatim.
 

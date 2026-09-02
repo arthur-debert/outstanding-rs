@@ -947,7 +947,7 @@ impl App {
         )
     }
 
-    /// The versioned help document (spec D9) for the command at `path`,
+    /// The versioned help document for the command at `path`,
     /// never paged; a `csv` request is the render error the mode has no
     /// projection for.
     fn help_document(
