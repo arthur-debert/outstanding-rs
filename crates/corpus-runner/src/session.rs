@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context};
 
 use crate::broker::Broker;
+use crate::digest;
 use crate::exec;
 use crate::report::SessionReport;
 use crate::workspace;
@@ -78,6 +79,11 @@ pub fn run_agent(
     let wall_seconds = started.elapsed().as_secs_f64();
 
     let stats = stream_json_stats(&read_tail(transcript_path, TRANSCRIPT_TAIL_BYTES));
+    // The hash of the transcript as the runner wrote it, before any later
+    // sanitization pass touches the bytes on disk; sanitize-run.py recomputes
+    // and overwrites this field to match the bytes it rewrites.
+    let transcript_sha256 = hash_transcript(transcript_path)
+        .with_context(|| format!("hashing transcript {}", transcript_path.display()))?;
 
     Ok(SessionReport {
         agent_cmd: agent_cmd.to_string(),
@@ -88,7 +94,19 @@ pub fn run_agent(
         input_tokens: stats.input_tokens,
         output_tokens: stats.output_tokens,
         transcript: TRANSCRIPT_FILENAME.to_string(),
+        transcript_sha256: Some(transcript_sha256),
     })
+}
+
+// Streamed rather than read whole: a transcript can run to tens of megabytes.
+fn hash_transcript(path: &Path) -> anyhow::Result<String> {
+    use sha2::{Digest, Sha256};
+    let file = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut reader, &mut hasher)
+        .with_context(|| format!("reading {}", path.display()))?;
+    Ok(digest::hex(hasher.finalize()))
 }
 
 // A bare name is searched on the runner's own PATH, as the shell it replaces would.

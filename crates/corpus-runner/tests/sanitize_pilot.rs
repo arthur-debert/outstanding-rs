@@ -7,6 +7,70 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use sha2::{Digest, Sha256};
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+#[test]
+fn the_stored_digest_names_the_sanitized_transcript_not_the_raw_one() {
+    let temp = tempfile::tempdir().unwrap();
+    let temp_root = fs::canonicalize(temp.path()).unwrap();
+    let run = temp_root.join("run");
+    let workspace = run.join("workspace");
+    let dest = temp_root.join("sanitized");
+    fs::create_dir_all(&workspace).unwrap();
+
+    let raw_transcript = format!(
+        "{{\"type\":\"system\",\"subtype\":\"init\",\"cwd\":{:?},\"session_id\":\"12345678-ABCD-1234-ABCD-123456789ABC\"}}\n",
+        workspace.to_string_lossy(),
+    );
+    // A stale-shaped hash: what the runner hashed before sanitizing,
+    // deliberately wrong so the test fails if the sanitizer leaves it alone.
+    fs::write(
+        run.join("report.json"),
+        format!(
+            "{{\"session\":{{\"transcript\":\"transcript.jsonl\",\"transcript_sha256\":\"{}\"}}}}\n",
+            "f".repeat(64),
+        ),
+    )
+    .unwrap();
+    fs::write(run.join("transcript.jsonl"), &raw_transcript).unwrap();
+
+    let script =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/sanitize-run.py");
+    let output = Command::new("python3")
+        .arg(script)
+        .arg(&run)
+        .arg(&dest)
+        .env("HOME", &temp_root)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "sanitizer failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let sanitized_transcript = fs::read(dest.join("transcript.jsonl")).unwrap();
+    // The sanitizer actually changed the bytes, or this test would not tell
+    // a recomputed hash apart from the stale one it started with.
+    assert_ne!(sanitized_transcript, raw_transcript.as_bytes());
+    let expected = sha256_hex(&sanitized_transcript);
+
+    let report: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(dest.join("report.json")).unwrap()).unwrap();
+    assert_eq!(
+        report["session"]["transcript_sha256"].as_str(),
+        Some(expected.as_str()),
+        "{report}"
+    );
+}
+
 #[test]
 fn sanitizer_prefers_specific_paths_without_rewriting_bare_usernames() {
     let temp = tempfile::tempdir().unwrap();
@@ -37,7 +101,7 @@ fn sanitizer_prefers_specific_paths_without_rewriting_bare_usernames() {
     .unwrap();
 
     let script =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/pilot/sanitize-run.py");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/sanitize-run.py");
     let output = Command::new("python3")
         .arg(script)
         .arg(&run)
@@ -88,7 +152,7 @@ fn a_named_account_is_replaced_everywhere_it_appears_as_a_word() {
     .unwrap();
 
     let script =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/pilot/sanitize-run.py");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/sanitize-run.py");
     let output = Command::new("python3")
         .arg(script)
         .arg(&run)
@@ -111,17 +175,30 @@ fn a_named_account_is_replaced_everywhere_it_appears_as_a_word() {
 }
 
 #[test]
-fn committed_pilot_transcripts_use_the_specific_workspace_placeholder() {
-    let runs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/pilot/runs");
-    for entry in fs::read_dir(runs).unwrap() {
-        let transcript = entry.unwrap().path().join("transcript.jsonl");
-        let text = fs::read_to_string(&transcript).unwrap();
-        assert!(
-            !text.contains("[run]/workspace"),
-            "{} contains the shadowed workspace placeholder",
-            transcript.display()
-        );
+fn fixture_transcripts_use_the_specific_workspace_placeholder() {
+    let runs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pilot/runs");
+    let mut checked = 0;
+    for entry in fs::read_dir(&runs).unwrap() {
+        let run = entry.unwrap().path();
+        for file in fs::read_dir(&run).unwrap() {
+            let file = file.unwrap().path();
+            if !file.is_file() || file.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+                continue;
+            }
+            checked += 1;
+            let text = fs::read_to_string(&file).unwrap();
+            assert!(
+                !text.contains("[run]/workspace"),
+                "{} contains the shadowed workspace placeholder",
+                file.display()
+            );
+        }
     }
+    assert!(
+        checked > 0,
+        "no fixture transcript found under {}",
+        runs.display()
+    );
 }
 
 // Exact matched values, so vouching one never silences another; `example.com` is
@@ -134,6 +211,7 @@ const SCANNED_ROOTS: &[&str] = &[
     "corpus/rerun",
     "corpus/completion",
     "corpus/demo",
+    "crates/corpus-runner/tests/fixtures",
 ];
 
 fn is_email_local(c: char) -> bool {
@@ -430,7 +508,7 @@ fn committed_run_artifacts_carry_no_secret_shapes() {
     assert!(
         findings.is_empty(),
         "secret-shaped content in committed artifacts — sanitize the artifact \
-         (corpus/pilot/sanitize-run.py) or, for vouched fixture data, extend \
+         (corpus/sanitize-run.py) or, for vouched fixture data, extend \
          ALLOWED_MATCHES:\n{}",
         findings.join("\n")
     );

@@ -18,26 +18,23 @@ makes runs reproducible and comparable.
   `acceptance.toml` in the same case schema as every roster suite, but no
   `manifest.toml`. The roster's structural test exempts it by name.
 - `runs/<run-id>/` — one directory per run: the provisioned `workspace/`, the
-  per-case `cases/` sandboxes, the session `transcript.jsonl`, and the
-  durable `report.json`. Runs are artifacts, not source: `runs/` is
-  gitignored. Deliberately kept demonstration runs live under `demo/`
-  instead (report + transcript only, never the workspace). Demo transcripts
-  are sanitized before committing: host paths become placeholders, session
-  ids are zeroed, and the host's tool/plugin/connector inventory is removed
-  from the init event.
-- `pilot/` — the pilot execution's committed artifacts: one
-  `runs/<run-id>/` per pilot run (report + sanitized transcript, demo
-  rules), and `scorecard.md` — the per-archetype signals, ranked friction
-  themes, and validity verdict. `sanitize-run.py` is the sanitizer every
-  committed run goes through, pilot or not.
-- `rerun/` — the same archetypes run again against the 9.0 release, in the
-  same shape: one `runs/<run-id>/` per run and `scorecard.md`, which is
-  scorecard v2 — the re-run beside the pilot, with the agent delta between
-  them stated.
-- `completion/` — the completion six's **first** blind runs, against the
-  published 9.0 line: one `runs/<run-id>/` per run, same demo rules, and
-  `scorecard.md`. These runs have no earlier row to compare against, so that
-  scorecard is a first data point rather than a comparison.
+  per-case `cases/` sandboxes, the session transcript, and the durable
+  `report.json`. Runs are artifacts, not source: `runs/` is gitignored.
+- `demo/`, `pilot/`, `rerun/`, `completion/` — committed run evidence: one
+  `runs/<run-id>/` per run, holding `report.json` only. A run's transcript
+  never enters the repository — it stays under `--runs-dir` or the system
+  temporary directory (a set's batch invocation writes it under its own
+  `--out` directory instead); `report.json`'s `session.transcript_sha256`
+  is its fingerprint. `sanitize-run.py` is the sanitizer every committed
+  report goes through: host paths become placeholders and session ids are
+  zeroed. `demo/` is a deliberately kept demonstration set; `pilot/` is the
+  pilot four's first runs against 8.1.1, plus `scorecard.md` — the
+  per-archetype signals, ranked friction themes, and validity verdict;
+  `rerun/` is the same four against 9.0.0, plus `scorecard.md` v2 — the
+  re-run beside the pilot, with the agent delta between them stated;
+  `completion/` is the completion six's **first** blind runs, against the
+  published 9.0 line, plus `scorecard.md` as a first data point rather than
+  a comparison.
 - `scorecard.py` — computes a scorecard's objective table from committed
   reports (`scorecard.py pilot=corpus/pilot/runs rerun=corpus/rerun/runs completion=corpus/completion/runs`).
   Every scorecard's figures come from this one script under one set of
@@ -212,7 +209,10 @@ self-assessment are deliberately separate sections. The shape:
 - `session` — instrumentation: the agent command, wall seconds, exit code,
   whether the session hit its deadline (`timed_out`), and turns/token counts
   when the transcript is Claude Code stream-json; plus the transcript path
-  (always linked, relative to the run directory).
+  (always linked, relative to the run directory) and its sha256
+  (`transcript_sha256`, absent on a report written before this field
+  existed) — the transcript's fingerprint, since the file itself is not
+  committed (see Layout above).
 - `provenance` — who implemented the run: the backend the runner spawned
   (`backend`, the program's name), the version that backend announced in the
   transcript, the model the command asked for (`model_requested` — absent

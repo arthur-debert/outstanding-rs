@@ -58,6 +58,22 @@
     "output_tokens": 54684,
     "transcript": "transcript.jsonl"
   },
+  "recovered_provenance": {
+    "backend": "claude",
+    "executable_version": "2.1.252",
+    "model_requested": null,
+    "model_observed": "claude-opus-5[1m]",
+    "prompt": "Read INSTRUCTIONS.md in the current directory and carry it out completely.",
+    "settings": [
+      "--dangerously-skip-permissions",
+      "--setting-sources",
+      "",
+      "--strict-mcp-config",
+      "--output-format",
+      "stream-json",
+      "--verbose"
+    ]
+  },
   "acceptance": {
     "built": true,
     "build_detail": null,

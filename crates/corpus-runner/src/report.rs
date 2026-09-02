@@ -80,6 +80,9 @@ pub struct SessionReport {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub transcript: String,
+    // Absent on a report written before this field existed.
+    #[serde(default)]
+    pub transcript_sha256: Option<String>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
