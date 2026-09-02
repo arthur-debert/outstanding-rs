@@ -33,15 +33,18 @@ pub fn run_cases(
                         (Expected::Pass, false) => CaseOutcome::Fail,
                         (Expected::Fail, false) => CaseOutcome::ExpectedFail,
                         (Expected::Fail, true) => {
-                            let evidence_absent = case
+                            let evidence = case
                                 .gap
                                 .as_deref()
                                 .and_then(|gap| gaps.get(gap))
-                                .and_then(GapEntry::evidence)
-                                .zip(app_cargo_toml)
-                                .is_some_and(|(evidence, cargo_toml)| {
-                                    !evidence.satisfied_by(cargo_toml)
-                                });
+                                .and_then(GapEntry::evidence);
+                            let evidence_absent = match evidence {
+                                None => false,
+                                Some(evidence) => match app_cargo_toml {
+                                    Some(cargo_toml) => !evidence.satisfied_by(cargo_toml),
+                                    None => true,
+                                },
+                            };
                             if evidence_absent {
                                 CaseOutcome::HandRolledPass
                             } else {
@@ -307,6 +310,37 @@ fn sandbox_path(sandbox: &Path, rel: &str) -> Result<PathBuf, String> {
     Ok(sandbox.join(rel_path))
 }
 
+/// Walks `rel`'s intermediate directory components (not the leaf) from
+/// `sandbox` and refuses one that is a symlink, so a produced app cannot
+/// redirect a sandbox-relative assertion outside the sandbox by replacing a
+/// directory component (`conf -> /elsewhere`) with a symlink. A missing
+/// intermediate component means nothing is there to redirect through, so it
+/// stops the walk rather than erroring.
+fn reject_symlinked_ancestors(rel: &str, sandbox: &Path) -> Result<(), String> {
+    let mut current = sandbox.to_path_buf();
+    let mut components = Path::new(rel).components().peekable();
+    while let Some(component) = components.next() {
+        if components.peek().is_none() {
+            break;
+        }
+        current.push(component);
+        let metadata = match std::fs::symlink_metadata(&current) {
+            Ok(metadata) => metadata,
+            Err(_) => return Ok(()),
+        };
+        if metadata.file_type().is_symlink() {
+            return Err(format!("path {rel:?} passes through a symlinked directory"));
+        }
+    }
+    Ok(())
+}
+
+fn expectation_path(sandbox: &Path, rel: &str) -> Result<PathBuf, String> {
+    let path = sandbox_path(sandbox, rel)?;
+    reject_symlinked_ancestors(rel, sandbox)?;
+    Ok(path)
+}
+
 fn normalize_lf(text: &str) -> String {
     text.replace("\r\n", "\n")
 }
@@ -483,19 +517,25 @@ fn apply_expectations(
         }
     }
     for (rel, want) in &expect.files {
-        match sandbox_path(sandbox, rel) {
-            Ok(path) => match read_bounded_file(&path, want.len()) {
-                Ok(bytes) => match std::str::from_utf8(&bytes) {
-                    Ok(text) if bytes.len() <= want.len() && &normalize_lf(text) == want => {}
-                    _ => failures.push(format!("file {rel:?} content differs from expected")),
-                },
-                Err(err) => failures.push(format!("file {rel:?} could not be read: {err}")),
-            },
+        match expectation_path(sandbox, rel) {
+            Ok(path) => {
+                // The read cap admits every `\n` in `want` expanding from a
+                // CRLF byte on disk, so a legitimately CRLF-written file
+                // that normalizes to `want` is never rejected as oversized.
+                let cap = want.len() + want.matches('\n').count();
+                match read_bounded_file(&path, cap) {
+                    Ok(bytes) => match std::str::from_utf8(&bytes) {
+                        Ok(text) if bytes.len() <= cap && &normalize_lf(text) == want => {}
+                        _ => failures.push(format!("file {rel:?} content differs from expected")),
+                    },
+                    Err(err) => failures.push(format!("file {rel:?} could not be read: {err}")),
+                }
+            }
             Err(err) => failures.push(err),
         }
     }
     for rel in &expect.files_absent {
-        match sandbox_path(sandbox, rel) {
+        match expectation_path(sandbox, rel) {
             Ok(path) => {
                 if std::fs::symlink_metadata(&path).is_ok() {
                     failures.push(format!("file {rel:?} must not exist"));

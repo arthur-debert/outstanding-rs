@@ -12,9 +12,13 @@ use std::path::Path;
 use common::script;
 use corpus_runner::archetype::Archetype;
 use corpus_runner::cases::run_cases;
-use corpus_runner::manifest::GapEntry;
+use corpus_runner::manifest::{Evidence, GapEntry};
 use corpus_runner::report::{CaseOutcome, CaseResult};
 use corpus_runner::workspace::Isolation;
+
+fn corpus_archetypes_dir() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/archetypes")
+}
 
 fn run_suite(toml: &str, binary_body: &str) -> Vec<CaseResult> {
     run_suite_with_evidence(toml, binary_body, &BTreeMap::new(), None)
@@ -972,6 +976,91 @@ files_absent = ["conf/config_default"]
 }
 
 #[test]
+fn files_assertion_accepts_a_crlf_file_normalizing_to_the_expectation() {
+    let results = run_suite(
+        r#"
+[[case]]
+name = "crlf-target"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["alpha"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+[case.expect.files]
+"greeting.txt" = "hello\n"
+"#,
+        r#"printf 'hello\r\n' > greeting.txt"#,
+    );
+    assert_eq!(
+        results[0].outcome,
+        CaseOutcome::Pass,
+        "{:?}",
+        results[0].detail
+    );
+}
+
+#[test]
+fn files_assertion_refuses_a_symlinked_parent_directory() {
+    let results = run_suite(
+        r#"
+[[case]]
+name = "symlinked-parent"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["alpha"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+[case.expect.files]
+"conf/config_default" = "irrelevant\n"
+"#,
+        r#"mkdir -p elsewhere; echo elsewhere > elsewhere/config_default; ln -s elsewhere conf"#,
+    );
+    assert_eq!(results[0].outcome, CaseOutcome::Fail);
+    assert!(
+        results[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("symlinked directory"),
+        "{:?}",
+        results[0].detail
+    );
+}
+
+#[test]
+fn files_absent_refuses_a_symlinked_parent_directory() {
+    let results = run_suite(
+        r#"
+[[case]]
+name = "symlinked-parent-absent"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["alpha"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+files_absent = ["conf/config_default"]
+"#,
+        r#"mkdir -p elsewhere; echo elsewhere > elsewhere/config_default; ln -s elsewhere conf"#,
+    );
+    assert_eq!(results[0].outcome, CaseOutcome::Fail);
+    assert!(
+        results[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("symlinked directory"),
+        "{:?}",
+        results[0].detail
+    );
+}
+
+#[test]
 fn evidence_absent_reports_hand_rolled_pass() {
     let mut gaps = BTreeMap::new();
     gaps.insert(
@@ -1013,9 +1102,74 @@ stdout = "hello\n"
     );
     assert_eq!(with_crate[0].outcome, CaseOutcome::UnexpectedPass);
 
-    let without_manifest = run_suite_with_evidence(toml, "echo hello", &gaps, None);
-    assert_eq!(without_manifest[0].outcome, CaseOutcome::UnexpectedPass);
+    let unreadable_cargo_toml = run_suite_with_evidence(toml, "echo hello", &gaps, None);
+    assert_eq!(
+        unreadable_cargo_toml[0].outcome,
+        CaseOutcome::HandRolledPass
+    );
 
     let without_evidence = run_suite(toml, "echo hello");
     assert_eq!(without_evidence[0].outcome, CaseOutcome::UnexpectedPass);
+}
+
+#[test]
+fn config_layering_gaps_declare_the_clapfig_evidence() {
+    for (archetype_name, gap) in [
+        ("gitlike", "PAR01"),
+        ("cargolike", "PAR01"),
+        ("gcloudlike", "PAR05"),
+    ] {
+        let archetype = Archetype::load(&corpus_archetypes_dir(), archetype_name).unwrap();
+        assert_eq!(
+            archetype.gap_evidence(gap),
+            Some(Evidence::UsesCrate("clapfig")),
+            "{archetype_name}'s {gap} gap must declare uses-crate:clapfig evidence"
+        );
+
+        // The evidence check itself: a passing gap case in a workspace
+        // without clapfig reports hand-rolled-pass, not unexpected-pass.
+        let mut gaps = BTreeMap::new();
+        gaps.insert(
+            gap.to_string(),
+            GapEntry::Evidenced {
+                text: "irrelevant for this check".to_string(),
+                evidence: "uses-crate:clapfig".to_string(),
+            },
+        );
+        let toml = format!(
+            r#"
+[[case]]
+name = "gap-passes-without-clapfig"
+stresses = "hand-rolled pass detection"
+expected = "fail"
+gap = "{gap}"
+reason = "named sets not built yet"
+[case.run]
+argv = []
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+stdout = "hello\n"
+"#
+        );
+        let without_clapfig = run_suite_with_evidence(
+            &toml,
+            "echo hello",
+            &gaps,
+            Some("[dependencies]\nserde = \"1\"\n"),
+        );
+        assert_eq!(
+            without_clapfig[0].outcome,
+            CaseOutcome::HandRolledPass,
+            "{archetype_name}'s {gap} gap case must report hand-rolled-pass without clapfig"
+        );
+
+        let with_clapfig = run_suite_with_evidence(
+            &toml,
+            "echo hello",
+            &gaps,
+            Some("[dependencies]\nclapfig = \"0.24\"\n"),
+        );
+        assert_eq!(with_clapfig[0].outcome, CaseOutcome::UnexpectedPass);
+    }
 }
