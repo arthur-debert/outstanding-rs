@@ -1308,6 +1308,12 @@ impl App {
             None => output,
         };
         reject_status_without_a_carrier(output.is_binary(), output.is_artifact())?;
+        super::dispatch::reject_payload_under_stream(
+            output_mode,
+            output.is_binary(),
+            output.is_artifact(),
+        )
+        .map_err(|e| HookError::post_output("Render error").with_source(e))?;
         Ok(output)
     }
 

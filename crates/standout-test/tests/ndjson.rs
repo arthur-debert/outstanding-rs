@@ -82,7 +82,6 @@ fn app() -> App {
             "binary",
             FnHandler::new(|_, ctx| -> HandlerResult<()> {
                 ctx.stream().emit(&Entry::Version { format_version: 1 })?;
-                ctx.warn("a soft warning");
                 Ok(Output::Binary {
                     data: vec![0, 1, 2],
                     filename: "out.bin".into(),
@@ -95,7 +94,6 @@ fn app() -> App {
             "artifact",
             FnHandler::new(|_, ctx| {
                 ctx.stream().emit(&Entry::Version { format_version: 1 })?;
-                ctx.warn("a soft warning");
                 Ok(Output::Artifact(
                     Artifact::new(vec![0, 1, 2]).with_report(json!({ "entries": 3 })),
                 ))
@@ -270,7 +268,7 @@ fn a_usage_error_under_ndjson_is_a_diagnostic_line_exiting_two() {
     assert_eq!(result.expect_diagnostic().kind, DiagnosticKind::ClapUsage);
 }
 
-fn run_to_file(subcommand: &str) -> (standout_test::TestResult, Vec<u8>) {
+fn run_to_file(subcommand: &str) -> (standout_test::TestResult, String) {
     let dir = tempfile::TempDir::new().unwrap();
     let path = dir.path().join("out.ndjson");
     let result = TestHarness::new().output_mode(OutputMode::Ndjson).run(
@@ -282,18 +280,13 @@ fn run_to_file(subcommand: &str) -> (standout_test::TestResult, Vec<u8>) {
             format!("--output-file-path={}", path.display()),
         ],
     );
-    let file = std::fs::read(&path).unwrap();
+    let file = std::fs::read_to_string(&path).unwrap();
     (result, file)
-}
-
-fn stream_file(subcommand: &str) -> (standout_test::TestResult, String) {
-    let (result, file) = run_to_file(subcommand);
-    (result, String::from_utf8(file).unwrap())
 }
 
 #[test]
 fn an_output_file_under_ndjson_takes_the_entries_and_the_result_and_stdout_stays_empty() {
-    let (result, file) = stream_file("stream");
+    let (result, file) = run_to_file("stream");
     result.assert_success();
     result.assert_stderr_empty();
     assert_eq!(result.stdout_bytes(), b"", "{}", result.stdout());
@@ -308,7 +301,7 @@ fn an_output_file_under_ndjson_takes_the_entries_and_the_result_and_stdout_stays
 
 #[test]
 fn an_output_file_under_ndjson_takes_the_diagnostic_after_the_entries() {
-    let (result, file) = stream_file("fail-mid-stream");
+    let (result, file) = run_to_file("fail-mid-stream");
     result.assert_error_kind(RunErrorKind::Handler);
     result.assert_stderr_empty();
     assert_eq!(result.stdout_bytes(), b"", "{}", result.stdout());
@@ -321,7 +314,7 @@ fn an_output_file_under_ndjson_takes_the_diagnostic_after_the_entries() {
 
 #[test]
 fn an_output_file_under_ndjson_takes_the_warning_entries_too() {
-    let (result, file) = stream_file("warn");
+    let (result, file) = run_to_file("warn");
     result.assert_success();
     result.assert_stderr_empty();
     assert_eq!(result.stdout_bytes(), b"", "{}", result.stdout());
@@ -332,31 +325,57 @@ fn an_output_file_under_ndjson_takes_the_warning_entries_too() {
     assert_eq!(entries[1]["summary"], "a soft warning");
 }
 
-#[test]
-fn a_binary_payload_takes_the_output_file_and_the_stream_stays_on_stdout() {
-    let (result, file) = run_to_file("binary");
-    result.assert_success();
+fn assert_payload_is_a_render_error(result: &standout_test::TestResult) {
+    result.assert_error_kind(RunErrorKind::Render);
+    result.assert_exit_status(ExitStatus::FAILURE);
     result.assert_stderr_empty();
-    assert_eq!(file, [0, 1, 2]);
-    let entries = lines(result.stdout());
-    assert_eq!(entries.len(), 2, "{}", result.stdout());
+}
+
+fn assert_entries_are_the_version_then_the_render_error(
+    entries: &[serde_json::Value],
+    payload: &str,
+) {
+    assert_eq!(entries.len(), 2, "{payload}: {entries:?}");
     assert_eq!(entries[0]["type"], "version");
-    assert_eq!(entries[1]["severity"], "warning");
-    assert_eq!(entries[1]["summary"], "a soft warning");
+    assert_eq!(entries[1]["type"], "diagnostic");
+    assert_eq!(entries[1]["kind"], "render");
+    let summary = entries[1]["summary"].as_str().unwrap_or_default();
+    assert!(
+        summary.contains(&format!("{payload} output was produced under ndjson")),
+        "{payload}: {summary}"
+    );
 }
 
 #[test]
-fn an_artifact_payload_takes_the_output_file_and_its_report_follows_the_entries_on_stdout() {
-    let (result, file) = run_to_file("artifact");
-    result.assert_success();
-    result.assert_stderr_empty();
-    assert_eq!(file, [0, 1, 2]);
-    let entries = lines(result.stdout());
-    assert_eq!(entries.len(), 3, "{}", result.stdout());
-    assert_eq!(entries[0]["type"], "version");
-    assert_eq!(entries[1]["type"], "result");
-    assert_eq!(entries[1]["data"]["report"]["entries"], 3);
-    assert_eq!(entries[1]["data"]["receipt"]["byte_count"], 3);
-    assert_eq!(entries[2]["severity"], "warning");
-    assert_eq!(entries[2]["summary"], "a soft warning");
+fn binary_and_artifact_output_under_ndjson_are_render_errors_after_the_entries() {
+    for payload in ["binary", "artifact"] {
+        let result = TestHarness::new().output_mode(OutputMode::Ndjson).run(
+            &app(),
+            command(),
+            ["app", payload],
+        );
+        assert_payload_is_a_render_error(&result);
+        assert_eq!(result.expect_diagnostic().kind, DiagnosticKind::Render);
+        assert_entries_are_the_version_then_the_render_error(&lines(result.stdout()), payload);
+    }
+}
+
+#[test]
+fn binary_and_artifact_output_under_ndjson_with_an_output_file_leave_only_the_stream_in_it() {
+    for payload in ["binary", "artifact"] {
+        let (result, file) = run_to_file(payload);
+        assert_payload_is_a_render_error(&result);
+        assert_eq!(result.stdout_bytes(), b"", "{payload}: {}", result.stdout());
+        assert_entries_are_the_version_then_the_render_error(&lines(&file), payload);
+    }
+}
+
+#[test]
+fn binary_and_artifact_output_under_the_single_document_modes_are_untouched() {
+    let binary =
+        TestHarness::new()
+            .output_mode(OutputMode::Json)
+            .run(&app(), command(), ["app", "binary"]);
+    binary.assert_success();
+    assert_eq!(binary.stdout_bytes(), [0, 1, 2]);
 }

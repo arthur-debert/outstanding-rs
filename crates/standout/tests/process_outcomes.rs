@@ -92,7 +92,8 @@ fn real_process_routes_artifact_bytes_and_reports_to_separate_channels() {
         format!("wrote 3 entries to {}\n", override_path.display())
     );
 
-    let stream_path = tempdir.path().join("stream.bin");
+    let untouched = tempdir.path().join("untouched.bin");
+    let stream_path = tempdir.path().join("stream.ndjson");
     let stream_run = run_with_artifact_path(
         &binary,
         &[
@@ -102,33 +103,21 @@ fn real_process_routes_artifact_bytes_and_reports_to_separate_channels() {
             stream_path.to_str().unwrap(),
             "artifact",
         ],
-        &to_file,
+        &untouched,
     );
-    assert_eq!(stream_run.status.code(), Some(0));
-    assert_eq!(std::fs::read(&stream_path).unwrap(), [0, 1, 2]);
-    let report: serde_json::Value = serde_json::from_slice(&stream_run.stdout).unwrap();
-    assert_eq!(report["type"], "result");
-    assert_eq!(
-        report["data"]["receipt"]["destination"],
-        stream_path.to_str().unwrap()
-    );
+    assert_eq!(stream_run.status.code(), Some(1));
+    assert!(stream_run.stdout.is_empty());
     assert!(stream_run.stderr.is_empty());
+    assert!(!untouched.exists());
+    let stream = std::fs::read_to_string(&stream_path).unwrap();
+    let diagnostic: serde_json::Value = serde_json::from_str(stream.trim_end()).unwrap();
+    assert_eq!(diagnostic["kind"], "render");
 
-    let binary_path = tempdir.path().join("stream-binary.bin");
-    let binary_run = run(
-        &binary,
-        &[
-            "--output",
-            "ndjson",
-            "--output-file-path",
-            binary_path.to_str().unwrap(),
-            "binary",
-        ],
-    );
-    assert_eq!(binary_run.status.code(), Some(0));
-    assert_eq!(std::fs::read(&binary_path).unwrap(), [0, 1, 2]);
-    assert!(binary_run.stdout.is_empty());
-    assert!(binary_run.stderr.is_empty());
+    let binary_stream = run(&binary, &["--output", "ndjson", "binary"]);
+    assert_eq!(binary_stream.status.code(), Some(1));
+    assert!(binary_stream.stderr.is_empty());
+    let diagnostic: serde_json::Value = serde_json::from_slice(&binary_stream.stdout).unwrap();
+    assert_eq!(diagnostic["kind"], "render");
 
     let stdout_run = run_with_artifact_path(&binary, &["artifact-stdout"], &to_file);
     assert_eq!(stdout_run.status.code(), Some(0));

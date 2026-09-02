@@ -48,13 +48,13 @@ pub(crate) fn status_without_a_carrier(status: ExitStatus, output: &str) -> RunE
 
 /// Fails when `status` was declared on an output that cannot carry it.
 pub(crate) fn reject_status_without_a_carrier(
-    status: ExitStatus,
+    status: Option<ExitStatus>,
     is_binary: bool,
     is_artifact: bool,
 ) -> Result<(), RunError> {
-    if status == ExitStatus::SUCCESS {
+    let Some(status) = status else {
         return Ok(());
-    }
+    };
     let carrier = if is_binary {
         "binary"
     } else if is_artifact {
@@ -63,6 +63,37 @@ pub(crate) fn reject_status_without_a_carrier(
         return Ok(());
     };
     Err(status_without_a_carrier(status, carrier))
+}
+
+/// Under `ndjson` stdout is a stream of JSON lines with no room for a
+/// payload, so binary or artifact output there is a render error.
+pub(crate) fn payload_without_a_stream(output: &str) -> RunError {
+    RunError::new(
+        format!(
+            "{output} output was produced under ndjson; a stream carries Output::Render and \
+             Output::Silent only"
+        ),
+        RunErrorKind::Render,
+    )
+}
+
+/// Fails when `output_mode` is a stream and the output is a payload.
+pub(crate) fn reject_payload_under_stream(
+    output_mode: crate::OutputMode,
+    is_binary: bool,
+    is_artifact: bool,
+) -> Result<(), RunError> {
+    if !output_mode.is_stream() {
+        return Ok(());
+    }
+    let payload = if is_binary {
+        "binary"
+    } else if is_artifact {
+        "artifact"
+    } else {
+        return Ok(());
+    };
+    Err(payload_without_a_stream(payload))
 }
 
 fn render_time_template(
@@ -202,6 +233,7 @@ pub(crate) fn render_handler_output<T: Serialize>(
         Err(error) => return Err(handler_run_error(error)),
     };
     reject_status_without_a_carrier(status, output.is_binary(), output.is_artifact())?;
+    let status = status.unwrap_or(ExitStatus::SUCCESS);
 
     let command_path = ctx.command_path.join(".");
     let warnings = ctx

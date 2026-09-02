@@ -130,184 +130,179 @@ impl App {
         let path_str = path.join(".");
 
         let commands = self.get_commands();
-        let Some(dispatch_fn) = commands.get(&path_str) else {
-            return DispatchResult::NoMatch(matches);
-        };
-        let override_path = self.output_file_flag.as_ref().and_then(|_| {
-            matches
-                .try_get_one::<String>("_output_file_path")
-                .unwrap_or(None)
-                .map(PathBuf::from)
-        });
+        if let Some(dispatch_fn) = commands.get(&path_str) {
+            let override_path = self.output_file_flag.as_ref().and_then(|_| {
+                matches
+                    .try_get_one::<String>("_output_file_path")
+                    .unwrap_or(None)
+                    .map(PathBuf::from)
+            });
 
-        // Under `ndjson` an output file takes the stream unless the output is
-        // a payload that takes the file itself, known only after dispatch:
-        // the entries are held until then.
-        let held = override_path
-            .as_ref()
-            .filter(|_| output_mode.is_stream())
-            .map(|_| StreamCapture::default());
-        let stream = if !output_mode.is_stream() {
-            EntryStream::discarding()
-        } else if let Some(held) = &held {
-            EntryStream::writing_to(StreamSink::new(held.clone()))
-        } else {
-            EntryStream::writing_to(sink.clone())
-        };
+            // A stream's file override takes the whole stream, entries
+            // included, so the sink is retargeted before the handler runs.
+            let stream = if output_mode.is_stream() {
+                if let Some(path) = &override_path {
+                    match open_output_file(path) {
+                        Ok(file) => sink.redirect(file),
+                        Err(e) => {
+                            return DispatchResult::Error(RunError::new(
+                                format!("Error writing output: {}", e),
+                                RunErrorKind::FinalWrite(OutputKind::Text),
+                            ))
+                        }
+                    }
+                }
+                EntryStream::writing_to(sink.clone())
+            } else {
+                EntryStream::discarding()
+            };
+            let mut ctx = CommandContext::new(path, self.app_state.clone()).with_stream(stream);
+            ctx.extensions.insert(sources);
+            ctx.extensions.insert(warnings.clone());
 
-        let outcome = self.dispatch_registered(
-            dispatch_fn,
-            path,
-            &matches,
-            output_mode,
-            target,
-            sources,
-            stream,
-            warnings,
-            override_path.clone(),
-        );
-        match (held, override_path) {
-            (Some(held), Some(path)) => commit_held_stream(outcome, held.take(), &path, &sink),
-            _ => outcome,
-        }
-    }
+            let hooks = self.command_hooks.get(&path_str);
+            let sub_matches = get_deepest_matches(&matches);
 
-    #[allow(clippy::too_many_arguments)]
-    fn dispatch_registered(
-        &self,
-        dispatch_fn: &crate::cli::dispatch::DispatchFn,
-        path: Vec<String>,
-        matches: &ArgMatches,
-        output_mode: OutputMode,
-        target: TargetProperties,
-        sources: InputSources,
-        stream: EntryStream,
-        warnings: WarningBuffer,
-        override_path: Option<PathBuf>,
-    ) -> DispatchResult {
-        let path_str = path.join(".");
-        let mut ctx = CommandContext::new(path, self.app_state.clone()).with_stream(stream);
-        ctx.extensions.insert(sources);
-        ctx.extensions.insert(warnings.clone());
-
-        let hooks = self.command_hooks.get(&path_str);
-        let sub_matches = get_deepest_matches(matches);
-
-        if let Some(hooks) = hooks {
-            if let Err(e) = hooks.run_pre_dispatch(sub_matches, &mut ctx) {
-                return DispatchResult::Error(super::super::dispatch::hook_run_error(
-                    e,
-                    crate::cli::HookPhase::PreDispatch,
-                ));
-            }
-        }
-
-        let dispatch_output = match dispatch(
-            dispatch_fn,
-            sub_matches,
-            &ctx,
-            hooks,
-            output_mode,
-            &self.theme,
-            target,
-        ) {
-            Ok(output) => output,
-            Err(e) => return DispatchResult::Error(e),
-        };
-
-        let (output, request, status) = match dispatch_output {
-            DispatchOutput::Text {
-                formatted,
-                raw,
-                status,
-            } => (
-                RenderedOutput::Text(TextOutput::new(formatted, raw)),
-                None,
-                status,
-            ),
-            DispatchOutput::Binary(b, f) => {
-                (RenderedOutput::Binary(b, f), None, ExitStatus::SUCCESS)
-            }
-            DispatchOutput::Artifact { output, request } => (
-                RenderedOutput::Artifact(output),
-                Some(request),
-                ExitStatus::SUCCESS,
-            ),
-            DispatchOutput::Silent { status } => (RenderedOutput::Silent, None, status),
-        };
-
-        let mut final_output = if let Some(hooks) = hooks {
-            match hooks.run_post_output(sub_matches, &ctx, output) {
-                Ok(o) => o,
-                Err(e) => {
+            if let Some(hooks) = hooks {
+                if let Err(e) = hooks.run_pre_dispatch(sub_matches, &mut ctx) {
                     return DispatchResult::Error(super::super::dispatch::hook_run_error(
                         e,
-                        crate::cli::HookPhase::PostOutput,
+                        crate::cli::HookPhase::PreDispatch,
+                    ));
+                }
+            }
+
+            let dispatch_output = match dispatch(
+                dispatch_fn,
+                sub_matches,
+                &ctx,
+                hooks,
+                output_mode,
+                &self.theme,
+                target,
+            ) {
+                Ok(output) => output,
+                Err(e) => return DispatchResult::Error(e),
+            };
+
+            let (output, request, status) = match dispatch_output {
+                DispatchOutput::Text {
+                    formatted,
+                    raw,
+                    status,
+                } => (
+                    RenderedOutput::Text(TextOutput::new(formatted, raw)),
+                    None,
+                    status,
+                ),
+                DispatchOutput::Binary(b, f) => {
+                    (RenderedOutput::Binary(b, f), None, ExitStatus::SUCCESS)
+                }
+                DispatchOutput::Artifact { output, request } => (
+                    RenderedOutput::Artifact(output),
+                    Some(request),
+                    ExitStatus::SUCCESS,
+                ),
+                DispatchOutput::Silent { status } => (RenderedOutput::Silent, None, status),
+            };
+
+            let mut final_output = if let Some(hooks) = hooks {
+                match hooks.run_post_output(sub_matches, &ctx, output) {
+                    Ok(o) => o,
+                    Err(e) => {
+                        return DispatchResult::Error(super::super::dispatch::hook_run_error(
+                            e,
+                            crate::cli::HookPhase::PostOutput,
+                        ))
+                    }
+                }
+            } else {
+                output
+            };
+
+            if let Err(error) = super::super::dispatch::reject_payload_under_stream(
+                output_mode,
+                final_output.is_binary(),
+                final_output.is_artifact(),
+            ) {
+                return DispatchResult::Error(error);
+            }
+
+            if let RenderedOutput::Artifact(artifact) = final_output {
+                if status != ExitStatus::SUCCESS {
+                    return DispatchResult::Error(
+                        super::super::dispatch::status_without_a_carrier(status, "artifact"),
+                    );
+                }
+                // The artifact path renders its report inside `complete_artifact`,
+                // so the strict gate lives there, after that render and before any
+                // bytes are written.
+                return self.complete_artifact(artifact, request, override_path, &warnings);
+            }
+
+            // The render is complete and its diagnostics are in the capture
+            // window; enforce strict mode here, before committing to stdout or a
+            // file, so a strict failure leaves no output behind.
+            if let Some(error) = self.strict_style_tags_error(&warnings) {
+                return DispatchResult::Error(error);
+            }
+
+            if let Some(path) = override_path {
+                let dest = OutputDestination::File(path);
+
+                match &final_output {
+                    RenderedOutput::Text(t) if output_mode.is_stream() => {
+                        let written = sink.with_writer(|file| {
+                            writeln!(file, "{}", t.raw).and_then(|()| file.flush())
+                        });
+                        if let Err(e) = written {
+                            return DispatchResult::Error(RunError::new(
+                                format!("Error writing output: {}", e),
+                                RunErrorKind::FinalWrite(OutputKind::Text),
+                            ));
+                        }
+                        final_output = RenderedOutput::Silent;
+                    }
+                    RenderedOutput::Text(t) => {
+                        if let Err(e) = write_output(&t.raw, &dest) {
+                            return DispatchResult::Error(RunError::new(
+                                format!("Error writing output: {}", e),
+                                RunErrorKind::FinalWrite(OutputKind::Text),
+                            ));
+                        }
+                        final_output = RenderedOutput::Silent;
+                    }
+                    RenderedOutput::Binary(b, _) => {
+                        if let Err(e) = write_binary_output(b, &dest) {
+                            return DispatchResult::Error(RunError::new(
+                                format!("Error writing output: {}", e),
+                                RunErrorKind::FinalWrite(OutputKind::Binary),
+                            ));
+                        }
+                        final_output = RenderedOutput::Silent;
+                    }
+                    RenderedOutput::Artifact(_) => unreachable!("artifacts returned above"),
+                    RenderedOutput::Silent => {}
+                }
+            }
+
+            match final_output {
+                RenderedOutput::Text(t) => DispatchResult::Handled(
+                    RunOutput::command(t.formatted).with_exit_status(status),
+                ),
+                RenderedOutput::Binary(_, _) if status != ExitStatus::SUCCESS => {
+                    DispatchResult::Error(super::super::dispatch::status_without_a_carrier(
+                        status, "binary",
                     ))
                 }
+                RenderedOutput::Binary(b, f) => DispatchResult::Binary(b, f),
+                RenderedOutput::Artifact(_) => unreachable!("artifacts returned above"),
+                RenderedOutput::Silent => DispatchResult::Handled(
+                    RunOutput::command(String::new()).with_exit_status(status),
+                ),
             }
         } else {
-            output
-        };
-
-        if let RenderedOutput::Artifact(artifact) = final_output {
-            if status != ExitStatus::SUCCESS {
-                return DispatchResult::Error(super::super::dispatch::status_without_a_carrier(
-                    status, "artifact",
-                ));
-            }
-            // The artifact path renders its report inside `complete_artifact`,
-            // so the strict gate lives there, after that render and before any
-            // bytes are written.
-            return self.complete_artifact(artifact, request, override_path, &warnings);
-        }
-
-        // The render is complete and its diagnostics are in the capture
-        // window; enforce strict mode here, before committing to stdout or a
-        // file, so a strict failure leaves no output behind.
-        if let Some(error) = self.strict_style_tags_error(&warnings) {
-            return DispatchResult::Error(error);
-        }
-
-        if let Some(path) = override_path.filter(|_| !output_mode.is_stream()) {
-            let dest = OutputDestination::File(path);
-
-            match &final_output {
-                RenderedOutput::Text(t) => {
-                    if let Err(e) = write_output(&t.raw, &dest) {
-                        return DispatchResult::Error(RunError::new(
-                            format!("Error writing output: {}", e),
-                            RunErrorKind::FinalWrite(OutputKind::Text),
-                        ));
-                    }
-                    final_output = RenderedOutput::Silent;
-                }
-                RenderedOutput::Binary(b, _) => {
-                    if let Err(e) = write_binary_output(b, &dest) {
-                        return DispatchResult::Error(RunError::new(
-                            format!("Error writing output: {}", e),
-                            RunErrorKind::FinalWrite(OutputKind::Binary),
-                        ));
-                    }
-                    final_output = RenderedOutput::Silent;
-                }
-                RenderedOutput::Artifact(_) => unreachable!("artifacts returned above"),
-                RenderedOutput::Silent => {}
-            }
-        }
-
-        match final_output {
-            RenderedOutput::Text(t) => {
-                DispatchResult::Handled(RunOutput::command(t.formatted).with_exit_status(status))
-            }
-            RenderedOutput::Binary(_, _) if status != ExitStatus::SUCCESS => DispatchResult::Error(
-                super::super::dispatch::status_without_a_carrier(status, "binary"),
-            ),
-            RenderedOutput::Binary(b, f) => DispatchResult::Binary(b, f),
-            RenderedOutput::Artifact(_) => unreachable!("artifacts returned above"),
-            RenderedOutput::Silent => {
-                DispatchResult::Handled(RunOutput::command(String::new()).with_exit_status(status))
-            }
+            DispatchResult::NoMatch(matches)
         }
     }
 
@@ -629,9 +624,8 @@ impl App {
     /// written as the handler produces them: `run_emitted` passes the process's
     /// stdout, the test harness its stdout buffer. Under every mode but
     /// `ndjson` the stream discards and `sink` is never written; under
-    /// `ndjson` the caller writes the result and the warning entries through
-    /// the same sink, which an output file override has retargeted to the file
-    /// unless a binary or artifact payload took the file instead.
+    /// `ndjson` an output file override retargets `sink` to the file, and the
+    /// caller writes the result and the warning entries through the same sink.
     pub fn run_with_sink<I, T>(
         &self,
         cmd: Command,
@@ -859,65 +853,6 @@ fn command_matches_for_path<'a>(matches: &'a ArgMatches, path: &[&str]) -> Optio
         current = current.subcommand_matches(segment)?;
     }
     Some(current)
-}
-
-/// Under `ndjson` with an output file, the file takes the stream: the held
-/// entries, then the result, and `sink` follows it for what the caller writes
-/// next. A binary or artifact payload takes the file instead, and the entries
-/// go through `sink` as they would have without the file.
-fn commit_held_stream(
-    outcome: DispatchResult,
-    entries: Vec<u8>,
-    path: &std::path::Path,
-    sink: &StreamSink,
-) -> DispatchResult {
-    let write_failure = |e: std::io::Error, kind: OutputKind| {
-        DispatchResult::Error(RunError::new(
-            format!("Error writing output: {}", e),
-            RunErrorKind::FinalWrite(kind),
-        ))
-    };
-    let flush_entries = || sink.with_writer(|w| w.write_all(&entries).and_then(|()| w.flush()));
-    match outcome {
-        DispatchResult::Binary(bytes, _) => {
-            if let Err(e) = flush_entries() {
-                return write_failure(e, OutputKind::Text);
-            }
-            match write_binary_output(&bytes, &OutputDestination::File(path.to_path_buf())) {
-                Ok(()) => DispatchResult::Handled(RunOutput::command(String::new())),
-                Err(e) => write_failure(e, OutputKind::Binary),
-            }
-        }
-        DispatchResult::Artifact(_) => match flush_entries() {
-            Ok(()) => outcome,
-            Err(e) => write_failure(e, OutputKind::Text),
-        },
-        outcome => {
-            let mut file = match open_output_file(path) {
-                Ok(file) => file,
-                Err(e) => return write_failure(e, OutputKind::Text),
-            };
-            let written = file
-                .write_all(&entries)
-                .and_then(|()| match &outcome {
-                    DispatchResult::Handled(output) if !output.is_empty() => {
-                        writeln!(file, "{}", output)
-                    }
-                    _ => Ok(()),
-                })
-                .and_then(|()| file.flush());
-            if let Err(e) = written {
-                return write_failure(e, OutputKind::Text);
-            }
-            sink.redirect(file);
-            match outcome {
-                DispatchResult::Handled(output) => DispatchResult::Handled(
-                    RunOutput::command(String::new()).with_exit_status(output.exit_status()),
-                ),
-                outcome => outcome,
-            }
-        }
-    }
 }
 
 fn resolve_artifact_destination(
@@ -1935,6 +1870,69 @@ mod tests {
         let message = status_without_a_carrier_message(result.unwrap_err());
         assert!(
             message.contains("exit status 2 was declared on binary output"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn run_command_rejects_a_declared_success_status_on_binary_output() {
+        let standout = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .build()
+            .unwrap();
+
+        let cmd = Command::new("app").subcommand(Command::new("export"));
+        let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
+        let sub_matches = matches.subcommand_matches("export").unwrap();
+
+        let result = standout.run_command::<_, ()>(
+            "export",
+            sub_matches,
+            |_m, _ctx| {
+                Ok(HandlerOutput::Binary {
+                    data: vec![0xDE, 0xAD],
+                    filename: "data.bin".into(),
+                }
+                .with_exit_status(ExitStatus::SUCCESS))
+            },
+            crate::TemplateRef::Absent,
+            StreamSink::new(Vec::new()),
+        );
+
+        let message = status_without_a_carrier_message(result.unwrap_err());
+        assert!(
+            message.contains("exit status 0 was declared on binary output"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn run_command_rejects_a_declared_success_status_on_artifact_output() {
+        let standout = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .build()
+            .unwrap();
+
+        let cmd = Command::new("app").subcommand(Command::new("export"));
+        let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
+        let sub_matches = matches.subcommand_matches("export").unwrap();
+
+        let result = standout.run_command::<_, ()>(
+            "export",
+            sub_matches,
+            |_m, _ctx| {
+                Ok(HandlerOutput::Artifact(
+                    crate::cli::Artifact::new(vec![1u8]).suggest_destination("out.bin"),
+                )
+                .with_exit_status(ExitStatus::SUCCESS))
+            },
+            crate::TemplateRef::Absent,
+            StreamSink::new(Vec::new()),
+        );
+
+        let message = status_without_a_carrier_message(result.unwrap_err());
+        assert!(
+            message.contains("exit status 0 was declared on artifact output"),
             "{message}"
         );
     }

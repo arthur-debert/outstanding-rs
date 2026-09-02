@@ -19,7 +19,7 @@
 //! `NoMatch` handoff in every mode, since the framework then owns no stdout.
 //! Both callers write the `ndjson` bytes through the run's `StreamSink`, the
 //! destination the handler's entries already went to, so an output file
-//! override that retargeted the sink receives the rest of the stream.
+//! override that retargeted the sink receives the whole stream.
 //!
 //! The CSV form of the diagnostic is a `CsvProjection` over the document:
 //! one row whose `range` is three columns, `range_filename`, `range_line` and

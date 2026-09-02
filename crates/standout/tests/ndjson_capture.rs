@@ -133,3 +133,32 @@ fn run_command_streams_to_the_sink_it_is_given_under_ndjson_only() {
         .unwrap();
     assert!(capture.take().is_empty());
 }
+
+#[test]
+fn run_command_rejects_binary_output_under_ndjson() {
+    let matches = command_with_output_flag()
+        .try_get_matches_from(["app", "--output=ndjson", "stream"])
+        .unwrap();
+    let sub = matches.subcommand_matches("stream").unwrap();
+    let error = app()
+        .run_command::<_, ()>(
+            "stream",
+            sub,
+            |_, _| {
+                Ok(Output::Binary {
+                    data: vec![0, 1, 2],
+                    filename: "out.bin".into(),
+                })
+            },
+            TemplateRef::Absent,
+            StreamSink::new(Vec::new()),
+        )
+        .unwrap_err();
+    let source = std::error::Error::source(&error)
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    assert!(
+        source.contains("binary output was produced under ndjson"),
+        "{error}: {source}"
+    );
+}

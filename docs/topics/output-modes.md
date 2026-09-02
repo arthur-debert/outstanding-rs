@@ -333,7 +333,9 @@ already emitted, and stderr carries nothing for it. A warning is a
 `severity: warning` diagnostic entry of kind `framework` on stdout, after the
 result or the failure, instead of the stderr prose the single-document modes
 keep. `Output::Silent` writes nothing, so a handler whose entries are its whole
-result leaves only those.
+result leaves only those. Binary and artifact output are render errors under
+`ndjson`, decided before anything is written: a stream of JSON lines has no
+room for a payload.
 
 ### Handler-emitted entries
 
@@ -394,12 +396,9 @@ Behavior:
 - Text output: written to file, nothing printed to stdout
 - Binary output: written to the requested file instead of stdout
 - Silent output: no-op
-- `ndjson`: the file takes the stream, the handler's entries, then the
-  `result` or `diagnostic` entry, then the warning entries, and stdout carries
-  nothing. The entries reach the file once the run completes, because a binary
-  or artifact payload takes the file instead: the file then holds only the
-  payload, and the entries, the artifact report and the warning entries stay
-  on stdout.
+- `ndjson`: the file is the stream. It is opened before the handler runs and
+  receives the handler's entries as they are emitted, then the `result` or
+  `diagnostic` entry, then the warning entries; stdout carries nothing.
 
 After writing to file, stdout output is suppressed to prevent double-printing.
 
