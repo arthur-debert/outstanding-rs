@@ -16,8 +16,7 @@ use crate::sandbox::{self, Policy};
 
 const PUBLISHED_DOCS: &[&str] = &["index.md", "intro.md", "guides", "topics", "crates"];
 
-// The keys an untrusted phase's environment carries. CLAUDE_CODE_TMPDIR is
-// set for the agent phase alone (see [`Isolation::apply_agent`]).
+// CLAUDE_CODE_TMPDIR is added for the agent phase alone, by `Isolation::apply_agent`.
 pub const ENV_ALLOWLIST: &[&str] = &[
     "PATH",
     "HOME",
@@ -100,8 +99,7 @@ impl Isolation {
         read.push(writable.to_path_buf());
         Policy::new(
             read,
-            // `Stdio::null()` opens `/dev/null` for writing, so it must
-            // stay admitted or a child that nulls a stream fails with EPERM.
+            // `Stdio::null()` opens `/dev/null` for writing; denied, it fails with EPERM.
             vec![
                 writable.to_path_buf(),
                 home.to_path_buf(),
@@ -114,12 +112,8 @@ impl Isolation {
 
     pub fn apply_agent(&self, command: &mut Command) -> Result<(), String> {
         apply_phase_env(command, &self.agent_home);
-        // The default backend keeps a per-uid scratch directory (shell
-        // snapshots, tool sockets) under /tmp rather than under TMPDIR. The
-        // write policy denies it, and a session that cannot create it loses
-        // its shell — it can write code but never build or run it. Point
-        // that scratch into the disposable home: a different backend
-        // invocation, not a wider policy.
+        // Claude Code keeps its shell scratch under /tmp, not TMPDIR; denied it, the
+        // session loses its shell. Redirected into the disposable home, not admitted.
         command.env("CLAUDE_CODE_TMPDIR", self.agent_home.join("tmp"));
         sandbox::apply(
             command,
@@ -158,10 +152,8 @@ impl Isolation {
         let probe_log = self.workspace_root.join(".boundary-probe.log");
         let _ = std::fs::remove_file(&probe_log);
         let mut command = Command::new("sh");
-        // Real opens via shell redirection, not `test -r`, since Landlock
-        // leaves access(2) unrestricted. `true` (a regular builtin), not
-        // `:` (a special builtin), avoids dash aborting the whole script on
-        // a redirection error before the enclosing `if` sees the denial.
+        // Real opens, not `test -r`: Landlock leaves access(2) unrestricted. `true`,
+        // not `:`, so dash does not abort the script on the redirection error.
         command
             .args([
                 "-c",
@@ -344,8 +336,7 @@ Rules:
     .to_string()
 }
 
-// The empty `[workspace]` table stops cargo walking up and adopting the
-// framework checkout's own workspace when runs sit inside it.
+// The empty `[workspace]` table stops cargo adopting the framework checkout's workspace.
 fn scaffold_manifest(binary: &str, framework_version: &str) -> String {
     format!(
         r#"[workspace]

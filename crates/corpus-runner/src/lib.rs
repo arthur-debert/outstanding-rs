@@ -32,10 +32,7 @@ pub struct RunConfig {
     pub runs_dir: PathBuf,
     pub docs_dir: PathBuf,
     pub agent_cmd: String,
-    /// Present when the agent session authenticates through the
-    /// run-credential broker (ADR-0023's amendment). Absent means the run
-    /// grants no credential exception at all, and an agent backend that
-    /// needs one fails closed.
+    /// `None` grants no credential exception: an agent backend that needs one fails closed.
     pub broker: Option<broker::BrokerConfig>,
     pub framework_version: String,
     pub timeouts: Timeouts,
@@ -140,8 +137,7 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
         &transcript_path,
         config.timeouts.agent,
     )?;
-    // The exception lasts exactly as long as the agent phase: the build and
-    // check phases that follow never reach a live broker.
+    // The build and check phases that follow never reach a live broker.
     let credential_exceptions = match &mut broker {
         Some(broker) => {
             broker.shutdown();
@@ -223,10 +219,6 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
     Ok((report, run_dir))
 }
 
-/// The keys the agent phase's environment actually carries: the blind
-/// baseline, plus the two the broker adds when the session authenticates
-/// through it. Recording the baseline alone would say a brokered run
-/// carried less than it did.
 fn agent_env_allowlist(brokered: bool) -> Vec<String> {
     let mut keys: Vec<String> = workspace::ENV_ALLOWLIST
         .iter()
@@ -300,8 +292,7 @@ pub fn reevaluate(config: &ReevaluationConfig) -> anyhow::Result<RunReport> {
         &isolation,
     );
 
-    // A schema-4 source states its own agent side; an older one leaves the
-    // recorded command as the only thing that can still be said about it.
+    // Before schema 4 the recorded command is all that can be said about the agent.
     let provenance = match source.provenance {
         Some(stated) => stated,
         None => provenance::recorded(&source.session.agent_cmd),
@@ -481,9 +472,7 @@ fn unix_timestamp() -> u64 {
         .unwrap_or(0)
 }
 
-// `create_dir` (never `create_dir_all`, which would silently adopt an
-// existing directory), retried with a numeric suffix, so two runs claiming
-// the same base id can never share a workspace, transcript, or report.
+// `create_dir`, never `create_dir_all`: adopting an existing directory would share a run.
 fn claim_run_dir(runs_dir: &Path, base: &str) -> anyhow::Result<(String, PathBuf)> {
     for attempt in 0..1000u32 {
         let run_id = if attempt == 0 {
