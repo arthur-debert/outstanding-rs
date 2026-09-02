@@ -132,7 +132,7 @@ fn filled_sheet_collects_with_answers_and_blindness_record() {
 // A rejected field (here, every required field simply unanswered) is a
 // diagnostic on a sheet that was found, not the absence of one: `collected`
 // stays true so a reader can tell "no self-report" apart from "a self-report
-// with gaps" (#462).
+// with gaps".
 #[test]
 fn unanswered_required_field_is_a_collected_report_with_no_answers() {
     let dir = tempfile::tempdir().unwrap();
@@ -158,7 +158,7 @@ fn missing_sheet_is_an_uncollected_report() {
 
 // A sheet whose structure the parser cannot make sense of at all — as
 // opposed to one that parses but has a rejected field — is the other state
-// that means no self-report was collected (#462).
+// that means no self-report was collected.
 #[test]
 fn unparseable_sheet_is_an_uncollected_report() {
     let dir = tempfile::tempdir().unwrap();
@@ -366,10 +366,10 @@ fn failing_agent_is_recorded_not_fatal() {
 }
 
 // Every script below that accepts `--output` also answers `--help` with a
-// line naming it, which is what the pre-matrix probe (#461) keys on.
+// line naming it, which is what the pre-matrix probe keys on.
 
-// A binary that declines the framework's `--output` flag (#461): `--help`
-// never mentions it.
+// A binary that declines the framework's `--output` flag: `--help` never
+// mentions it.
 const DECLINES_OUTPUT_FLAG: &str = r#"
 if [ "$1" = "--help" ]; then
   echo 'Usage: fake [--json]'
@@ -416,7 +416,7 @@ printf '\001\002opaque\377\n'
 "#;
 
 // Ignores `--output` entirely and always prints the same bytes, the way an
-// application that writes an `Artifact` to stdout does (#467): every mode's
+// application that writes an `Artifact` to stdout does: every mode's
 // content is identical, so it satisfies `opaque-bytes` rather than
 // `rendered` even though it never fails on an unknown flag.
 const ARTIFACT_LIKE: &str = r#"
@@ -425,8 +425,8 @@ echo 'kind: Pod  name: web-0'
 "#;
 
 // Its content names the output mode, so term and text diverge by design
-// (#465) even though every other identity in the cell holds: the marker and
-// JSON checks on it pass.
+// even though every other identity in the cell holds: the marker and JSON
+// checks on it pass.
 const CONTENT_NAMES_THE_MODE: &str = r#"
 if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]'; exit 0; fi
 mode=text
@@ -443,8 +443,8 @@ esac
 "#;
 
 // A binary whose help page advertises only `--output-file-path`, never
-// `--output` as its own token (#461's substring trap: naive matching would
-// read this as accepting `--output`).
+// `--output` as its own token (a substring trap: naive matching would read
+// this as accepting `--output`).
 const HELP_ADVERTISES_ONLY_OUTPUT_FILE_PATH: &str = r#"
 if [ "$1" = "--help" ]; then echo 'Usage: fake [--output-file-path <path>]'; exit 0; fi
 echo 'irrelevant'
@@ -455,6 +455,32 @@ echo 'irrelevant'
 // every produced binary).
 const HELP_MENTIONS_OUTPUT_ON_STDERR: &str = r#"
 if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]' 1>&2; exit 0; fi
+mode=text
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--output" ]; then mode="$a"; fi
+  prev="$a"
+done
+case "$mode" in
+  json) echo '{"ok": true}' ;;
+  term) printf '\033[1mHello\033[0m table\n' ;;
+  *) echo 'Hello table' ;;
+esac
+"#;
+
+// A help page naming `--no-output`, never `--output` on its own (the
+// opposite substring trap from `HELP_ADVERTISES_ONLY_OUTPUT_FILE_PATH`: a
+// longer flag that happens to end in `--output`, not start with it).
+const HELP_MENTIONS_NO_OUTPUT_NOT_OUTPUT: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--no-output]'; exit 0; fi
+echo 'irrelevant'
+"#;
+
+// Well-behaved, but its `--help` closes the bracket immediately after
+// `--output` with no space (`[--output]`), exercising a boundary character
+// other than whitespace, `=`, or `,`.
+const HELP_MENTIONS_OUTPUT_BRACKETED_NO_SPACE: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output]'; exit 0; fi
 mode=text
 prev=""
 for a in "$@"; do
@@ -485,9 +511,9 @@ case "$mode" in
 esac
 "#;
 
-// Artifact-like (#467's opaque-bytes shape), but hangs under `NO_COLOR`
-// (i.e. `ColorState::Off`, the matrix's first color) so that color's cell
-// never completes. `either` must not lock in a contract from that cell.
+// Artifact-like (the opaque-bytes shape), but hangs under `NO_COLOR` (i.e.
+// `ColorState::Off`, the matrix's first color) so that color's cell never
+// completes. `either` must not lock in a contract from that cell.
 const ARTIFACT_LIKE_TIMES_OUT_WHEN_COLOR_OFF: &str = r#"
 if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]'; exit 0; fi
 if [ -n "$NO_COLOR" ]; then sleep 30; fi
@@ -509,6 +535,29 @@ for a in "$@"; do
   prev="$a"
 done
 if [ -n "$NO_COLOR" ] && [ "$mode" != "text" ]; then sleep 30; fi
+echo 'kind: Pod  name: web-0'
+"#;
+
+// Artifact-like, but under `NO_COLOR` its `json`-mode run exits nonzero with
+// output that happens to parse as JSON (an error body), while `term` and
+// `text` hang. That json run's exit status must gate it out of settling
+// `either` as `rendered`; the second color's cell runs every mode cleanly
+// and reveals the artifact-like, opaque-bytes shape.
+const ARTIFACT_LIKE_JSON_MODE_FAILS_WITH_JSON_LOOKING_OUTPUT_WHEN_COLOR_OFF: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]'; exit 0; fi
+mode=text
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--output" ]; then mode="$a"; fi
+  prev="$a"
+done
+if [ -n "$NO_COLOR" ]; then
+  if [ "$mode" = "json" ]; then
+    echo '{"error": "boom"}'
+    exit 1
+  fi
+  sleep 30
+fi
 echo 'kind: Pod  name: web-0'
 "#;
 
@@ -668,7 +717,7 @@ fn hanging_binary_times_out_as_a_finding() {
         .all(|c| c.detail.as_deref().unwrap().contains("timed out")));
 }
 
-// #461: an app that declines `--output` (`--help` never names it) reads
+// An app that declines `--output` (`--help` never names it) reads
 // `not-applicable` on every mode cell instead of failing an unknown-flag
 // error on all of them.
 #[test]
@@ -696,9 +745,9 @@ fn binary_declining_the_output_flag_reads_not_applicable_not_failed() {
         .all(|c| c.detail.as_deref() == Some("no output flag")));
 }
 
-// #467: `contract = "either"` resolves to `rendered` when the binary's json
-// mode actually parses as JSON, and scores exactly as a `rendered`
-// declaration would.
+// `contract = "either"` resolves to `rendered` when the binary's json mode
+// actually parses as JSON, and scores exactly as a `rendered` declaration
+// would.
 #[test]
 fn either_contract_resolves_to_rendered_for_a_well_behaved_binary() {
     let dir = tempfile::tempdir().unwrap();
@@ -726,10 +775,10 @@ fn either_contract_resolves_to_rendered_for_a_well_behaved_binary() {
     );
 }
 
-// #467: kubelike's shape — an app that writes an `Artifact` to stdout, whose
+// kubelike's shape — an app that writes an `Artifact` to stdout, whose
 // bytes are identical whatever `--output` says. Declared `rendered`
-// spec-first, `contract = "either"` resolves it to `opaque-bytes` instead of
-// failing `stdout parses as JSON` on every cell.
+// spec-first, `contract = "either"` resolves it to `opaque-bytes` instead
+// of failing `stdout parses as JSON` on every cell.
 #[test]
 fn either_contract_resolves_to_opaque_bytes_for_an_artifact_style_binary() {
     let dir = tempfile::tempdir().unwrap();
@@ -754,8 +803,8 @@ fn either_contract_resolves_to_opaque_bytes_for_an_artifact_style_binary() {
         .all(|c| c.status == InvariantStatus::NotApplicable));
 }
 
-// #465: cargolike's shape — `config list` names the resolved output mode as
-// part of its content, so term and text diverge by design. Default
+// cargolike's shape — `config list` names the resolved output mode as part
+// of its content, so term and text diverge by design. Default
 // (`equal_across_modes = true`) reports the divergence as a failure.
 #[test]
 fn content_that_names_the_mode_fails_the_cross_mode_check_by_default() {
@@ -787,7 +836,7 @@ fn content_that_names_the_mode_fails_the_cross_mode_check_by_default() {
     );
 }
 
-// #465: `equal_across_modes = false` reads that same divergence as
+// `equal_across_modes = false` reads that same divergence as
 // `not-applicable` instead — the identity stays present with a reason,
 // nothing fails, and every other check on the command still runs.
 #[test]
@@ -839,8 +888,8 @@ fn equal_across_modes_false_skips_the_cross_mode_check() {
         ));
 }
 
-// #461: a help page that only ever names `--output-file-path` does not
-// satisfy the probe for `--output` as its own flag: a substring match would
+// A help page that only ever names `--output-file-path` does not satisfy
+// the probe for `--output` as its own flag: a substring match would
 // wrongly treat this as accepting `--output`.
 #[test]
 fn help_page_advertising_only_output_file_path_reads_no_output_flag() {
@@ -867,7 +916,62 @@ fn help_page_advertising_only_output_file_path_reads_no_output_flag() {
         .all(|c| c.detail.as_deref() == Some("no output flag")));
 }
 
-// #461: the probe reads stderr too — clap prints `--help` to stdout, but the
+// A help page naming `--no-output` must not be misread as accepting
+// `--output`: the flag boundary applies on both sides of the match, not
+// just after it.
+#[test]
+fn help_page_naming_no_output_reads_no_output_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", HELP_MENTIONS_NO_OUTPUT_NOT_OUTPUT);
+    let invariants = Invariants {
+        commands: vec![rendered(&["greet"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    assert_eq!(cells.len(), 30);
+    assert!(cells
+        .iter()
+        .all(|c| c.status == InvariantStatus::NotApplicable));
+    assert!(cells
+        .iter()
+        .all(|c| c.detail.as_deref() == Some("no output flag")));
+}
+
+// `--output` closing a bracket group with no space (`[--output]`) is still
+// its own token: the boundary check must accept punctuation other than
+// whitespace, `=`, or `,` on either side.
+#[test]
+fn help_page_naming_output_bracketed_with_no_space_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", HELP_MENTIONS_OUTPUT_BRACKETED_NO_SPACE);
+    let invariants = Invariants {
+        commands: vec![rendered(&["greet"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    assert_eq!(cells.len(), 30);
+    assert!(cells.iter().all(|c| c.status != InvariantStatus::Fail));
+    assert!(cells
+        .iter()
+        .filter(|c| c.check == "exits 0")
+        .all(|c| c.status == InvariantStatus::Pass));
+}
+
+// The probe reads stderr too — clap prints `--help` to stdout, but the
 // probe must not assume every produced binary does, or it would misclassify
 // a binary that documents `--output` on stderr as declining it.
 #[test]
@@ -894,7 +998,7 @@ fn help_page_naming_output_on_stderr_is_detected() {
         .all(|c| c.status == InvariantStatus::Pass));
 }
 
-// #461: a `--help` invocation that itself fails (nonzero exit, no mention of
+// A `--help` invocation that itself fails (nonzero exit, no mention of
 // `--output` on either stream) must not be read as the binary declining
 // `--output` — it lets the matrix run so the real invocations report
 // whatever that failure actually is.
@@ -962,10 +1066,10 @@ fn applicability_reason_names_the_contract_mismatch_not_mode_variance() {
         .all(|c| c.detail.as_deref() == Some("rendered command uses render invariants")));
 }
 
-// #467: `either` resolves from the first cell whose runs actually executed.
-// The matrix's first color (`off`, via `NO_COLOR`) times out on this binary
-// and locks in nothing; the second color (`on`) runs normally and reveals
-// the artifact-like, opaque-bytes shape. A resolver that locked in from the
+// `either` resolves from the first cell whose runs actually executed. The
+// matrix's first color (`off`, via `NO_COLOR`) times out on this binary and
+// locks in nothing; the second color (`on`) runs normally and reveals the
+// artifact-like, opaque-bytes shape. A resolver that locked in from the
 // failed first cell would default to `rendered` and fail "stdout parses as
 // JSON" on the `on` cells instead.
 #[test]
@@ -993,7 +1097,7 @@ fn either_contract_skips_a_first_cell_that_never_ran() {
         .all(|c| c.status == InvariantStatus::NotApplicable));
 }
 
-// #467: a cell whose lone successful run supplies no positive rendered or
+// A cell whose lone successful run supplies no positive rendered or
 // opaque-bytes evidence must not settle `either` either — only a cell that
 // actually establishes one of the two may lock it in. The first color's
 // cell here runs only `text` (no JSON to parse, nothing to compare it
@@ -1008,6 +1112,43 @@ fn either_contract_waits_for_a_cell_that_actually_settles_it() {
         dir.path(),
         "fake",
         ARTIFACT_LIKE_ONLY_TEXT_MODE_RUNS_WHEN_COLOR_OFF,
+    );
+    let invariants = Invariants {
+        commands: vec![either(&["get", "pods"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        Duration::from_millis(200),
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    let on_cells: Vec<_> = cells.iter().filter(|c| c.color == "on").collect();
+    assert!(!on_cells.is_empty());
+    assert!(on_cells.iter().all(|c| c.status != InvariantStatus::Fail));
+    assert!(on_cells
+        .iter()
+        .filter(|c| c.check == "stdout parses as JSON")
+        .all(|c| c.status == InvariantStatus::NotApplicable));
+}
+
+// A json-mode run that exits nonzero must not settle `either` as `rendered`
+// even though its stray output happens to parse as JSON: only a clean
+// (exit 0) run is trustworthy evidence. The first color's json run here
+// fails with a JSON-shaped error body while its other modes hang; the
+// second color's cell runs every mode cleanly and reveals the
+// artifact-like, opaque-bytes shape. A resolver that read JSON-parses
+// without checking the exit code would lock in `rendered` from the failing
+// first cell and fail "stdout parses as JSON" on the `on` cells instead.
+#[test]
+fn either_contract_ignores_json_parsing_stray_output_from_a_failed_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(
+        dir.path(),
+        "fake",
+        ARTIFACT_LIKE_JSON_MODE_FAILS_WITH_JSON_LOOKING_OUTPUT_WHEN_COLOR_OFF,
     );
     let invariants = Invariants {
         commands: vec![either(&["get", "pods"])],
