@@ -1,76 +1,8 @@
-//! Core rendering functions.
-//!
-//! # Function Hierarchy
-//!
-//! The render functions form a layered hierarchy, from simple to fully explicit:
-//!
-//! ## Basic Rendering (template → styled string)
-//!
-//! | Function | Output Mode | Color Mode | Use When |
-//! |----------|-------------|------------|----------|
-//! | [`crate::render_request`] | On the request | On [`crate::TargetProperties`] | Pure entry; explicit [`crate::RenderRequest`] |
-//! | [`render`] | Auto-detect | Auto-detect | Simple cases, let Standout decide |
-//! | [`render_with_output`] | Explicit | Auto-detect | Honoring `--output` CLI flag |
-//! | [`render_with_mode`] | Explicit | Explicit | Tests, or forcing light/dark mode |
-//!
-//! ## Auto-Dispatch (render or serialize based on mode)
-//!
-//! For structured modes (Json, Yaml, Csv, Ndjson), these skip templating and
-//! serialize data directly. For text modes, they render the template.
-//!
-//! | Function | Extra Features |
-//! |----------|----------------|
-//! | [`render_auto`] | Basic auto-dispatch |
-//! | [`render_auto_with_spec`] | CSV column specification |
-//! | [`render_auto_with_context`] | Context injection |
-//!
-//! ## With Context Injection
-//!
-//! Inject additional values (beyond handler data) into templates:
-//!
-//! | Function | Structured Output |
-//! |----------|-------------------|
-//! | [`render_with_context`] | No (template only) |
-//! | [`render_auto_with_context`] | Yes (auto-dispatch) |
-//!
-//! # Two-Pass Rendering
-//!
-//! Templates use tag-based syntax for styling: `[name]content[/name]`
-//!
-//! The rendering process works in two passes:
-//! 1. MiniJinja pass: Variable substitution and template logic
-//! 2. BBParser pass: Style tag processing (`[tag]...[/tag]`)
-//!
-//! This allows templates like:
-//! ```text
-//! [title]{{ data.title }}[/title]: [count]{{ items | length }}[/count] items
-//! ```
-//!
-//! # Feature Support Matrix
-//!
-//! Different rendering approaches support different features:
-//!
-//! | Approach | Includes | Per-call Mode | Styles | Use Case |
-//! |----------|----------|---------------|--------|----------|
-//! | [`Renderer`] | ✓ | ✓* | ✓ | Pre-compiled templates, hot reload |
-//! | [`App::render`] | ✓ | ✓ | ✓ | CLI apps with embedded templates |
-//! | [`render`] / [`render_auto`] | ✗ | ✓ | ✓ | One-off template strings |
-//!
-//! *Use [`Renderer::set_output_mode`] to change mode between renders.
-//!
-//! ## Template Includes
-//!
-//! Template includes (`{% include "partial" %}`) require a template registry.
-//! The standalone `render*` functions take a template string, not a name,
-//! so they cannot resolve includes to other templates.
-//!
-//! For includes, use either:
-//! - [`Renderer`] with [`add_template`](Renderer::add_template) or
-//!   [`with_embedded_source`](Renderer::with_embedded_source)
-//! - `standout_render::cli::App` with embedded templates via the builder (requires `standout` crate)
-//!
-//! [`Renderer`]: super::renderer::Renderer
-//! [`Renderer::set_output_mode`]: super::renderer::Renderer::set_output_mode
+//! Convenience render entry points that build a [`crate::RenderRequest`]
+//! from detected or explicit settings and delegate to
+//! [`crate::render_request`]. They take a template string rather than a
+//! name, so `{% include %}` cannot resolve from them; use
+//! [`Renderer`](super::renderer::Renderer) for includes.
 
 use serde::Serialize;
 use standout_bbparser::{BBParser, TagTransform, UnknownTagBehavior};
@@ -443,7 +375,6 @@ pub fn render_auto_with_engine_split_inline(
     )
 }
 
-// Request path: color_mode/icon_mode come from the request, not a detector.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_engine_split_inline(
     engine: &dyn super::TemplateEngine,
@@ -492,7 +423,6 @@ pub fn render_auto_with_engine_split_named(
     )
 }
 
-// Request path: color_mode/icon_mode come from the request, not a detector.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_engine_split_named(
     engine: &dyn super::TemplateEngine,

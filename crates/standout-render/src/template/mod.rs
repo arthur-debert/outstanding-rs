@@ -15,10 +15,6 @@
 //! dispatches structured modes — JSON/YAML/CSV — straight to
 //! serialization, skipping the template entirely).
 //!
-//! [`TemplateRegistry`] resolves file-based templates with priority: inline →
-//! embedded (compile-time) → file-based, across `.jinja`/`.jinja2`/`.j2`/
-//! `.stpl`/`.txt`.
-//!
 //! See also [`crate::theme`] for style definitions, [`crate::tabular`] for
 //! column filters, and [`crate::context`] for context injection.
 

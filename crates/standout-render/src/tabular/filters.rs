@@ -342,10 +342,8 @@ fn register_table_functions(env: &mut Environment<'static>, widths: RenderWidthS
     );
 }
 
-/// Flattens the `rows=` argument into the cell strings the width resolver
-/// measures. Anything that is not an array of arrays is an error rather than a
-/// one-cell row: a template that passes a mapping or a scalar would otherwise
-/// measure a debug rendering of it and size the table to that.
+/// Rejects anything that is not an array of arrays, so a mapping or scalar
+/// never measures as a one-cell row of its debug rendering.
 fn measurable_rows(
     columns: &[Column],
     rows: &Value,
@@ -381,9 +379,7 @@ fn measurable_rows(
         .collect()
 }
 
-/// The cells of a value the template passed as an array, or `None` for
-/// anything else — a string included, whose per-character iteration would read
-/// as a row of one-character cells.
+/// `None` for anything but an array; a string's characters are not cells.
 fn array_items(value: &Value) -> Option<Vec<Value>> {
     match value.kind() {
         ValueKind::Seq | ValueKind::Iterable => value.try_iter().map(Iterator::collect).ok(),
@@ -391,12 +387,8 @@ fn array_items(value: &Value) -> Option<Vec<Value>> {
     }
 }
 
-/// Squares one row against the column list, the shape the width resolver
-/// measures. A cell the row omits measures as that column's `null_repr`,
-/// because that is what the formatter renders in its place; a column carrying
-/// `sub_columns` measures as empty, because its sub-columns are resolved per
-/// row against the parent's width, so the whole table has no single content
-/// width to grow it to.
+/// An omitted cell measures as the column's `null_repr`; a `sub_columns`
+/// column measures as empty, since its width is resolved per row.
 fn measurable_row(columns: &[Column], cells: impl IntoIterator<Item = String>) -> Vec<String> {
     let mut cells = cells.into_iter();
     columns

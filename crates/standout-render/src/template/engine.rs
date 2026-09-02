@@ -1,8 +1,5 @@
-//! Template engine abstraction.
-//!
-//! This module defines the [`TemplateEngine`] trait which allows standout-render
-//! to work with different template backends. The default implementation is
-//! [`MiniJinjaEngine`], which provides full template functionality.
+//! [`TemplateEngine`] abstracts the template backend; [`MiniJinjaEngine`] is
+//! the default.
 
 use minijinja::{Environment, Value};
 
