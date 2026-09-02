@@ -608,6 +608,7 @@ mod tests {
             crate::OutputMode::Yaml,
             crate::OutputMode::Csv,
             crate::OutputMode::Xml,
+            crate::OutputMode::Ndjson,
         ] {
             let output = render_topic(
                 &topic,

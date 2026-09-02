@@ -1302,7 +1302,7 @@ fn duplicate_help_word(claim: &str) -> SetupError {
 const HELP_PROBE_SHORT: &str = "__standout_help_short";
 const HELP_PROBE_LONG: &str = "__standout_help_long";
 
-pub(crate) const OUTPUT_MODE_FLAG_VALUES: [&str; 8] = [
+pub(crate) const OUTPUT_MODE_FLAG_VALUES: [&str; 9] = [
     "auto",
     "term",
     "text",
@@ -1311,6 +1311,7 @@ pub(crate) const OUTPUT_MODE_FLAG_VALUES: [&str; 8] = [
     "yaml",
     "xml",
     "csv",
+    "ndjson",
 ];
 
 fn parse_output_mode_flag(value: &str) -> Option<OutputMode> {
@@ -1323,6 +1324,7 @@ fn parse_output_mode_flag(value: &str) -> Option<OutputMode> {
         "yaml" => Some(OutputMode::Yaml),
         "xml" => Some(OutputMode::Xml),
         "csv" => Some(OutputMode::Csv),
+        "ndjson" => Some(OutputMode::Ndjson),
         _ => None,
     }
 }

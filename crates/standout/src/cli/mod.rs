@@ -69,14 +69,14 @@ pub use help::{
 pub use handler::{
     AppFailure, Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext,
     CommandContextInput, Diagnostic, DiagnosticKind, DiagnosticPosition, DiagnosticRange,
-    DispatchResult, ExitStatus, ExternalFailure, FnHandler, Handler, HandlerResult,
+    DispatchResult, EntryStream, ExitStatus, ExternalFailure, FnHandler, Handler, HandlerResult,
     InvalidAppStatus, InvalidExternalStatus, Output, OutputKind, RunError, RunErrorKind, RunOutput,
-    Severity, SuccessKind,
+    Severity, StreamError, StreamSink, SuccessKind,
 };
 
 pub use emit::{
-    carries_diagnostic_document, emit_run_result, parse_diagnostic, render_diagnostic,
-    DiagnosticDocumentError,
+    carries_diagnostic_document, carries_warning_entries, emit_run_result, emit_warning_entries,
+    parse_diagnostic, render_diagnostic, DiagnosticDocumentError,
 };
 
 pub use hooks::{ArtifactOutput, HookError, HookPhase, Hooks, RenderedOutput};

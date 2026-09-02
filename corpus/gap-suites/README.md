@@ -16,6 +16,8 @@ epics close:
 
 - `tests/tflike_diagnostic.rs` — gates **PAR02** (machine contract,
   `docs/spec/parity-machine-contract.md`). PAR02 is done when this group turns green.
+  Six of its seven assertions are promoted (PAR02 WS02); `-detailed-exitcode`'s
+  exit 2 on a changed plan stays wrapped until WS04.
 - `tests/tflike_progress.rs` — gates **PAR03** (terminal citizenship,
   `docs/spec/parity-terminal-citizenship.md`). PAR03 is done when this group turns green.
 - `tests/jjlike.rs` — gates the future runtime-templates parity epic, whose code is not
@@ -72,3 +74,20 @@ CORPUS_TFLIKE_BIN=/path/to/tflike CORPUS_JJLIKE_BIN=/path/to/jjlike cargo nextes
 
 Every assertion is black-box — argv in, stdout/stderr/exit status out — so the idiom
 changes of ROB05 (blessed surface) cannot invalidate it.
+
+## The in-repo tflike fixture
+
+`src/bin/tflike.rs` is the tflike binary the suites run against under plain
+`pixi run test`: the workspace's `.cargo/config.toml` sets `CORPUS_TFLIKE_BIN` to
+the fixture cargo builds beside the suites (`target/debug/tflike`), and a value
+already in the environment wins, so pointing the variable at another produced
+binary still works. Under a custom `CARGO_TARGET_DIR` export the variable yourself.
+The harness library links nothing; the fixture is the one target in this package
+built on standout.
+
+The fixture carries exactly the capability its epics have landed, so the assertions
+still wrapped keep failing against it: `-detailed-exitcode` is accepted but declares
+no exit status (PAR02 WS04), `apply` emits no lifecycle events and reports its steps
+as stderr prose in every mode (PAR03). A promoted assertion resolves the binary with
+`corpus_gap_suites::required_binary`, which panics — a broken suite — rather than
+skipping when the variable names nothing.

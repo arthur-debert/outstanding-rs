@@ -23,8 +23,10 @@ its stderr bytes writes them itself through `AppFailure`, below.
 
 ## The diagnostic document
 
-Under `--output json`, `yaml` or `csv` the framing above does not apply: the
-failure is the stdout document, and stderr carries nothing for it. The document
+Under `--output json`, `yaml`, `csv` or `ndjson` the framing above does not
+apply: the failure is the stdout document, and stderr carries nothing for it.
+Under `ndjson` the document is one line in the stream, written where the run
+failed, after the entries the handler emitted before it. The document
 is `Diagnostic` (`standout::cli::Diagnostic`): `type`, `schema_version`,
 `severity`, `kind`, `summary`, `detail`, and an optional `range`. An ordinary
 error becomes `summary` from its `Display` with an empty `detail`; a handler

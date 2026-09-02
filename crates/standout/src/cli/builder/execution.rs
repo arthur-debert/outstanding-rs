@@ -14,8 +14,8 @@ use crate::cli::default_command::ParseFailure;
 use crate::cli::dispatch::{dispatch, extract_command_path, get_deepest_matches, DispatchOutput};
 use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
 use crate::cli::handler::{
-    ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, DispatchResult, ExitStatus,
-    OutputKind, RunError, RunErrorKind, RunOutput, SuccessKind,
+    ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, DispatchResult, EntryStream,
+    ExitStatus, OutputKind, RunError, RunErrorKind, RunOutput, StreamSink, SuccessKind,
 };
 use crate::cli::hooks::{ArtifactOutput, RenderedOutput, TextOutput};
 use crate::cli::questionnaire::{
@@ -25,6 +25,7 @@ use crate::cli::questionnaire::{
 use crate::cli::ProcessOutcome;
 use crate::topics::display_with_pager;
 use crate::SetupError;
+use std::io::Write;
 
 impl AppBuilder {
     pub fn commands<F>(mut self, configure: F) -> Result<Self, SetupError>
@@ -97,6 +98,7 @@ impl App {
                     output_mode,
                     self.process_edge_target(),
                     InputSources::from_process(),
+                    StreamSink::process_stdout(),
                     warnings,
                 ),
                 output_mode,
@@ -116,6 +118,7 @@ impl App {
         output_mode: OutputMode,
         target: TargetProperties,
         sources: InputSources,
+        sink: StreamSink,
         warnings: WarningBuffer,
     ) -> DispatchResult {
         self.ensure_commands_finalized();
@@ -125,7 +128,12 @@ impl App {
 
         let commands = self.get_commands();
         if let Some(dispatch_fn) = commands.get(&path_str) {
-            let mut ctx = CommandContext::new(path, self.app_state.clone());
+            let stream = if output_mode.is_stream() {
+                EntryStream::writing_to(sink)
+            } else {
+                EntryStream::discarding()
+            };
+            let mut ctx = CommandContext::new(path, self.app_state.clone()).with_stream(stream);
             ctx.extensions.insert(sources);
             ctx.extensions.insert(warnings.clone());
 
@@ -246,6 +254,7 @@ impl App {
         args: I,
         target: TargetProperties,
         sources: InputSources,
+        sink: StreamSink,
         warnings: WarningBuffer,
     ) -> (DispatchResult, OutputMode)
     where
@@ -356,7 +365,7 @@ impl App {
         }
 
         (
-            self.dispatch_with_target(matches, output_mode, target, sources, warnings),
+            self.dispatch_with_target(matches, output_mode, target, sources, sink, warnings),
             output_mode,
         )
     }
@@ -400,7 +409,7 @@ impl App {
         let stderr = std::io::stderr();
         let mut stdout = stdout.lock();
         let mut stderr = stderr.lock();
-        let (handled, final_write_failure) = if paged {
+        let (handled, mut final_write_failure) = if paged {
             (true, None)
         } else {
             match crate::cli::emit_run_result(
@@ -413,15 +422,23 @@ impl App {
                 Err(failure) => (true, Some(failure)),
             }
         };
+        if let Err(failure) =
+            crate::cli::emit_warning_entries(&warnings, result.output_mode(), &mut stdout)
+        {
+            let _ = writeln!(stderr, "{}", failure).and_then(|()| stderr.flush());
+            final_write_failure.get_or_insert(failure);
+        }
         drop(stdout);
         drop(stderr);
 
-        standout_render::warnings::flush_to_stderr(
-            &self.theme,
-            result.output_mode(),
-            target,
-            &warnings,
-        );
+        if !crate::cli::carries_warning_entries(result.output_mode()) {
+            standout_render::warnings::flush_to_stderr(
+                &self.theme,
+                result.output_mode(),
+                target,
+                &warnings,
+            );
+        }
 
         let status = final_write_failure
             .as_ref()
@@ -526,8 +543,27 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
+        self.run_with_sink(cmd, args, target, sources, StreamSink::process_stdout())
+    }
+
+    /// `run_with` with the destination of `ctx.stream()` entries injected:
+    /// `run_with` streams to the process's stdout, a capture harness passes a
+    /// buffer. Under every mode but `ndjson` the stream discards and `sink`
+    /// is never written.
+    pub fn run_with_sink<I, T>(
+        &self,
+        cmd: Command,
+        args: I,
+        target: TargetProperties,
+        sources: InputSources,
+        sink: StreamSink,
+    ) -> crate::cli::CompletedRun
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
         self.collect_run_warnings(|warnings| {
-            self.dispatch_from_with_target(cmd, args, target, sources, warnings)
+            self.dispatch_from_with_target(cmd, args, target, sources, sink, warnings)
         })
     }
 

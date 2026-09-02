@@ -1,7 +1,8 @@
 //! [`OutputMode`] controls how rendering behaves, from terminal colors to
-//! structured serialization (JSON/YAML/XML/CSV, which skip template
-//! rendering entirely). `Auto` is resolved from the request
-//! ([`crate::ColorPolicy::Auto`] plus stdout capability on
+//! structured serialization (JSON/YAML/XML/CSV/NDJSON, which skip template
+//! rendering entirely). `Ndjson` is the one stream mode: stdout is a sequence
+//! of one-line JSON entries rather than a single document. `Auto` is resolved
+//! from the request ([`crate::ColorPolicy::Auto`] plus stdout capability on
 //! [`crate::TargetProperties`]) by callers at the edge — this module never
 //! probes the process itself while applying styles.
 
@@ -64,6 +65,7 @@ pub enum OutputMode {
     Yaml,
     Xml,
     Csv,
+    Ndjson,
 }
 
 impl OutputMode {
@@ -78,8 +80,18 @@ impl OutputMode {
     pub fn is_structured(&self) -> bool {
         matches!(
             self,
-            OutputMode::Json | OutputMode::Yaml | OutputMode::Xml | OutputMode::Csv
+            OutputMode::Json
+                | OutputMode::Yaml
+                | OutputMode::Xml
+                | OutputMode::Csv
+                | OutputMode::Ndjson
         )
+    }
+
+    /// Whether stdout is a stream of one-line entries rather than one
+    /// document: true only for `Ndjson`.
+    pub fn is_stream(&self) -> bool {
+        matches!(self, OutputMode::Ndjson)
     }
 }
 
@@ -124,6 +136,26 @@ mod tests {
     #[test]
     fn test_output_mode_json_is_structured() {
         assert!(OutputMode::Json.is_structured());
+    }
+
+    #[test]
+    fn ndjson_is_the_one_structured_stream_mode() {
+        assert!(OutputMode::Ndjson.is_structured());
+        assert!(OutputMode::Ndjson.is_stream());
+        assert!(!OutputMode::Ndjson.should_use_color());
+        assert!(!OutputMode::Ndjson.is_debug());
+        for mode in [
+            OutputMode::Auto,
+            OutputMode::Term,
+            OutputMode::Text,
+            OutputMode::TermDebug,
+            OutputMode::Json,
+            OutputMode::Yaml,
+            OutputMode::Xml,
+            OutputMode::Csv,
+        ] {
+            assert!(!mode.is_stream(), "{mode:?}");
+        }
     }
 
     #[test]

@@ -33,12 +33,18 @@ final rendered command text to stdout is successful early consumer termination.
 
 ## Failures under a structured mode
 
-When the resolved output mode is `json`, `yaml` or `csv`, stdout is one document
-per run — the result or the diagnostic, never both — and stderr carries nothing
-the framework wrote for the failure. Statuses do not change. An `App` or
-`External` failure still writes its verbatim bytes to stderr (ADR-0035) and adds
-the stdout document, kind `app` or `external`, with the bytes as `detail`.
-Warnings stay prose on stderr in these modes, because the document has one root.
+When the resolved output mode is `json`, `yaml`, `csv` or `ndjson`, stdout
+carries the result or the diagnostic, never both, and stderr carries nothing
+the framework wrote for the failure. In the single-document modes that is one
+document per run; under `ndjson` the diagnostic is one compact line at the
+point in the stream where the run failed, after the entries the handler already
+wrote ([Output Modes](./output-modes.md#ndjson-mode)). Statuses do not change.
+An `App` or `External` failure still writes its verbatim bytes to stderr
+(ADR-0035) and adds the stdout document, kind `app` or `external`, with the
+bytes as `detail`. Warnings stay prose on stderr in the single-document modes,
+because the document has one root; under `ndjson` each is a `severity:
+warning` diagnostic entry of kind `framework` on stdout, after the result or
+the failure.
 
 The document is `Diagnostic`, serialized flat; `range` is present only when set:
 
@@ -57,11 +63,13 @@ The document is `Diagnostic`, serialized flat; `range` is present only when set:
 `kind` is a `DiagnosticKind`, the `RunErrorKind` projected onto the fixed wire
 vocabulary: `clap-usage`, `default-command`, `handler`, `hook-pre-dispatch`,
 `hook-post-dispatch`, `hook-post-output`, `render`, `final-write` (for every
-`FinalWrite` payload), `external`, `app`. In `csv` the
+`FinalWrite` payload), `external`, `app` — plus `framework`, the kind of a
+warning entry, which no run failure produces. In `csv` the
 document is one row whose header ends in `range_filename`, `range_line` and
 `range_column`, empty when there is no range. `RunError::diagnostic()` is the
 value, `emit_run_result` writes it, and `standout::cli::parse_diagnostic` reads
-it back, which is what `TestResult::diagnostic()` does. How an error fills
+it back (under `ndjson`, out of the whole stream), which is what
+`TestResult::diagnostic()` does. How an error fills
 `summary` and `detail` is in [Error Handling](./error-handling.md#the-diagnostic-document).
 
 A failure clap reports before a parse completes — an unknown flag, a
@@ -89,7 +97,12 @@ std::process::exit(outcome.status.code().into());
 output_mode, &mut stdout, &mut stderr)`, which is public: `standout-test`'s
 harness writes its two streams with it, and an adopter that keeps its own
 process edge can too. It returns `Ok(handled)` or the final-write failure whose
-status replaces the run's own.
+status replaces the run's own. Under `ndjson` the warnings follow through
+`standout::cli::emit_warning_entries`; every other mode flushes them as stderr
+prose. Entries a handler emits through `ctx.stream()` reach stdout while the
+handler runs, before either: `run_with` streams them to the process's stdout,
+and `run_with_sink` takes the destination as an argument, which is how the
+harness captures them.
 
 `ProcessOutcome` has two public fields. `handled` is the `bool` that `run`
 returns: `false` only for a `NoMatch` handoff. `status` is the final

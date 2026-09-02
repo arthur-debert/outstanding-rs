@@ -6,8 +6,17 @@ description = "Expected-fail acceptance suites for the corpus gap archetypes (tf
 license = "MIT"
 publish = false
 
+[[bin]]
+name = "tflike"
+path = "src/bin/tflike.rs"
+
 [dependencies]
 serde_json = "1"
+# The tflike fixture only; the harness library links none of these.
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+standout = { path = "../../crates/standout" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

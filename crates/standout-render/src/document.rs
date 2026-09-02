@@ -5,7 +5,8 @@ use crate::error::RenderError;
 use crate::output::OutputMode;
 
 /// One value as the whole document of a structured mode, newline-terminated:
-/// pretty JSON, YAML, or — for a flat record — one CSV row under its header.
+/// pretty JSON, YAML, one compact JSON line for `ndjson`, or — for a flat
+/// record — one CSV row under its header.
 pub fn serialize_document<T: Serialize>(
     data: &T,
     output_mode: OutputMode,
@@ -28,10 +29,30 @@ pub fn serialize_document<T: Serialize>(
             writer.serialize(data)?;
             Ok(String::from_utf8(writer.into_inner()?)?)
         }
+        OutputMode::Ndjson => {
+            let mut line = serde_json::to_string(data)?;
+            line.push('\n');
+            Ok(line)
+        }
         mode => Err(RenderError::OperationError(format!(
             "{mode:?} is not a document mode"
         ))),
     }
+}
+
+/// The `ndjson` form of a handler's rendered value: the one line
+/// `{"type":"result","data":<value>}`, without its newline.
+pub fn result_entry<T: Serialize>(data: &T) -> Result<String, RenderError> {
+    #[derive(Serialize)]
+    struct ResultEntry<'a, T> {
+        #[serde(rename = "type")]
+        entry_type: &'static str,
+        data: &'a T,
+    }
+    Ok(serde_json::to_string(&ResultEntry {
+        entry_type: "result",
+        data,
+    })?)
 }
 
 /// The inverse of [`serialize_document`] for the same mode.
@@ -40,7 +61,7 @@ pub fn deserialize_document<T: DeserializeOwned>(
     text: &str,
 ) -> Result<T, RenderError> {
     match output_mode {
-        OutputMode::Json => Ok(serde_json::from_str(text)?),
+        OutputMode::Json | OutputMode::Ndjson => Ok(serde_json::from_str(text)?),
         OutputMode::Yaml => Ok(serde_yaml::from_str(text)?),
         OutputMode::Csv => {
             let mut reader = csv::Reader::from_reader(text.as_bytes());

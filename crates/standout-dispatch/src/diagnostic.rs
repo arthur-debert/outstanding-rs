@@ -9,6 +9,9 @@
 //! constructs carries a placeholder that the framework overwrites. The wire
 //! vocabulary is D1's, fixed by the tflike gap suite: every `FinalWrite`
 //! payload is the one `final-write`, while hook phases stay distinct.
+//! `framework` is the one kind outside that projection: a `severity:
+//! warning` entry the framework raises on its own account under `ndjson`
+//! (D2), which no run failure classifies.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -109,6 +112,7 @@ pub enum DiagnosticKind {
     FinalWrite,
     External,
     App,
+    Framework,
 }
 
 impl From<RunErrorKind> for DiagnosticKind {

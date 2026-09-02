@@ -170,6 +170,7 @@ fn serialize_structured(
             let bytes = wtr.into_inner()?;
             String::from_utf8(bytes)?
         }
+        OutputMode::Ndjson => crate::document::result_entry(data)?,
         _ => unreachable!("serialize_structured requires a structured OutputMode"),
     };
     Ok(RenderResult::plain(output))

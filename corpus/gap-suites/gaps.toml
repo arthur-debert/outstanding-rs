@@ -23,7 +23,7 @@ epic = "PAR02 (machine contract)"
 env = "CORPUS_TFLIKE_BIN"
 tests = "tests/tflike_diagnostic.rs"
 status = "open"
-armed = 7
+armed = 1
 
 [[gate]]
 name = "tflike/progress"

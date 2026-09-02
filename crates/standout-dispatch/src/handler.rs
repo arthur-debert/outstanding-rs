@@ -1,6 +1,7 @@
 use crate::artifact::{Artifact, ArtifactRun};
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::hooks::HookPhase;
+use crate::stream::EntryStream;
 use crate::verify::ExpectedArg;
 use clap::ArgMatches;
 use serde::Serialize;
@@ -85,6 +86,7 @@ pub struct CommandContext {
     pub command_path: Vec<String>,
     pub app_state: Rc<Extensions>,
     pub extensions: Extensions,
+    pub stream: EntryStream,
 }
 impl CommandContext {
     pub fn new(command_path: Vec<String>, app_state: Rc<Extensions>) -> Self {
@@ -92,7 +94,17 @@ impl CommandContext {
             command_path,
             app_state,
             extensions: Extensions::new(),
+            stream: EntryStream::discarding(),
         }
+    }
+    pub fn with_stream(mut self, stream: EntryStream) -> Self {
+        self.stream = stream;
+        self
+    }
+    /// The entry stream of this run: live under `ndjson`, discarding in
+    /// every other mode.
+    pub fn stream(&self) -> &EntryStream {
+        &self.stream
     }
 }
 impl Default for CommandContext {
@@ -101,6 +113,7 @@ impl Default for CommandContext {
             command_path: Vec::new(),
             app_state: Rc::new(Extensions::new()),
             extensions: Extensions::new(),
+            stream: EntryStream::discarding(),
         }
     }
 }
@@ -674,6 +687,7 @@ mod tests {
             command_path: vec!["config".into(), "get".into()],
             app_state: Rc::new(Extensions::new()),
             extensions: Extensions::new(),
+            stream: EntryStream::discarding(),
         };
         assert_eq!(ctx.command_path, vec!["config", "get"]);
     }
@@ -776,6 +790,7 @@ mod tests {
             command_path: vec!["list".into()],
             app_state: app_state.clone(),
             extensions: Extensions::new(),
+            stream: EntryStream::discarding(),
         };
         let db = ctx.app_state.get::<Database>().unwrap();
         assert_eq!(db.url, "postgres://localhost");
@@ -792,6 +807,7 @@ mod tests {
             command_path: vec![],
             app_state: Rc::new(app_state),
             extensions: Extensions::new(),
+            stream: EntryStream::discarding(),
         };
         assert!(ctx.app_state.get_required::<Present>().is_ok());
         #[derive(Debug)]
