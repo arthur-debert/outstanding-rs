@@ -406,21 +406,25 @@ fn build_sandbox_inventory(root: &Path) -> Result<SandboxInventory, String> {
                     .metadata()
                     .map_err(|err| format!("inspecting sandbox entry {}: {err}", rel.display()))?;
                 let remaining = MAX_INVENTORIED_BYTES.saturating_sub(total_bytes);
-                total_bytes = total_bytes.saturating_add(metadata.len());
-                if total_bytes > MAX_INVENTORIED_BYTES {
+                // A cheap early exit for a grossly oversized file, before
+                // attempting to read it at all; the read below is the real
+                // enforcement (belt: nothing is still writing, by the time
+                // this runs, so `metadata.len()` is accurate; braces: the
+                // read itself is still bounded).
+                if metadata.len() > remaining {
                     return Err(format!(
                         "sandbox contents exceed the {MAX_INVENTORIED_BYTES}-byte inventory \
-                         budget (over budget at {}, {total_bytes} bytes so far)",
-                        rel.display()
+                         budget (over budget at {}, would be {} bytes)",
+                        rel.display(),
+                        total_bytes.saturating_add(metadata.len())
                     ));
                 }
-                // Capped at the sandbox's remaining budget, not just this
-                // file's own reported size: belt (the process-group kill
-                // ensures nothing is still writing) and braces (a file that
-                // somehow still grew past this stat still can't blow past
-                // the sandbox-wide limit during the read itself).
                 let bytes = read_regular_file_no_follow(&root.join(&rel), remaining)
                     .map_err(|err| format!("reading sandbox entry {}: {err}", rel.display()))?;
+                // The bytes actually read, not `metadata.len()`: the two
+                // can differ, and the cumulative budget must reflect what
+                // was truly consumed.
+                total_bytes = total_bytes.saturating_add(bytes.len() as u64);
                 entries.insert(rel, SandboxEntry::File(bytes));
             } else {
                 entries.insert(rel, SandboxEntry::Other);

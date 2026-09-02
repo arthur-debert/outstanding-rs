@@ -110,7 +110,7 @@ pub fn supervise(
     // that happened to receive the recycled pid. On non-unix this is a
     // no-op (no process-group concept, and reaped_status already holds
     // the leader's status from the loop above).
-    kill_process_group(child.id());
+    signal_process_group(child.id());
     let _ = child.kill();
     let status = match reaped_status {
         Some(status) => status,
@@ -118,6 +118,10 @@ pub fn supervise(
             .wait()
             .map_err(|err| format!("reaping child: {err}"))?,
     };
+    // Only after the leader is reaped: a not-yet-reaped zombie leader
+    // answers a signal-0 probe too, so polling for the group to be gone
+    // before this point would always spin for the full grace period.
+    wait_for_process_group_to_die(child.id());
     if timed_out {
         let grace_ends = Instant::now() + READER_GRACE;
         while !captures.iter().all(|c| c.is_finished()) && Instant::now() < grace_ends {
@@ -132,7 +136,7 @@ pub fn supervise(
 
 /// Whether `pid` has exited, without reaping it — the `WNOWAIT` peek
 /// `waitid` supports and `waitpid`/`Child::try_wait` don't. This is what
-/// lets `supervise` signal the process group (see `kill_process_group`)
+/// lets `supervise` signal the process group (see `signal_process_group`)
 /// before reaping the leader: reaping is what frees the pid for reuse, and
 /// a group signal after that could hit an unrelated, newly spawned process
 /// that happened to receive it.
@@ -170,7 +174,7 @@ fn child_exited_without_reaping(_pid: u32) -> Result<bool, String> {
 /// alive — call this after a child exits, and before anything reads what
 /// that child's sandbox holds, so a surviving descendant can't still be
 /// writing there.
-pub fn kill_process_group(pid: u32) {
+fn signal_process_group(pid: u32) {
     #[cfg(unix)]
     {
         // SAFETY: pid was made its own process-group leader (via
@@ -179,6 +183,20 @@ pub fn kill_process_group(pid: u32) {
         unsafe {
             libc::killpg(pid as libc::pid_t, libc::SIGKILL);
         }
+    }
+    #[cfg(not(unix))]
+    let _ = pid;
+}
+
+/// Blocks, bounded by `GROUP_KILL_GRACE`, until nothing in `pid`'s process
+/// group answers a signal-0 existence probe. Call only after the group's
+/// leader has been reaped (`Child::wait`): a zombie leader answers the
+/// probe too, so calling this first would spin for the full grace period
+/// on every case, leader included, rather than only when a straggler
+/// (a descendant `signal_process_group` also reached) is still dying.
+fn wait_for_process_group_to_die(pid: u32) {
+    #[cfg(unix)]
+    {
         let deadline = Instant::now() + GROUP_KILL_GRACE;
         while Instant::now() < deadline {
             // signal 0 is an existence probe: killpg returns an error (ESRCH)
@@ -190,6 +208,8 @@ pub fn kill_process_group(pid: u32) {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
+    #[cfg(not(unix))]
+    let _ = pid;
 }
 
 pub struct Capture {
@@ -325,5 +345,29 @@ mod tests {
         }
         let status = child.wait().unwrap();
         assert_eq!(status.code(), Some(0));
+    }
+
+    #[test]
+    fn a_trivial_child_is_supervised_promptly() {
+        // Signalling the group before the leader is reaped leaves it a
+        // zombie, which still answers a signal-0 existence probe: polling
+        // for the group to be gone before that reap would spin for the
+        // full `GROUP_KILL_GRACE` on every single case, leader included,
+        // not only when a straggler is genuinely still dying.
+        let started = Instant::now();
+        let outcome = run(
+            Command::new("sh").args(["-c", "exit 0"]),
+            Duration::from_secs(30),
+            true,
+        )
+        .unwrap();
+        assert!(!outcome.timed_out);
+        assert_eq!(outcome.exit_code, Some(0));
+        assert!(
+            started.elapsed() < GROUP_KILL_GRACE,
+            "supervise took {:?}, at or past the group-kill grace period with nothing \
+             left to signal",
+            started.elapsed()
+        );
     }
 }
