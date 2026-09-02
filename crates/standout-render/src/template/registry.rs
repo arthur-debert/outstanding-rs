@@ -1,24 +1,9 @@
-//! Template registry for file-based and inline templates.
-//!
-//! [`TemplateRegistry`] is a thin wrapper around
-//! [`FileRegistry<String>`](crate::file_loader::FileRegistry) that adds
-//! template-specific resolution on top of the generic file-loading
-//! infrastructure. It resolves names against four tiers, in priority order:
-//! inline templates, `add_from_files` file templates, directory-registered
-//! templates, then framework (`standout/`-namespaced) defaults — so user
-//! templates always override framework ones.
-//!
-//! Recognized extensions, highest priority first: [`TEMPLATE_EXTENSIONS`]
-//! (`.jinja`, `.jinja2`, `.j2`, `.stpl`, `.txt`). A name may be looked up
-//! with or without an extension, and even with the "wrong" recognized
-//! extension (e.g. `"list.j2"` resolves to a file registered as
-//! `list.jinja`) — the extension is stripped and the base name is retried.
-//!
-//! Collisions are strict by design, to catch configuration mistakes early
-//! rather than pick an arbitrary winner: two directories producing the same
-//! resolved name is an error, but the same directory offering multiple
-//! extensions for one base name is not (the higher-priority extension wins
-//! silently).
+//! [`TemplateRegistry`] wraps [`FileRegistry<String>`](crate::file_loader::FileRegistry)
+//! and resolves template names against four tiers, highest priority first:
+//! inline templates, `add_from_files` templates, directory-registered
+//! templates, then framework (`standout/`-namespaced) defaults. Recognized
+//! extensions are [`TEMPLATE_EXTENSIONS`]; extension matching and collision
+//! rules are those of [`crate::file_loader`].
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -377,7 +362,6 @@ impl TemplateRegistry {
         self.generation
     }
 
-    // ADR-0019 hot reload
     pub(crate) fn has_file_sources(&self) -> bool {
         !self.files.is_empty() || !self.inner.dirs().is_empty()
     }

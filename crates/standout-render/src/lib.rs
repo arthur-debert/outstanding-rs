@@ -5,25 +5,6 @@
 //! the contract (owned [`RenderRequest`] in, bytes out); [`render`] and its
 //! siblings are detect-then-call wrappers around it. [`Renderer`] compiles and
 //! reuses templates for repeated rendering.
-//!
-//! ```rust
-//! use standout_render::{render, Theme};
-//! use console::Style;
-//! use serde::Serialize;
-//!
-//! #[derive(Serialize)]
-//! struct Summary { title: String, total: usize }
-//!
-//! let theme = Theme::new()
-//!     .add("title", Style::new().bold())
-//!     .add("count", Style::new().cyan());
-//!
-//! let output = render(
-//!     "[title]{{ title }}[/title]: [count]{{ total }}[/count]",
-//!     &Summary { title: "Report".into(), total: 3 },
-//!     &theme,
-//! ).unwrap();
-//! ```
 
 pub mod colorspace;
 pub mod context;

@@ -5,36 +5,7 @@
 //! A [`StyleValue`] is either a concrete style or an alias to another named
 //! style, and a style can carry `light`/`dark` overrides resolved by
 //! [`ThemeVariants::resolve`] against the active [`ColorMode`](crate::ColorMode).
-//!
-//! ## YAML schema (legacy)
-//!
-//! ```yaml
-//! header:
-//!   fg: cyan
-//!   bold: true
-//!
-//! bold_text: bold          # shorthand for a single attribute
-//! warning: "yellow italic" # shorthand for multiple attributes
-//!
-//! panel:                   # adaptive: mode-specific overrides
-//!   bg: gray
-//!   light:
-//!     bg: "#f5f5f5"
-//!   dark:
-//!     bg: "#1a1a1a"
-//!
-//! disabled: muted          # alias
-//! ```
-//!
-//! ## Color formats
-//!
-//! ```yaml
-//! fg: red               # named (16 ANSI colors)
-//! fg: bright_yellow     # bright variants
-//! fg: 208               # 256-color palette
-//! fg: "#ff6b35"         # RGB hex
-//! fg: [255, 107, 53]    # RGB tuple
-//! ```
+//! Formats are documented in `docs/crates/render/topics/styling-system.md`.
 
 mod error;
 mod registry;

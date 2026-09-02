@@ -1,7 +1,4 @@
-//! Traits for derive macro integration.
-//!
-//! These traits are implemented by the `#[derive(Tabular)]` and `#[derive(TabularRow)]`
-//! macros to enable type-safe tabular formatting.
+//! Traits implemented by `#[derive(Tabular)]` and `#[derive(TabularRow)]`.
 
 use super::TabularSpec;
 

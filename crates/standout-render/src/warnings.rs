@@ -3,7 +3,7 @@
 //! them *after* the command's own output, styled through the active theme,
 //! with a clear banner. Only framework-owned diagnostics (resource-loading
 //! fallbacks, accepted-input warnings) belong here — handler-generated
-//! stderr output stays interleaved as before.
+//! stderr output stays interleaved.
 //!
 //! Warnings are styled using stderr color capability from
 //! [`crate::TargetProperties`], independent of the primary render's stdout
@@ -53,10 +53,7 @@ impl WarningBuffer {
         std::mem::take(&mut *self.inner.borrow_mut())
     }
 
-    /// Drop every buffered warning for which `keep` returns false. The
-    /// strict-style-tags gate uses this to remove the now-superseded
-    /// "degraded to unstyled text" warning once it escalates the same tags to
-    /// a hard error, so the failure is reported once rather than twice.
+    /// Drops every buffered warning for which `keep` returns false.
     pub fn retain(&self, keep: impl Fn(&str) -> bool) {
         self.inner.borrow_mut().retain(|warning| keep(warning));
     }
@@ -214,7 +211,6 @@ mod tests {
 
     #[test]
     fn default_theme_registers_warning_styles() {
-        // Regression check: if Theme::default ever stops shipping these styles
         let theme = Theme::default();
         let styles = theme.resolve_styles(None);
         assert!(
@@ -241,7 +237,6 @@ mod tests {
     fn style_for_stderr_plain_when_style_missing() {
         let styles = crate::style::Styles::new();
         let out = style_for_stderr(&styles, "no_such_style", "hello", true);
-        // Fall back to plain text rather than emitting the missing-style marker.
         assert_eq!(out, "hello");
     }
 

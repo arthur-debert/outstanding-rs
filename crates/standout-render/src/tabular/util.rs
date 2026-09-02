@@ -1,7 +1,5 @@
-//! Utility functions for ANSI-aware text measurement, truncation, and padding.
-//!
-//! All functions in this module correctly handle ANSI escape codes: they are
-//! preserved in output but don't count toward display width calculations.
+//! ANSI-aware text measurement, truncation, and padding: escapes are preserved
+//! in output and excluded from display width.
 
 use crate::width::VisibleTruncateAt;
 use crate::{AmbiguousWidth, WidthCalculator};

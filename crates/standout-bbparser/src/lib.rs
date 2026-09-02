@@ -526,7 +526,7 @@ impl BBParser {
     ) {
         let is_known = self.styles.contains_key(tag);
 
-        // Only record error if we have valid position info (not auto-closed)
+        // `end == 0` marks an auto-closed tag, which is not an error.
         if !is_known && end > 0 {
             errors.push(UnknownTagError {
                 tag: tag.to_string(),
@@ -1486,7 +1486,6 @@ mod tests {
             styles.insert("bold".to_string(), Style::new().bold().force_styling(true));
             let parser = BBParser::new(styles, TagTransform::Apply);
             let result = parser.parse("[bold]\\[x\\][/bold]");
-            // Inner text should contain literal brackets, no `[bold]` re-emitted.
             assert!(result.contains("[x]"));
             assert!(!result.contains("[bold]"));
         }

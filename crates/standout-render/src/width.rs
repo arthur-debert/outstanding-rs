@@ -97,8 +97,8 @@ impl RenderWidthSource {
         policy: AmbiguousWidth,
         terminal_width: Option<usize>,
     ) -> RenderWidthGuard<'_> {
-        // No mutex (ADR-0030): MiniJinjaEngine is !Send/!Sync so concurrent
-        // renders cannot interleave scoped() on a shared engine.
+        // No mutex: MiniJinjaEngine is !Send/!Sync, so concurrent renders
+        // cannot interleave scoped() on a shared engine.
         let previous_ambiguous_width = self.ambiguous_width();
         let previous_terminal_width = self.terminal_width();
         self.store_ambiguous_width(policy);

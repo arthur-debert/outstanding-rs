@@ -11,8 +11,7 @@
 //! convenience wrappers and `App::run` detect it, tests construct
 //! `TargetProperties` with an explicit [`ColorMode`].
 //!
-//! See [`crate::stylesheet`] for the YAML format and [`crate::style`] for the
-//! underlying style primitives.
+//! See [`crate::style`] for the style primitives and stylesheet formats.
 
 mod adaptive;
 mod icon_def;

@@ -97,8 +97,7 @@ fn parse_param_kind(pat_type: &PatType) -> Result<ParamKind> {
     Ok(ParamKind::None)
 }
 
-/// A parameter's name without its `r#`: `r#type` reads the argument id `type`
-/// and binds `r#type`, the way clap's own derive unraws a field name.
+/// The name without its `r#`, the way clap's derive unraws a field name.
 fn extract_param_name(pat: &Pat) -> Result<String> {
     match pat {
         Pat::Ident(ident) => Ok(ident.ident.unraw().to_string()),

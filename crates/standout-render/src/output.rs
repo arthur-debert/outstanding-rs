@@ -26,8 +26,7 @@ fn validate_path(path: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Create the output file a stream is redirected to, with the same parent
-/// check `write_output` applies to a file destination.
+/// Creates the redirect target with the same parent check as `write_output`.
 pub fn open_output_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
     validate_path(path)?;
     std::fs::File::create(path)
@@ -90,8 +89,7 @@ impl OutputMode {
         )
     }
 
-    /// Whether stdout is a stream of one-line entries rather than one
-    /// document: true only for `Ndjson`.
+    /// True only for `Ndjson`, the one mode whose stdout is a stream of entries.
     pub fn is_stream(&self) -> bool {
         matches!(self, OutputMode::Ndjson)
     }

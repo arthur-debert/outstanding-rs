@@ -1,7 +1,4 @@
-//! Core types for tabular output configuration.
-//!
-//! This module defines the data structures used to specify table layout:
-//! column widths, alignment, truncation strategies, and decorations.
+//! Table layout configuration: column widths, alignment, truncation, decorations.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
