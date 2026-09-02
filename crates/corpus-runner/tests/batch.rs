@@ -1,9 +1,8 @@
 // `corpus-runner batch`, end to end, against a fake `cargo` and a scripted
 // agent (no network, no credential): the walking skeleton's smoke archetype
-// needs neither, so it is the batch command's integration test (spec D29 —
-// "Done when `corpus-runner batch smoke --out <tmp>` produces the two
-// scorecard files"). Runs in its own test binary because it prepends to the
-// process-wide PATH.
+// needs neither, so it is the batch command's integration test — done when
+// `corpus-runner batch smoke --out <tmp>` produces the two scorecard files.
+// Runs in its own test binary because it prepends to the process-wide PATH.
 
 #![cfg(unix)]
 

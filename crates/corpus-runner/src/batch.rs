@@ -1,8 +1,8 @@
 //! Runs a set of archetypes through [`crate::run`] in order, sanitizes each
 //! run's evidence outside the checkout with `sanitize-run.py`, and writes
-//! both scorecards from it with `scorecard.py` (see `corpus/README.md`,
-//! Decision D29). Two host-broker credentials cannot share a session, so
-//! archetypes run serially rather than in parallel.
+//! both scorecards from it with `scorecard.py` (see `corpus/README.md`).
+//! Two host-broker credentials cannot share a session, so archetypes run
+//! serially rather than in parallel.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -43,7 +43,7 @@ pub type ArchetypeOutcome = Result<String, String>;
 /// Runs every archetype in order, then always writes both scorecards from
 /// whatever evidence `--out` holds — including a partial set, when an
 /// earlier archetype failed. The caller decides the process exit status
-/// from the returned outcomes (non-zero when any is `Err`, per D29).
+/// from the returned outcomes: non-zero when any is `Err`.
 pub fn batch(config: &BatchConfig) -> anyhow::Result<Vec<(String, ArchetypeOutcome)>> {
     std::fs::create_dir_all(&config.out_dir).with_context(|| {
         format!(
