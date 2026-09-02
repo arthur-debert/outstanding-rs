@@ -173,6 +173,33 @@ fn a_report_without_a_provenance_block_names_its_agent_from_the_run_record() {
     }
 }
 
+// Not the fixtures: the real committed pilot reports, whose transcripts are
+// deleted (D28). Their `recovered_provenance` block has to carry what a
+// transcript read would have, or this documented command
+// (`pilot=corpus/pilot/runs`) degrades silently to "version unstated, model
+// unstated" the moment the fixtures stop standing in for it.
+#[test]
+fn the_real_committed_pilot_reports_stay_self_sufficient_without_their_deleted_transcripts() {
+    let real_pilot_runs = repo().join("corpus/pilot/runs");
+    let table = scorecard(&[&format!("pilot={}", real_pilot_runs.display())]);
+    for archetype in ["formlike", "ghlike", "gitlike", "systemdlike"] {
+        let row = archetype_row(&table, archetype);
+        assert!(
+            row.contains("claude 2.1.234, claude-opus-5[1m] (recovered)"),
+            "{archetype}: {row}"
+        );
+        assert!(
+            row.contains("| single run |"),
+            "{archetype} unexpected comparable column: {row}"
+        );
+    }
+    let row = archetype_row(&table, "validity");
+    assert!(
+        row.contains("claude 2.1.252, claude-opus-5[1m] (recovered)"),
+        "{row}"
+    );
+}
+
 #[test]
 fn recovery_reads_the_prompt_and_settings_from_the_recorded_command() {
     let rows: serde_json::Value =

@@ -26,9 +26,10 @@ so a set of pilot reports reproduces the pilot's figures:
   own two sources by the rule the runner uses — the command the report
   records, split without expansion, and the same bounded head of the
   transcript, whose init event announces the backend version and the session
-  model. A recovered agent is
-  marked `(recovered)`: it is evidence of what answered, not a
-  contemporaneous record of what was asked for. A field neither source
+  model. A report whose transcript was deleted before this script could read
+  it may carry that recovery already done, under `recovered_provenance`. A
+  recovered agent is marked `(recovered)`: it is evidence of what answered,
+  not a contemporaneous record of what was asked for. A field neither source
   states is reported unstated rather than filled in.
 - comparable: whether a row is measuring the same question as the first row
   its archetype has. Two runs are comparable evidence when the spec, the
@@ -298,11 +299,17 @@ def provenance(report, run_dir: pathlib.Path) -> tuple[dict, bool]:
     """The agent block a report records, or one recovered from the run itself.
 
     The second value says which: a recovered block is evidence of what
-    answered, not a contemporaneous record of what was asked for.
+    answered, not a contemporaneous record of what was asked for. A report
+    with no committed transcript to recover from may carry that recovery
+    already done, under `recovered_provenance` — backfilled once, before its
+    transcript was deleted, so the report stays self-sufficient.
     """
     block = report.get("provenance")
     if block:
         return block, False
+    block = report.get("recovered_provenance")
+    if block:
+        return block, True
     block = recorded(report["session"].get("agent_cmd", ""))
     transcript = run_dir / report["session"].get("transcript", "transcript.jsonl")
     block.update(
