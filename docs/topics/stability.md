@@ -66,8 +66,12 @@ is a stream of one object per line: the framework's own lines are the
 `{"type":"result","data":…}` entry and the diagnostic, and the entries a
 handler emits through `ctx.stream()` are the application's contract with its
 consumers ([Output Modes](./output-modes.md#ndjson-mode)). In every
-structured mode a failure is the diagnostic document on stdout, with stderr
-silent; that placement and the document's field names are contract
+structured mode a failure is the diagnostic document on stdout, and stderr
+carries nothing the framework wrote for it; an `AppFailure` or
+`ExternalFailure` still writes its own verbatim bytes to stderr, and the
+single-document modes keep warnings as stderr prose
+([Execution Outcomes](./execution-outcomes.md#failures-under-a-structured-mode)).
+That placement and the document's field names are contract
 ([Error Handling](./error-handling.md#the-diagnostic-document)).
 
 **Human modes** (`text`, `term`): the bytes are **not** contract. Themes,

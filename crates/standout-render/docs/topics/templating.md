@@ -100,8 +100,10 @@ Two exceptions:
 - The `~` concatenation operator formats inside MiniJinja's evaluator, which
   exposes no hook: `{{ "x" ~ flag }}` yields `xTrue`. Write `{{ "x" }}{{ flag }}`
   or `{{ "x" ~ flag | string }}`.
-- Structured output (JSON, YAML, CSV, NDJSON) skips templates entirely and
-  serializes your data directly, so those modes follow their format's own rules.
+- Structured output (JSON, YAML, CSV, NDJSON) skips templates entirely, so
+  those modes follow their format's own rules: JSON, YAML and CSV serialize
+  your data as the document, and NDJSON writes it inside a
+  `{"type":"result","data":…}` line.
 
 If you build a `minijinja::Environment` yourself, use
 `standout_render::template::new_environment()` — or call `register_filters` on
@@ -421,7 +423,7 @@ For machine-readable output (JSON, YAML, CSV, NDJSON), templates are bypassed en
 use standout_render::{render_auto, OutputMode};
 
 // Template is used for Term/Text modes
-// Data is serialized directly for Json/Yaml/Csv/Ndjson
+// Data is serialized directly for Json/Yaml/Csv; Ndjson wraps it in a result entry
 let output = render_auto(template, &data, &theme, OutputMode::Json)?;
 ```
 

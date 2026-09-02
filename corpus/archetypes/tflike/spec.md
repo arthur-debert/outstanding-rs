@@ -11,7 +11,7 @@ in two forms — the roster's `acceptance.toml` beside this spec (every case
 — red on arrival, deliberately, and authored in two milestone groups because two
 different epics own them:
 
-- **Diagnostic milestone** — gates **PAR02** (`docs/spec/parity-machine-contract.md`).
+- **Diagnostic milestone** — gates **PAR02** (`docs/spec/implemented/parity-machine-contract.md`).
 - **Progress milestone** — gates **PAR03** (`docs/spec/parity-terminal-citizenship.md`).
 
 Everything below is written from the CLI user's perspective and is asserted black-box

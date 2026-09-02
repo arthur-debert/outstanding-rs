@@ -43,9 +43,11 @@ Every test using `TestHarness` must use `#[serial]`: its seams mutate process-gl
 The harness cannot provide a real PTY, deliver signals, mock subprocesses launched by application code, or validate build/link integration. Keep those cases in a small end-to-end suite. Place subprocess calls behind an application-owned trait when unit tests need a fake.
 
 Under a structured mode a failed run's stdout is the diagnostic document and
-`stderr()` is empty: read it with `result.diagnostic()` / `expect_diagnostic()`
-(`kind`, `summary`, `detail`, `range`) and pair it with `assert_error_kind` and
-`assert_exit_status`. Under `OutputMode::Ndjson`, `stdout()` is the whole stream,
+`stderr()` carries no framework prose for it (an `AppFailure` or
+`ExternalFailure` keeps its verbatim bytes there; warnings stay on stderr
+outside `ndjson`): read the failure with `result.diagnostic()` /
+`expect_diagnostic()` (`kind`, `summary`, `detail`, `range`) and pair it with
+`assert_error_kind` and `assert_exit_status`. Under `OutputMode::Ndjson`, `stdout()` is the whole stream,
 one entry per line with its newline kept; parse lines with `serde_json` and read
 the failure with `diagnostic()`, which finds the error entry in the stream. A
 status a handler declared with `with_exit_status` is a success:

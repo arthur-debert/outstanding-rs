@@ -1,6 +1,6 @@
 # Stream entries under ndjson
 
-`ndjson` joins `OutputMode` as the one stream mode: stdout is a sequence of one-line JSON objects rather than a single document. A handler writes entries of its own through `ctx.stream()`; the framework writes the result, the failure and the warnings as entries of its own. This records decision D3 of `docs/spec/parity-machine-contract.md` and the `ndjson` half of D2; the spec carries the reasoning, in particular why streaming stopped being a non-goal (tflike's diagnostic milestone asserts app-defined `version`, `planned_change` and `change_summary` entries).
+`ndjson` joins `OutputMode` as the one stream mode: stdout is a sequence of one-line JSON objects rather than a single document. A handler writes entries of its own through `ctx.stream()`; the framework writes the result, the failure and the warnings as entries of its own. This records decision D3 of `docs/spec/implemented/parity-machine-contract.md` and the `ndjson` half of D2; the spec carries the reasoning, in particular why streaming stopped being a non-goal (tflike's diagnostic milestone asserts app-defined `version`, `planned_change` and `change_summary` entries).
 
 ## The stream
 

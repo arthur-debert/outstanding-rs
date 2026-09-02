@@ -1,6 +1,6 @@
 # Emit the failure as a stdout document in structured modes
 
-Under `--output json`, `yaml` or `csv`, a run writes one document to stdout: the handler's result when the run succeeds, a diagnostic when it fails. Stderr carries nothing the framework wrote for the failure. Human modes are unchanged: prose on stderr, the `Error:` framing ADR-0035 describes. Exit statuses do not move. This records decisions D1, D2 and D6 of `docs/spec/parity-machine-contract.md`, whose reasoning is not repeated here.
+Under `--output json`, `yaml` or `csv`, a run writes one document to stdout: the handler's result when the run succeeds, a diagnostic when it fails. Stderr carries nothing the framework wrote for the failure. Human modes are unchanged: prose on stderr, the `Error:` framing ADR-0035 describes. Exit statuses do not move. This records decisions D1, D2 and D6 of `docs/spec/implemented/parity-machine-contract.md`, whose reasoning is not repeated here.
 
 ## The document
 

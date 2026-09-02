@@ -32,7 +32,7 @@ Common copied examples can target older APIs. Confirm these current contracts:
 - `#[derive(Dispatch)]` maps to `handlers::name`; add `#[dispatch(pure)]` for a `#[handler]`-generated wrapper.
 - `TestHarness` mutations are process-global; every harness test is serial.
 - Structured output bypasses templates, so template fixes cannot change JSON/YAML/CSV/NDJSON.
-- Under a structured mode a failure is a diagnostic document on stdout and stderr is silent; a test reads it with `result.diagnostic()`, not from `stderr()`.
+- Under a structured mode a failure is a diagnostic document on stdout and the framework writes no error prose to stderr; an `AppFailure` or `ExternalFailure` still writes its verbatim bytes there, and `json`/`yaml`/`csv` keep warnings on stderr. A test reads the failure with `result.diagnostic()`, not from `stderr()`.
 - Domain serialization and CLI structured output are separate interfaces. Map
   domain values into CLI-owned view DTOs rather than serializing persistence
   types directly.
