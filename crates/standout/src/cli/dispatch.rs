@@ -110,6 +110,7 @@ fn render_time_template(
             }
             Ok(standout_render::TemplateRef::Named(name.clone()))
         }
+        TemplateRef::Inline(source) => Ok(standout_render::TemplateRef::Inline(source.clone())),
         TemplateRef::Absent(reason) => {
             match reason {
                 TemplateAbsence::Silent | TemplateAbsence::Binary => Err(

@@ -31,6 +31,10 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
+use super::config::{
+    claims_config_command, claims_config_path, config_command_collision, config_option_collision,
+    config_tree_claim, config_tree_takes_long, ConfigSeam,
+};
 use super::default_command::ParseFailure;
 use super::dispatch::DispatchFn;
 use super::group::CommandRecipe;
@@ -55,6 +59,7 @@ pub(crate) type SharedTemplateEngine =
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TemplateRef {
     Named(String),
+    Inline(String),
     Absent(TemplateAbsence),
 }
 
@@ -362,9 +367,12 @@ pub struct App {
     pub(crate) help_handling: bool,
     pub(crate) help_word: bool,
     pub(crate) ambiguous_width: crate::AmbiguousWidth,
-    pub(crate) version: Option<&'static str>,
+    pub(crate) version: Option<String>,
     pub(crate) startup_warnings: Vec<String>,
     pub(crate) strict_style_tags: bool,
+    pub(crate) config: Option<Rc<dyn ConfigSeam>>,
+    pub(crate) config_override_flag: Option<String>,
+    pub(crate) config_command: bool,
 }
 
 impl App {
@@ -405,11 +413,19 @@ pub struct AppBuilder {
 
     pub(crate) ambiguous_width: crate::AmbiguousWidth,
 
-    pub(crate) version: Option<&'static str>,
+    pub(crate) version: Option<String>,
 
     pub(crate) startup_warnings: Vec<String>,
 
     pub(crate) strict_style_tags: bool,
+
+    pub(crate) config: Option<Box<dyn ConfigSeam>>,
+
+    pub(crate) term_accessor: Option<Box<dyn std::any::Any>>,
+
+    pub(crate) config_override_flag: Option<String>,
+
+    pub(crate) config_command: bool,
 }
 
 impl AppBuilder {
@@ -443,6 +459,10 @@ impl AppBuilder {
             version: None,
             startup_warnings: Vec::new(),
             strict_style_tags: false,
+            config: None,
+            term_accessor: None,
+            config_override_flag: None,
+            config_command: true,
         }
     }
 
@@ -527,6 +547,78 @@ impl AppBuilder {
             }
         }
 
+        if let Some(accessor) = self.term_accessor.take() {
+            match self.config.as_mut() {
+                Some(seam) => seam.attach_term_accessor(accessor)?,
+                None => {
+                    return Err(SetupError::Config(
+                        "term_settings is set without .config(...): there is no configuration \
+                         to read the accessor from"
+                            .to_string(),
+                    ))
+                }
+            }
+        }
+
+        let installs_config_command = self.config_command && self.config.is_some();
+
+        if let Some(flag) = self.config_override_flag.as_deref() {
+            if self.config.is_none() {
+                return Err(SetupError::Config(format!(
+                    "config_override_flag(\"{flag}\") is set without .config(...): there is \
+                     no configuration for the flag to override"
+                )));
+            }
+            let taken = [
+                self.output_flag.as_deref(),
+                self.output_file_flag.as_deref(),
+            ];
+            if taken.contains(&Some(flag))
+                || (installs_config_command && config_tree_takes_long(flag))
+            {
+                return Err(SetupError::Config(format!(
+                    "config_override_flag(\"{flag}\") names a flag standout already installs"
+                )));
+            }
+        }
+
+        if !self.config_command && self.config.is_none() {
+            return Err(SetupError::Config(
+                "no_config_command() is set without .config(...): there is no `config` \
+                 command to remove"
+                    .to_string(),
+            ));
+        }
+
+        if installs_config_command {
+            let taken = [
+                ("output_flag", self.output_flag.as_deref()),
+                ("output_file_flag", self.output_file_flag.as_deref()),
+            ]
+            .into_iter()
+            .find_map(|(option, flag)| {
+                flag.filter(|flag| config_tree_takes_long(flag))
+                    .map(|flag| (option, flag))
+            });
+            if let Some((option, flag)) = taken {
+                return Err(config_option_collision(&format!(
+                    "{option}(Some(\"{flag}\")) installs `--{flag}` as a root-global flag"
+                )));
+            }
+            let claim = self
+                .pending_commands
+                .borrow()
+                .keys()
+                .filter(|path| claims_config_path(path))
+                .min()
+                .cloned();
+            if let Some(path) = claim {
+                return Err(config_command_collision(&format!(
+                    "this application registers `{path}`"
+                )));
+            }
+        }
+
         let template_engine = self.template_engine.take().unwrap_or_else(|| {
             Rc::new(RefCell::new(Box::new(
                 standout_render::template::MiniJinjaEngine::new(),
@@ -569,6 +661,9 @@ impl AppBuilder {
             startup_warnings: self.startup_warnings,
             strict_style_tags: self.strict_style_tags
                 || strict_style_tags_from_env(std::env::var_os(STRICT_STYLE_TAGS_ENV)),
+            config: self.config.map(Rc::from),
+            config_override_flag: self.config_override_flag,
+            config_command: self.config_command,
         };
 
         app.ensure_commands_finalized();
@@ -580,7 +675,7 @@ impl AppBuilder {
         for (path, pending) in self.pending_commands.borrow().iter() {
             let name = match &pending.template {
                 TemplateRef::Named(name) => name.clone(),
-                TemplateRef::Absent(_) => continue,
+                TemplateRef::Inline(_) | TemplateRef::Absent(_) => continue,
             };
             let Some(registry) = self.template_registry.as_ref() else {
                 return Err(SetupError::Template(missing_template_message(
@@ -744,6 +839,16 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
+        if let Err(error) = self
+            .config_override_flag_collision(&cmd)
+            .and_then(|()| self.config_command_collision(&cmd))
+        {
+            return HelpResult::Error(clap::Error::raw(
+                clap::error::ErrorKind::ArgumentConflict,
+                format!("{error}\n"),
+            ));
+        }
+
         let mut cmd = self.augment_command_with_help(cmd);
 
         if let Some(error) = self.help_word_collision(&cmd) {
@@ -1154,6 +1259,31 @@ impl App {
         (claims > 1).then(|| duplicate_help_word(DECLARED_CLAIM))
     }
 
+    pub(crate) fn installs_config_command(&self) -> bool {
+        self.config_command && self.config.is_some()
+    }
+
+    pub(crate) fn config_command_collision(&self, cmd: &Command) -> Result<(), SetupError> {
+        if !self.installs_config_command() {
+            return Ok(());
+        }
+        if cmd.get_subcommands().any(claims_config_command) {
+            return Err(config_command_collision(
+                "this application's clap `Command` declares `config` (as a subcommand name or alias)",
+            ));
+        }
+        if let Some(claim) = cmd
+            .get_arguments()
+            .filter(|arg| arg.is_global_set())
+            .find_map(config_tree_claim)
+        {
+            return Err(config_option_collision(&format!(
+                "this application's clap `Command` declares a root-global argument with {claim}"
+            )));
+        }
+        Ok(())
+    }
+
     pub(crate) fn installs_help_word(&self, cmd: &Command) -> bool {
         self.help_word
             || cmd.get_subcommands().next().is_some()
@@ -1161,17 +1291,30 @@ impl App {
     }
 
     pub fn extract_output_mode(&self, matches: &ArgMatches) -> OutputMode {
-        if self.output_flag.is_none() {
-            return self.output_mode_fallback;
-        }
+        self.extract_output_mode_over(matches, None)
+    }
+
+    pub(crate) fn extract_output_mode_over(
+        &self,
+        matches: &ArgMatches,
+        term: Option<&crate::TermSettings>,
+    ) -> OutputMode {
+        self.typed_output_mode(matches).unwrap_or_else(|| {
+            term.and_then(|term| term.output)
+                .map_or(self.output_mode_fallback, OutputMode::from)
+        })
+    }
+
+    pub(crate) fn typed_output_mode(&self, matches: &ArgMatches) -> Option<OutputMode> {
+        self.output_flag.as_ref()?;
         match matches.try_get_one::<String>("_output_mode") {
             // A `DefaultValue` source means the user never typed `--output`.
             Ok(Some(value))
                 if matches.value_source("_output_mode") != Some(ValueSource::DefaultValue) =>
             {
-                parse_output_mode_flag(value.as_str()).unwrap_or(self.output_mode_fallback)
+                parse_output_mode_flag(value.as_str())
             }
-            _ => self.output_mode_fallback,
+            _ => None,
         }
     }
 
@@ -1200,7 +1343,13 @@ impl App {
         F: FnOnce(&ArgMatches, &CommandContext) -> HandlerResult<T>,
         T: Serialize,
     {
-        let output_mode = self.extract_output_mode(matches);
+        let config = self
+            .resolve_config(matches)
+            .map_err(|error| HookError::pre_dispatch("Config error").with_source(error))?;
+        let output_mode = self.extract_output_mode_over(
+            matches,
+            config.as_ref().and_then(|config| config.term.as_ref()),
+        );
         let stream = if output_mode.is_stream() {
             EntryStream::writing_to(sink)
         } else {
@@ -1215,6 +1364,9 @@ impl App {
         self.seed_startup_warnings(&warnings);
         ctx.extensions.insert(InputSources::from_process());
         ctx.extensions.insert(warnings.clone());
+        if let Some(config) = config {
+            config.install(&mut ctx.extensions);
+        }
 
         let hooks = self.command_hooks.get(path);
 
@@ -1312,6 +1464,8 @@ impl App {
         self.malformed_registrations()?;
         self.validate_questionnaire_surfaces(cmd)?;
         self.unreachable_registrations(cmd)?;
+        self.config_override_flag_collision(cmd)?;
+        self.config_command_collision(cmd)?;
         let expected_args: HashMap<String, Vec<ExpectedArg>> = self
             .pending_commands
             .borrow()

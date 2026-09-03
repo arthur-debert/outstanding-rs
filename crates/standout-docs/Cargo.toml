@@ -9,5 +9,6 @@ license = "MIT"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+clapfig = "0.26"
 serde = { version = "1", features = ["derive"] }
 standout = { path = "../standout" }

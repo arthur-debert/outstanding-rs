@@ -99,10 +99,7 @@ impl TestHarness {
                 std::fs::write(&abs, content).expect("TestHarness: failed to write fixture file");
             }
         }
-        let cwd = self
-            .cwd
-            .clone()
-            .or_else(|| self.tempdir.as_ref().map(|d| d.path().to_path_buf()));
+        let cwd = self.resolve_cwd();
         let mut argv: Vec<OsString> = args.into_iter().map(|a| a.into()).collect();
         if let Some(mode) = self.output_mode {
             argv.push(format!("--{}={}", self.output_flag_name, output_mode_flag(mode)).into());

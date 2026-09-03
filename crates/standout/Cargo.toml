@@ -34,9 +34,10 @@ serde_json = { version = "1", features = ["preserve_order"] }
 unicode-width = "0.2"
 
 # CLI dependencies (formerly optional with clap feature)
-clap = { version = "4", features = ["derive", "help"] }
+clap = { version = "4", features = ["derive", "help", "string"] }
 anyhow = "1"
 thiserror = "2"
+clapfig = "0.26"
 
 [features]
 default = []

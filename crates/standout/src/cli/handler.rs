@@ -8,12 +8,17 @@ pub use standout_dispatch::{
 
 use standout_input::{InputSourceKind, Inputs, MissingInput};
 
+use crate::cli::config::{MissingConfig, ResolvedApp};
 use crate::cli::questionnaire::QUESTIONNAIRE_INPUT_NAME;
 
 pub trait CommandContextInput {
     fn input<T: 'static>(&self, name: &str) -> Result<&T, MissingInput>;
 
     fn questionnaire<T: 'static>(&self) -> Result<&T, MissingInput>;
+
+    fn config<C: 'static>(&self) -> Result<&C, MissingConfig>;
+
+    fn install_config<C: 'static>(&mut self, config: C);
 
     fn input_source(&self, name: &str) -> Option<InputSourceKind>;
 
@@ -36,6 +41,19 @@ impl CommandContextInput for CommandContext {
 
     fn questionnaire<T: 'static>(&self) -> Result<&T, MissingInput> {
         self.input(QUESTIONNAIRE_INPUT_NAME)
+    }
+
+    fn config<C: 'static>(&self) -> Result<&C, MissingConfig> {
+        self.extensions
+            .get::<ResolvedApp<C>>()
+            .map(|resolved| &resolved.0)
+            .ok_or(MissingConfig {
+                type_name: std::any::type_name::<C>(),
+            })
+    }
+
+    fn install_config<C: 'static>(&mut self, config: C) {
+        self.extensions.insert(ResolvedApp(config));
     }
 
     fn input_source(&self, name: &str) -> Option<InputSourceKind> {
