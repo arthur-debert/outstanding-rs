@@ -28,6 +28,7 @@
 //! write to, which is what a sink whose reader went away reports.
 
 use serde::Serialize;
+use std::any::TypeId;
 use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
@@ -37,6 +38,14 @@ use std::rc::Rc;
 /// argument that can be constructed.
 #[derive(Debug, Serialize)]
 pub enum NoEvents {}
+
+/// Whether a command whose `Handler::Event` is `E` produces its result while
+/// it runs. [`NoEvents`] is the type that says it does not, and every other
+/// event type says it does, so the fact is the handler's own signature rather
+/// than a separate declaration that can disagree with it.
+pub fn emits_events<E: 'static>() -> bool {
+    TypeId::of::<E>() != TypeId::of::<NoEvents>()
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum EmitError {

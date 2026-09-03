@@ -384,7 +384,7 @@ $ myapp apply --output ndjson
 `json`, `yaml` and `csv` have no line framing, so they carry a command's events
 as one document written when the command ends. Standout does not build that
 document yet: an emitting command under those encodings is a render error,
-decided from the handler's declaration before the handler runs.
+decided from the handler's event type before the handler runs.
 
 A failure after emitted events keeps them — the human representation has
 rendered them, line framing has written them — and the diagnostic follows in
@@ -394,12 +394,12 @@ stops reading (`myapp apply --output ndjson | head -1`), Standout discards what
 follows, lets the handler run to completion, and reports the command's own
 status.
 
-Binary and artifact output cannot follow events. A command that declares an
-event type carries `Output::Render` and `Output::Silent` only, so either payload
-is a render error under every representation — on the run that emitted nothing
-too, since the refusal follows the declaration rather than the count. Under
-`ndjson` a payload is a render error whether or not the command declares
-events: a stream of JSON lines has no room for one.
+Binary and artifact output cannot follow events. A command whose event type is
+not `NoEvents` carries `Output::Render` and `Output::Silent` only, so either
+payload is a render error under every representation — on the run that emitted
+nothing too, since the refusal follows the type rather than the count. Under
+`ndjson` a payload is a render error whether or not the command's event type is
+`NoEvents`: a stream of JSON lines has no room for one.
 
 ## NDJSON Mode
 

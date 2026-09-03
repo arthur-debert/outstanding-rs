@@ -39,7 +39,7 @@ use super::default_command::ParseFailure;
 use super::dispatch::DispatchFn;
 use super::group::CommandRecipe;
 use super::handler::{
-    CommandContext, Extensions, Handler, Output as HandlerOutput, Results, StreamSink,
+    emits_events, CommandContext, Extensions, Handler, Output as HandlerOutput, Results, StreamSink,
 };
 use super::help::data::{extract_help_data, extract_help_data_with_topics};
 use super::help::{
@@ -1484,7 +1484,7 @@ impl App {
         }
 
         super::dispatch::reject_events_under_a_document_encoding(
-            H::EMITS_EVENTS,
+            emits_events::<H::Event>(),
             path,
             output_mode,
         )
@@ -1524,7 +1524,7 @@ impl App {
         };
         let reject_payload_from_an_emitting_command = |is_binary: bool, is_artifact: bool| {
             super::dispatch::reject_payload_from_an_emitting_command(
-                H::EMITS_EVENTS || destination.emitted(),
+                emits_events::<H::Event>(),
                 is_binary,
                 is_artifact,
             )
