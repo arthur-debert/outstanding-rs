@@ -156,7 +156,7 @@ fn config_error_position(error: &ClapfigError) -> Option<(String, u64, u64)> {
             let column = info
                 .span
                 .zip(info.source.as_deref())
-                .map_or(0, |(span, source)| line_and_column(source, span.start).1);
+                .map_or(1, |(span, source)| line_and_column(source, span.start).1);
             Some((info.path.display().to_string(), info.line as u64, column))
         }
         ClapfigError::ParseError {
@@ -228,6 +228,23 @@ mod tests {
             let parsed: TermOutput = serde_json::from_value(spelling.into()).unwrap();
             assert_eq!(parsed, *variant);
         }
+    }
+
+    #[test]
+    fn an_unknown_key_without_a_span_starts_its_line() {
+        let info = clapfig::error::UnknownKeyInfo {
+            key: "bogus".into(),
+            path: "app.toml".into(),
+            line: 3,
+            source: None,
+            env_var: None,
+            span: None,
+            url_key: None,
+            override_key: None,
+            input_type: None,
+        };
+        let position = config_error_position(&ClapfigError::UnknownKeys(vec![info]));
+        assert_eq!(position, Some(("app.toml".to_string(), 3, 1)));
     }
 
     #[test]

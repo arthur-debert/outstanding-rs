@@ -345,6 +345,67 @@ fn the_override_flag_refuses_the_generated_help_and_version_flags() {
         .is_ok());
 }
 
+#[test]
+fn the_override_flag_refuses_flags_clap_generates_on_descendants() {
+    let app = |flag: &str| {
+        show_command(App::builder())
+            .config(fixture_builder())
+            .config_override_flag(flag)
+            .build()
+            .unwrap()
+    };
+    let child_version = Command::new("cfgapp").subcommand(Command::new("show").version("1.0"));
+    let verified = app("version").verify_command(&child_version);
+    assert!(
+        matches!(verified, Err(SetupError::Config(_))),
+        "{verified:?}"
+    );
+    let parsed = app("version").get_matches_from(
+        child_version,
+        ["cfgapp", "show"],
+        &InputSources::from_process(),
+    );
+    assert!(matches!(parsed, HelpResult::Error(_)), "{parsed:?}");
+
+    let grandchild_version = Command::new("cfgapp")
+        .subcommand(Command::new("show").subcommand(Command::new("all").version("1.0")));
+    let verified = app("version").verify_command(&grandchild_version);
+    assert!(
+        matches!(verified, Err(SetupError::Config(_))),
+        "{verified:?}"
+    );
+
+    let disabled_below = Command::new("cfgapp").subcommand(
+        Command::new("show")
+            .version("1.0")
+            .disable_version_flag(true),
+    );
+    assert!(app("version").verify_command(&disabled_below).is_ok());
+    let disabled_help_below = Command::new("cfgapp")
+        .disable_help_flag(true)
+        .subcommand(Command::new("show").subcommand(Command::new("all")));
+    assert!(app("help").verify_command(&disabled_help_below).is_ok());
+}
+
+#[test]
+#[serial]
+fn a_disabled_help_flag_frees_help_for_overrides_on_every_subcommand() {
+    let app = show_command(App::builder())
+        .config(fixture_builder())
+        .config_override_flag("help")
+        .build()
+        .unwrap();
+    let result = TestHarness::new()
+        .fixture("cfgapp.toml", "index_dir = \"/from-file\"\n")
+        .run(
+            &app,
+            cfgapp().disable_help_flag(true),
+            ["cfgapp", "show", "--help", "index_dir=/from-help"],
+        );
+    result.assert_success();
+    result.assert_stdout_contains("index at /from-help");
+}
+
 struct Cwd(std::path::PathBuf);
 
 impl Cwd {

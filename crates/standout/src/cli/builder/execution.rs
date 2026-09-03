@@ -483,7 +483,7 @@ impl App {
         let Some(flag) = self.config_override_flag.as_deref() else {
             return Ok(());
         };
-        fn declares(cmd: &Command, flag: &str) -> bool {
+        fn takes(cmd: &Command, flag: &str) -> bool {
             cmd.get_arguments().any(|arg| {
                 arg.get_id() == CONFIG_OVERRIDE_ARG
                     || arg.get_long() == Some(flag)
@@ -493,16 +493,19 @@ impl App {
             }) || cmd.get_subcommands().any(|sub| {
                 sub.get_long_flag() == Some(flag)
                     || sub.get_all_long_flag_aliases().any(|alias| alias == flag)
-                    || declares(sub, flag)
+                    || takes(sub, flag)
             })
         }
-        let generated = (flag == "help" && !cmd.is_disable_help_flag_set())
-            || (flag == "version"
-                && !cmd.is_disable_version_flag_set()
-                && (self.version.is_some()
-                    || cmd.get_version().is_some()
-                    || cmd.get_long_version().is_some()));
-        if declares(cmd, flag) || generated {
+        // Generated `--help`/`--version` only exist per command once clap builds the tree.
+        let built = matches!(flag, "help" | "version").then(|| {
+            let mut built = cmd.clone();
+            if let Some(version) = &self.version {
+                built = built.version(version.clone());
+            }
+            built.build();
+            built
+        });
+        if takes(built.as_ref().unwrap_or(cmd), flag) {
             return Err(SetupError::Config(format!(
                 "config_override_flag(\"{flag}\") is already taken by this application's clap Command"
             )));
