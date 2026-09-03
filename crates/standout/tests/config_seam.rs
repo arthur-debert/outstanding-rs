@@ -1,12 +1,12 @@
-use clap::{Arg, Command};
+use clap::{Arg, ArgMatches, Command};
 use clapfig::{Clapfig, SearchPath};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use standout::cli::{
     App, AppBuilder, CommandContextInput, DiagnosticKind, DispatchResult, ExitStatus, FnHandler,
-    HelpResult, MissingConfig, Output, RunErrorKind, TermSettings,
+    HelpResult, MissingConfig, Output, RunErrorKind, StreamSink, TermSettings,
 };
-use standout::{EmbeddedTemplates, InputSources, OutputMode, SetupError};
+use standout::{EmbeddedTemplates, InputSources, OutputMode, SetupError, TemplateRef};
 use standout_test::{serial, TestHarness};
 
 const TEMPLATES: &[(&str, &str)] = &[("show", "index at {{ index_dir }}")];
@@ -422,16 +422,115 @@ impl Drop for Cwd {
     }
 }
 
+fn parse(app: &App, args: &[&str]) -> ArgMatches {
+    match app.get_matches_from(cfgapp(), args, &InputSources::from_process()) {
+        HelpResult::Matches(matches) => matches,
+        other => panic!("{other:?}"),
+    }
+}
+
 fn dispatch_parsed(file: &str, args: &[&str]) -> standout::cli::CompletedRun {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("cfgapp.toml"), file).unwrap();
     let _cwd = Cwd::enter(dir.path());
     let app = configured_app();
-    let matches = match app.get_matches_from(cfgapp(), args, &InputSources::from_process()) {
-        HelpResult::Matches(matches) => matches,
-        other => panic!("{other:?}"),
-    };
+    let matches = parse(&app, args);
     app.dispatch(matches, OutputMode::Text)
+}
+
+fn dispatch_extracted(file: &str, args: &[&str]) -> standout::cli::CompletedRun {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("cfgapp.toml"), file).unwrap();
+    let _cwd = Cwd::enter(dir.path());
+    let app = configured_app();
+    let matches = parse(&app, args);
+    let output_mode = app.extract_output_mode(&matches);
+    app.dispatch(matches, output_mode)
+}
+
+#[test]
+#[serial]
+fn dispatch_takes_term_output_only_when_the_flag_was_not_typed() {
+    let bare = dispatch_extracted(TERM_JSON, &["cfgapp", "show"]);
+    assert_eq!(bare.output_mode(), OutputMode::Json);
+    let document: serde_json::Value = serde_json::from_str(bare.output().unwrap()).unwrap();
+    assert_eq!(document["index_dir"], "/from-file");
+
+    let flagged = dispatch_extracted(TERM_JSON, &["cfgapp", "show", "--output", "term"]);
+    assert_eq!(flagged.output_mode(), OutputMode::Term);
+    assert_eq!(flagged.output(), Some("index at /from-file"));
+
+    let unset = dispatch_parsed("index_dir = \"/from-file\"\n", &["cfgapp", "show"]);
+    assert_eq!(unset.output_mode(), OutputMode::Text);
+}
+
+#[test]
+#[serial]
+fn run_command_resolves_the_config_like_dispatch() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("cfgapp.toml");
+    std::fs::write(&file, TERM_JSON).unwrap();
+    let _cwd = Cwd::enter(dir.path());
+    let app = configured_app();
+    let run = |args: &[&str]| {
+        let matches = parse(&app, args);
+        let sub = matches.subcommand_matches("show").unwrap();
+        app.run_command(
+            "show",
+            sub,
+            |_matches, ctx| {
+                let config: &FixtureConfig = ctx.config()?;
+                Ok(Output::Render(json!({ "index_dir": config.index_dir })))
+            },
+            TemplateRef::Inline("index at {{ index_dir }}".to_string()),
+            StreamSink::new(Vec::new()),
+        )
+    };
+
+    let bare = run(&["cfgapp", "show"]).unwrap();
+    let document: serde_json::Value = serde_json::from_str(bare.as_text().unwrap()).unwrap();
+    assert_eq!(document["index_dir"], "/from-file");
+
+    let flagged = run(&[
+        "cfgapp",
+        "show",
+        "--output",
+        "term",
+        "--set",
+        "index_dir=/from-flag",
+    ])
+    .unwrap();
+    assert_eq!(flagged.as_text(), Some("index at /from-flag"));
+
+    std::fs::write(&file, BAD_FILE).unwrap();
+    let failed = run(&["cfgapp", "show"]).unwrap_err();
+    assert!(failed.to_string().contains("Config error"), "{failed}");
+}
+
+#[test]
+#[serial]
+fn only_the_resolved_config_answers_as_the_config() {
+    let app = show_command(App::builder())
+        .command_with(
+            "leak",
+            FnHandler::new(|_matches, ctx| match ctx.config::<InputSources>() {
+                Err(MissingConfig { .. }) => Ok(Output::<serde_json::Value>::Silent),
+                Ok(_) => Err(anyhow::anyhow!("InputSources answered as the config")),
+            }),
+            |cfg| cfg.silent(),
+        )
+        .unwrap()
+        .config(fixture_builder())
+        .build()
+        .unwrap();
+    let result = TestHarness::new()
+        .fixture("cfgapp.toml", "index_dir = \"/from-file\"\n")
+        .run(
+            &app,
+            cfgapp().subcommand(Command::new("leak")),
+            ["cfgapp", "leak"],
+        );
+    result.assert_success();
 }
 
 #[test]

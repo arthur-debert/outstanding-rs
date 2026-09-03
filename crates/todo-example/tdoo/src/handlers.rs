@@ -207,7 +207,7 @@ mod tests {
         let path = dir.path().join("todos.json");
         let mut ctx = CommandContext::new(Vec::new(), Rc::new(Extensions::new()));
         ctx.extensions.insert(InputSources::from_process());
-        ctx.extensions.insert(TdooConfig {
+        ctx.install_config(TdooConfig {
             store: Some(path.to_str().unwrap().to_string()),
             reverse,
             term: TermSettings::default(),

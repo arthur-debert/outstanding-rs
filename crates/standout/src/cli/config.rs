@@ -100,19 +100,13 @@ pub(crate) fn config_result_output(
                 TemplateRef::Inline(LINE_TEMPLATE.to_string()),
             )
         }
-        ConfigResult::Listing { entries, rendered } => {
-            let object = entries
-                .into_iter()
-                .map(|(key, value)| (key, typed_value(&value)))
-                .collect::<serde_json::Map<_, _>>();
-            (rendered, serde_json::Value::Object(object))
-        }
+        ConfigResult::Listing { entries, rendered } => (rendered, nested_document(entries)),
         ConfigResult::KeyValue {
             key,
             value,
             rendered,
             ..
-        } => (rendered, json!({ key: typed_value(&value) })),
+        } => (rendered, nested_document(vec![(key, value)])),
         ConfigResult::ValueSet {
             key,
             value,
@@ -121,11 +115,11 @@ pub(crate) fn config_result_output(
         ConfigResult::ValueUnset { key } => (format!("{key} unset"), json!({ "key": key })),
         ConfigResult::TemplateWritten { path } => (
             format!("template written to {}", path.display()),
-            json!({ "path": path }),
+            json!({ "path": path.display().to_string() }),
         ),
         ConfigResult::SchemaWritten { path } => (
             format!("schema written to {}", path.display()),
-            json!({ "path": path }),
+            json!({ "path": path.display().to_string() }),
         ),
     };
     let data = if output_mode.is_structured() {
@@ -137,6 +131,28 @@ pub(crate) fn config_result_output(
         Output::Render(data),
         TemplateRef::Inline(LINE_TEMPLATE.to_string()),
     )
+}
+
+fn nested_document(entries: Vec<(String, Value)>) -> serde_json::Value {
+    let mut root = serde_json::Map::new();
+    for (key, value) in entries {
+        let mut segments = key.split('.').peekable();
+        let mut node = &mut root;
+        while let Some(segment) = segments.next() {
+            if segments.peek().is_none() {
+                node.insert(segment.to_string(), typed_value(&value));
+                break;
+            }
+            let slot = node
+                .entry(segment)
+                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+            if !slot.is_object() {
+                *slot = serde_json::Value::Object(serde_json::Map::new());
+            }
+            node = slot.as_object_mut().expect("just made an object");
+        }
+    }
+    serde_json::Value::Object(root)
 }
 
 fn typed_value(value: &Value) -> serde_json::Value {
@@ -212,7 +228,11 @@ pub(crate) trait ConfigSeam {
         dir: &Path,
     ) -> Result<ResolvedConfig, ClapfigError>;
 
-    fn handle(&self, action: &ConfigAction) -> Result<ConfigResult, ClapfigError>;
+    fn handle(
+        &self,
+        action: &ConfigAction,
+        overrides: &[(String, String)],
+    ) -> Result<ConfigResult, ClapfigError>;
 }
 
 pub(crate) struct TypedSeam<C: DocumentRoot> {
@@ -226,6 +246,14 @@ impl<C: DocumentRoot> TypedSeam<C> {
             builder,
             term: None,
         }
+    }
+
+    fn builder_with(&self, overrides: &[(String, String)]) -> TypedBuilder<C> {
+        let mut builder = self.builder.clone();
+        for (key, raw) in overrides {
+            builder = builder.cli_override_str(key, raw);
+        }
+        builder
     }
 }
 
@@ -248,19 +276,24 @@ impl<C: DocumentRoot + DeserializeOwned + 'static> ConfigSeam for TypedSeam<C> {
         overrides: &[(String, String)],
         dir: &Path,
     ) -> Result<ResolvedConfig, ClapfigError> {
-        let mut builder = self.builder.clone();
-        for (key, raw) in overrides {
-            builder = builder.cli_override_str(key, raw);
-        }
-        let config = builder.build_resolver()?.resolve_at(dir)?;
+        let config = self
+            .builder_with(overrides)
+            .build_resolver()?
+            .resolve_at(dir)?;
         let term = self.term.as_ref().map(|accessor| accessor(&config).clone());
         Ok(ResolvedConfig::new(config, term))
     }
 
-    fn handle(&self, action: &ConfigAction) -> Result<ConfigResult, ClapfigError> {
-        self.builder.clone().handle(action)
+    fn handle(
+        &self,
+        action: &ConfigAction,
+        overrides: &[(String, String)],
+    ) -> Result<ConfigResult, ClapfigError> {
+        self.builder_with(overrides).handle(action)
     }
 }
+
+pub(crate) struct ResolvedApp<C>(pub(crate) C);
 
 pub(crate) struct ResolvedConfig {
     value: Box<dyn Any>,
@@ -276,7 +309,7 @@ impl ResolvedConfig {
                 let value = value
                     .downcast::<C>()
                     .expect("a ResolvedConfig installs the type it was built from");
-                extensions.insert(*value);
+                extensions.insert(ResolvedApp(*value));
             },
             term,
         }
@@ -284,9 +317,6 @@ impl ResolvedConfig {
 
     pub(crate) fn install(self, extensions: &mut Extensions) {
         (self.install)(self.value, extensions);
-        if let Some(term) = self.term {
-            extensions.insert(term);
-        }
     }
 }
 
@@ -433,6 +463,31 @@ mod tests {
                 "s"
             ])
         );
+    }
+
+    #[test]
+    fn a_listing_nests_dotted_keys_into_one_object_tree() {
+        let entries = vec![
+            ("store".to_string(), Value::String("todos.json".into())),
+            ("term.output".to_string(), Value::String("json".into())),
+            ("term.width".to_string(), Value::Integer(80)),
+        ];
+        assert_eq!(
+            nested_document(entries),
+            json!({ "store": "todos.json", "term": { "output": "json", "width": 80 } })
+        );
+    }
+
+    #[test]
+    fn a_written_file_confirmation_carries_its_path_as_text() {
+        let result = ConfigResult::TemplateWritten {
+            path: std::path::PathBuf::from("generated.toml"),
+        };
+        let (output, _) = config_result_output(result, OutputMode::Json);
+        let Output::Render(data) = output else {
+            panic!("a confirmation renders");
+        };
+        assert_eq!(data, json!({ "path": "generated.toml" }));
     }
 
     #[test]

@@ -5,7 +5,8 @@ use clapfig::{Clapfig, SearchPath};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use standout::cli::{
-    App, AppBuilder, CommandContextInput, FnHandler, HelpResult, Output, RunErrorKind, TermSettings,
+    App, AppBuilder, CommandContextInput, ExitStatus, FnHandler, HelpResult, Output, RunErrorKind,
+    TermSettings,
 };
 use standout::{EmbeddedTemplates, InputSources, SetupError};
 use standout_test::{serial, TestHarness, TestResult};
@@ -306,6 +307,46 @@ fn config_list_renders_the_same_entries_in_term_and_json() {
 
 #[test]
 #[serial]
+fn config_list_nests_dotted_keys_the_way_get_does() {
+    const TERM: &str = "index_dir = \"/from-file\"\n[term]\noutput = \"json\"\n";
+    let list = run_file(
+        TERM,
+        |b| b,
+        &["cfgapp", "config", "list", "--output", "json"],
+    )
+    .result;
+    list.assert_success();
+    let document: serde_json::Value = serde_json::from_str(list.stdout()).unwrap();
+    assert_eq!(document["term"]["output"], json!("json"));
+    assert!(document.get("term.output").is_none(), "{document}");
+
+    let get = run_file(
+        TERM,
+        |b| b,
+        &["cfgapp", "config", "get", "term", "--output", "json"],
+    )
+    .result;
+    get.assert_success();
+    let document: serde_json::Value = serde_json::from_str(get.stdout()).unwrap();
+    assert_eq!(document, json!({ "term": { "output": "json" } }));
+}
+
+#[test]
+#[serial]
+fn the_override_flag_reaches_the_config_command() {
+    let with_set = |args: &[&str]| run_with(|b| b.config_override_flag("set"), args).result;
+
+    let malformed = with_set(&["cfgapp", "config", "list", "--set", "garbage"]);
+    malformed.assert_error_kind(RunErrorKind::ClapUsage);
+    malformed.assert_exit_status(ExitStatus::USAGE_ERROR);
+
+    let listed = with_set(&["cfgapp", "config", "list", "--set", "index_dir=/from-flag"]);
+    listed.assert_success();
+    listed.assert_stdout_contains("index_dir = /from-flag");
+}
+
+#[test]
+#[serial]
 fn config_get_renders_one_typed_entry() {
     let term = run(&["cfgapp", "config", "get", "port"]).result;
     term.assert_success();
@@ -406,6 +447,20 @@ fn a_written_template_is_a_confirmation() {
     written.result.assert_success();
     written.result.assert_stdout_contains("generated.toml");
     assert!(written.root.join("generated.toml").is_file());
+
+    let json = run(&[
+        "cfgapp",
+        "config",
+        "schema",
+        "--file",
+        "schema.json",
+        "--output",
+        "json",
+    ])
+    .result;
+    json.assert_success();
+    let document: serde_json::Value = serde_json::from_str(json.stdout()).unwrap();
+    assert_eq!(document["path"], json!("schema.json"));
 }
 
 #[test]

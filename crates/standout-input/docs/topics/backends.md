@@ -76,7 +76,6 @@ let source = FlagSource::new("no-color").inverted();  // --no-color → false
 **Behavior:**
 
 - `is_available()`: Returns `true` if the flag was provided (set to true)
-- `collect()`: Returns `Some(true)` if set, `None` otherwise
 - `inverted()`: Inverts the logic (flag set → `false`)
 - Type: `bool`
 
