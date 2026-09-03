@@ -55,21 +55,37 @@ is what a sequence of values needs to be read before the command ends. A batch v
 line framing is one record; a sequence under an encoding without line framing is a
 complete array of records, written when the command ends.
 
+A command that fails after emitting events has still produced those events: the human
+representation has rendered them, line framing has written them, and the failure
+diagnostic follows them in the shape the machine contract
+(`docs/topics/execution-outcomes.md`) already gives it. An encoding without line framing
+writes nothing before the command ends, so a run that fails first delivers the diagnostic
+in place of the array, as it does today for a batch value. An event that cannot be
+serialized, or bytes that cannot be delivered, fail the run the way the machine contract
+fails a final write.
+
 **ANSI presentation is separate from representation.** Decoration applies only to
-templated human text. `--output` names a representation, the human template or a
-structured encoding; a separate presentation setting, `auto`, `always` or `never`, decides
-whether that human text carries escape sequences. `term`, `text`, `auto` and `term-debug`
-are not peer data formats: the first three are the human representation under a
-presentation setting, and `term-debug` is a diagnostic view of the template's style tags.
-A structured encoding never carries ANSI, whatever the presentation setting says.
+templated human text. `--output` names a structured encoding, `json`, `yaml`, `csv` or
+`ndjson`; with no `--output` the representation is the human template, which has no
+`--output` name. A separate `--color` setting, `auto`, `always` or `never`, decides whether
+that human text carries escape sequences; `auto` is the default and resolves as an explicit
+`--color`, then the application's own color setting (its config key or variable, per Config
+Layering), then `NO_COLOR`, then terminal detection. `term`, `text`, `auto` and
+`term-debug` are not peer data formats: the first three are the human representation under
+a presentation setting and are retired; `term-debug` stays as `--output term-debug`, a
+diagnostic view of the template's style tags outside the stability contract, as today. A
+structured encoding never carries ANSI, whatever `--color` says.
 
 **Rendering is separate from delivery.** Rendering produces bytes; delivery places them on
 stdout, in a file the user names, or, for complete human output on a terminal, in an
 external pager. The application author declares which commands may page; the CLI user
-declines paging per run. Structured encodings, incremental human output and a stdout that
-is not a terminal never page. Progress rendering, when the human representation derives
-it, goes to stderr and is absent when stderr is not a terminal or the representation is
-structured.
+declines paging per run with `--no-pager`. The pager command is the application's own pager
+setting when it declares one, else `PAGER`; with neither set, nothing pages. A named output
+file wins over paging. A pager that cannot start delivers to stdout unpaged without changing
+the run's status; a pager that stops reading ends delivery without failing the run.
+Structured encodings, incremental human output and a stdout that is not a terminal never
+page. Progress rendering, when the human representation derives it, goes to stderr and is
+absent when stderr is not a terminal or the representation is structured.
 
 The principal combinations, with `apply` as the incremental command and `list` as the
 batch one:
@@ -101,9 +117,11 @@ myapp log --no-pager                   # the same text straight to stdout
 myapp log --output-file-path out.txt   # rendered bytes into the file; stdout carries nothing
 ```
 
-Under a structured encoding stdout carries only the encoded result, and stderr carries only
-operational messages. A structured run never differs in its values from the human run of
-the same command.
+Under a structured encoding stdout carries the encoded result, or the failure diagnostic
+that replaces it, and never ANSI or progress; failure and warning diagnostics keep the
+channels and shapes the machine contract gives them, which this feature does not change.
+A structured run never differs in its values from the human run of the same command: the
+same events and the same summary, up to the point the run ended.
 
 ### The test author
 
