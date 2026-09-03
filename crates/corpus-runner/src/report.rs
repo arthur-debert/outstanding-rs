@@ -16,6 +16,8 @@ pub struct RunReport {
     pub blindness: Blindness,
     pub session: SessionReport,
     pub provenance: AgentProvenance,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovered_provenance: Option<AgentProvenance>,
     pub acceptance: AcceptanceReport,
     pub invariants: Vec<InvariantCell>,
     pub questionnaire: QuestionnaireReport,
@@ -150,6 +152,7 @@ pub enum CaseOutcome {
     ExpectedFail,
     UnexpectedPass,
     HandRolledPass,
+    Error,
 }
 
 impl CaseOutcome {
@@ -211,6 +214,8 @@ pub struct HistoricalRun {
     pub session: SessionReport,
     #[serde(default)]
     pub provenance: Option<AgentProvenance>,
+    #[serde(default)]
+    pub recovered_provenance: Option<AgentProvenance>,
     pub questionnaire: QuestionnaireReport,
 }
 

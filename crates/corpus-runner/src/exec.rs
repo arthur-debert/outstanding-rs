@@ -14,6 +14,10 @@ pub const CAPTURE_CAP_BYTES: usize = 2 * 1024 * 1024;
 const READER_GRACE: Duration = Duration::from_secs(2);
 const GROUP_KILL_GRACE: Duration = Duration::from_millis(500);
 
+// Callers match on this prefix to tell a still-alive process group apart from
+// every other `supervise` error.
+pub const PROCESS_GROUP_ALIVE_AFTER_GRACE: &str = "process group still has members after grace: ";
+
 #[derive(Debug)]
 pub struct Outcome {
     pub exit_code: Option<i32>,
@@ -108,7 +112,7 @@ pub fn supervise(
             .wait()
             .map_err(|err| format!("reaping child: {err}"))?,
     };
-    wait_for_process_group_to_die(child.id());
+    wait_for_process_group_to_die(child.id())?;
     if timed_out {
         let grace_ends = Instant::now() + READER_GRACE;
         while !captures.iter().all(|c| c.is_finished()) && Instant::now() < grace_ends {
@@ -158,20 +162,28 @@ fn signal_process_group(pid: u32) {
     let _ = pid;
 }
 
-fn wait_for_process_group_to_die(pid: u32) {
+fn wait_for_process_group_to_die(pid: u32) -> Result<(), String> {
     #[cfg(unix)]
     {
         let deadline = Instant::now() + GROUP_KILL_GRACE;
-        while Instant::now() < deadline {
+        loop {
             let anything_left = unsafe { libc::killpg(pid as libc::pid_t, 0) } == 0;
             if !anything_left {
-                break;
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "{PROCESS_GROUP_ALIVE_AFTER_GRACE}pid {pid} after {GROUP_KILL_GRACE:?}"
+                ));
             }
             std::thread::sleep(Duration::from_millis(5));
         }
     }
     #[cfg(not(unix))]
-    let _ = pid;
+    {
+        let _ = pid;
+        Ok(())
+    }
 }
 
 pub struct Capture {
@@ -305,6 +317,7 @@ mod tests {
         assert_eq!(status.code(), Some(0));
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_trivial_child_is_supervised_promptly() {
         let pid = Arc::new(Mutex::new(0u32));
@@ -335,5 +348,22 @@ mod tests {
              left to signal should ever need",
             started.elapsed()
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wait_for_process_group_to_die_errors_when_a_member_survives_the_grace() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 30"]);
+        place_in_own_group(&mut command);
+        let mut child = command.spawn().unwrap();
+        let pid = child.id();
+
+        let err = wait_for_process_group_to_die(pid).unwrap_err();
+        assert!(err.starts_with(PROCESS_GROUP_ALIVE_AFTER_GRACE), "{err}");
+
+        // SAFETY: pid is its own process-group leader (set before spawn); reaches only its descendants.
+        unsafe { libc::killpg(pid as libc::pid_t, libc::SIGKILL) };
+        let _ = child.wait();
     }
 }

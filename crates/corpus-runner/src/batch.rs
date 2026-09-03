@@ -77,14 +77,18 @@ fn run_one(config: &BatchConfig, scratch_root: &Path, archetype: &str) -> Archet
     let (report, run_dir) = run(&run_config).map_err(|err| format!("{err:#}"))?;
     crate::print_summary(&report);
 
-    let dest = config.out_dir.join(&report.run_id);
+    // The scratch directory a run's id was claimed against is removed once sanitized
+    // (below), so a same-second re-run of the same archetype can claim that id again;
+    // reserve the final destination separately so two such runs never share one.
+    let (dest_id, dest) =
+        crate::claim_run_dir(&config.out_dir, &report.run_id).map_err(|err| format!("{err:#}"))?;
     sanitize_and_cleanup(
         &config.sanitize_script,
         &run_dir,
         &dest,
         config.account.as_deref(),
     )?;
-    Ok(report.run_id)
+    Ok(dest_id)
 }
 
 fn sanitize_and_cleanup(

@@ -202,6 +202,7 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
         },
         session: session_report,
         provenance: provenance::describe(&config.agent_cmd, &transcript_path),
+        recovered_provenance: None,
         acceptance: evaluation.acceptance,
         invariants: evaluation.invariants,
         questionnaire: questionnaire_report,
@@ -352,6 +353,7 @@ pub fn reevaluate(config: &ReevaluationConfig) -> anyhow::Result<RunReport> {
         blindness,
         session: source.session,
         provenance,
+        recovered_provenance: source.recovered_provenance,
         acceptance: evaluation.acceptance,
         invariants: evaluation.invariants,
         questionnaire: source.questionnaire,
@@ -467,6 +469,13 @@ pub fn print_summary(report: &RunReport) {
     );
     for case in &report.acceptance.cases {
         match case.outcome {
+            CaseOutcome::Error => {
+                eprintln!(
+                    "[corpus]   ERROR case: {} ({})",
+                    case.name,
+                    case.detail.as_deref().unwrap_or("?")
+                );
+            }
             CaseOutcome::Fail => eprintln!("[corpus]   FAIL case: {}", case.name),
             CaseOutcome::ExpectedFail => {
                 eprintln!(
@@ -541,7 +550,7 @@ fn unix_timestamp() -> u64 {
 }
 
 // `create_dir`, never `create_dir_all`: adopting an existing directory would share a run.
-fn claim_run_dir(runs_dir: &Path, base: &str) -> anyhow::Result<(String, PathBuf)> {
+pub(crate) fn claim_run_dir(runs_dir: &Path, base: &str) -> anyhow::Result<(String, PathBuf)> {
     for attempt in 0..1000u32 {
         let run_id = if attempt == 0 {
             base.to_string()

@@ -570,6 +570,7 @@ mod tests {
         assert!(status.success(), "git {args:?} failed");
     }
 
+    #[cfg(unix)]
     #[test]
     fn crate_doc_symlink_targets_are_resolved_from_the_tag() {
         let repo = tempfile::tempdir().unwrap();

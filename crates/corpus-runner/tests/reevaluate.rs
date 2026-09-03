@@ -131,6 +131,55 @@ fn historical_v2_report(archetype: &str) -> String {
     )
 }
 
+// Mirrors the backfilled block committed on the schema-2/3 pilot reports under
+// `corpus/pilot/runs/` after their transcripts were deleted.
+fn historical_v2_report_with_recovered_provenance(archetype: &str) -> String {
+    let base = historical_v2_report(archetype);
+    base.replacen(
+        "\"acceptance\":",
+        r#""recovered_provenance": {
+    "backend": "claude",
+    "executable_version": "2.1.234",
+    "model_requested": null,
+    "model_observed": "claude-opus-5[1m]",
+    "prompt": "Read INSTRUCTIONS.md in the current directory and carry it out completely.",
+    "settings": ["--dangerously-skip-permissions"]
+  },
+  "acceptance":"#,
+        1,
+    )
+}
+
+#[test]
+fn reevaluation_preserves_recovered_provenance_verbatim() {
+    let fixture = fixture(&historical_v2_report_with_recovered_provenance("fake"));
+
+    let report = reevaluate(&config(&fixture)).unwrap();
+
+    let recovered = report
+        .recovered_provenance
+        .as_ref()
+        .expect("recovered_provenance carried through re-evaluation");
+    assert_eq!(recovered.backend.as_deref(), Some("claude"));
+    assert_eq!(recovered.executable_version.as_deref(), Some("2.1.234"));
+    assert_eq!(
+        recovered.model_observed.as_deref(),
+        Some("claude-opus-5[1m]")
+    );
+
+    let restored: corpus_runner::report::RunReport =
+        serde_json::from_str(&fs::read_to_string(&fixture.output_report).unwrap()).unwrap();
+    assert_eq!(
+        restored
+            .recovered_provenance
+            .as_ref()
+            .unwrap()
+            .backend
+            .as_deref(),
+        Some("claude")
+    );
+}
+
 #[test]
 fn reevaluation_preserves_history_and_regenerates_objective_sections() {
     let fixture = fixture(&historical_v2_report("fake"));

@@ -49,6 +49,9 @@ pub fn run_cases(
                         }
                     }
                 }
+                Err(err) if err.starts_with(exec::PROCESS_GROUP_ALIVE_AFTER_GRACE) => {
+                    (CaseOutcome::Error, Some(err))
+                }
                 Err(err) => (
                     CaseOutcome::Fail,
                     Some(format!("case execution error: {err}")),
@@ -109,6 +112,11 @@ fn execute(
     sandbox: &Path,
     isolation: &workspace::Isolation,
 ) -> Result<Execution, String> {
+    // A re-evaluation reuses the same cases directory across calls; without this, a
+    // case's `files_absent` assertion could read a previous run's leftovers.
+    if sandbox.exists() {
+        std::fs::remove_dir_all(sandbox).map_err(|err| format!("clearing sandbox: {err}"))?;
+    }
     std::fs::create_dir_all(sandbox).map_err(|err| format!("creating sandbox: {err}"))?;
     for (rel, content) in &case.run.files {
         let dest = sandbox_path(sandbox, rel)?;

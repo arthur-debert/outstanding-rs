@@ -135,6 +135,71 @@ fn batch_smoke_writes_both_scorecards_and_sanitized_evidence() {
 }
 
 #[test]
+fn batch_two_runs_of_the_same_archetype_get_distinct_destinations() {
+    // Same-second runs of one archetype can claim the same run id in scratch (removed
+    // between runs), so the final destination reservation is what must keep them apart.
+    let scratch = tempfile::tempdir().unwrap();
+
+    let bin_dir = scratch.path().join("bin");
+    common::install_fake_cargo(&bin_dir, "smoke", SMOKE);
+    common::questionnaire_agent(
+        &bin_dir,
+        "agent.sh",
+        "",
+        &[
+            ("summary", "Implemented smoke from SPEC.md."),
+            ("sources.docs", "docs/guides/minimal-single-crate.md"),
+            ("sources.external", "none"),
+            ("confidence", "high"),
+            ("confidence_reason", "Every case passes."),
+        ],
+        true,
+    );
+
+    let out_dir = scratch.path().join("out");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_corpus-runner"))
+        .args([
+            "batch",
+            "smoke",
+            "smoke",
+            "--framework-version",
+            env!("CARGO_PKG_VERSION"),
+            "--agent-cmd",
+            "agent.sh",
+            "--out",
+        ])
+        .arg(&out_dir)
+        .current_dir(repo())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "batch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let run_dirs: Vec<_> = std::fs::read_dir(&out_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.is_dir() && !path.file_name().unwrap().to_string_lossy().starts_with('.')
+        })
+        .collect();
+    assert_eq!(run_dirs.len(), 2, "{run_dirs:?}");
+    for run_dir in &run_dirs {
+        assert!(run_dir
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("smoke-"));
+        assert!(run_dir.join("report.json").is_file(), "{run_dir:?}");
+        assert!(run_dir.join("transcript.jsonl").is_file(), "{run_dir:?}");
+    }
+    assert_ne!(run_dirs[0], run_dirs[1]);
+}
+
+#[test]
 fn batch_rejects_an_out_dir_inside_the_source_checkout() {
     let out_dir = repo()
         .join("target")

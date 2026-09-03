@@ -625,6 +625,12 @@ if [ -n "$NO_COLOR" ] && [ "$mode" != "text" ]; then sleep 30; fi
 echo 'kind: Pod  name: web-0'
 "#;
 
+const ARTIFACT_LIKE_FAILS_WHEN_COLOR_OFF: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]'; exit 0; fi
+if [ -n "$NO_COLOR" ]; then echo 'boom' 1>&2; exit 1; fi
+echo 'kind: Pod  name: web-0'
+"#;
+
 const ARTIFACT_LIKE_JSON_MODE_FAILS_WITH_JSON_LOOKING_OUTPUT_WHEN_COLOR_OFF: &str = r#"
 if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]'; exit 0; fi
 mode=text
@@ -1162,6 +1168,33 @@ fn either_contract_waits_for_a_cell_that_actually_settles_it() {
 }
 
 #[test]
+fn either_contract_does_not_settle_on_a_first_cell_that_exited_nonzero() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", ARTIFACT_LIKE_FAILS_WHEN_COLOR_OFF);
+    let invariants = Invariants {
+        commands: vec![either(&["get", "pods"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        Duration::from_millis(200),
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    // color=off exits nonzero on every mode; that must not settle the either
+    // contract as `rendered` before color=on's opaque-bytes cell runs.
+    let on_cells: Vec<_> = cells.iter().filter(|c| c.color == "on").collect();
+    assert!(!on_cells.is_empty());
+    assert!(on_cells.iter().all(|c| c.status != InvariantStatus::Fail));
+    assert!(on_cells
+        .iter()
+        .filter(|c| c.check == "stdout parses as JSON")
+        .all(|c| c.status == InvariantStatus::NotApplicable));
+}
+
+#[test]
 fn either_contract_ignores_json_parsing_stray_output_from_a_failed_run() {
     let dir = tempfile::tempdir().unwrap();
     let binary = script(
@@ -1243,6 +1276,7 @@ fn report_round_trips_through_json() {
         provenance: corpus_runner::provenance::recorded(
             "claude --model claude-opus-5 -p 'do the thing'",
         ),
+        recovered_provenance: None,
         acceptance: corpus_runner::report::AcceptanceReport {
             built: true,
             build_detail: None,

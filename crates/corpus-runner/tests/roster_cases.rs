@@ -859,6 +859,69 @@ files_absent = ["conf/configurations/config_staging"]
 }
 
 #[test]
+fn a_case_sandbox_is_clean_across_two_reevaluations_of_the_same_cases_dir() {
+    // Re-evaluation reuses one cases directory across separate `run_cases` calls;
+    // each case must get a fresh sandbox rather than reading a previous run's files.
+    let dir = tempfile::tempdir().unwrap();
+    let cases_dir = dir.path().join("cases");
+    let isolation = Isolation::new(
+        dir.path(),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
+    )
+    .unwrap();
+
+    let leftover_toml = r#"
+[[case]]
+name = "shared"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["write"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+"#;
+    let clean_toml = r#"
+[[case]]
+name = "shared"
+stresses = "post-run sandbox assertion"
+expected = "pass"
+[case.run]
+argv = ["skip"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+files_absent = ["leftover.txt"]
+"#;
+    let binary_body = r#"if [ "$1" = "write" ]; then touch leftover.txt; fi"#;
+
+    for toml in [leftover_toml, clean_toml] {
+        let binary = script(dir.path(), "fake", binary_body);
+        let archetype_dir = dir.path().join("archetypes/fake");
+        fs::create_dir_all(&archetype_dir).unwrap();
+        fs::write(archetype_dir.join("spec.md"), "spec").unwrap();
+        let acceptance_text = format!("schema = 1\narchetype = \"fake\"\n{toml}");
+        let acceptance_path = archetype_dir.join("acceptance.toml");
+        fs::write(&acceptance_path, &acceptance_text).unwrap();
+        let suite = CaseSuite::parse(&acceptance_text, "fake", &acceptance_path).unwrap();
+        let report = run_cases(
+            &binary,
+            &suite.cases,
+            &cases_dir,
+            &isolation,
+            &BTreeMap::new(),
+            Ok(""),
+        );
+        assert_eq!(
+            report.cases[0].outcome,
+            CaseOutcome::Pass,
+            "{:?}",
+            report.cases[0].detail
+        );
+    }
+}
+
+#[test]
 fn files_assertion_refuses_a_symlink_at_the_leaf() {
     let results = run_suite(
         r#"

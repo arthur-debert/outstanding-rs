@@ -225,7 +225,7 @@ fn resolve_either_contract(runs: &ModeRuns) -> Option<InvariantContract> {
             }
         }
     }
-    if runs.values().all(|run| run.is_ok()) {
+    if runs.values().all(|run| matches!(run, Ok((Some(0), _)))) {
         Some(InvariantContract::Rendered)
     } else {
         None
