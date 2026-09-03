@@ -869,14 +869,21 @@ impl App {
                 )
             }
             Err(ParseFailure::Clap(e)) => {
-                return match self.intercept_display_help(&mut cmd, &args, &e, None, None) {
+                return match self.intercept_display_help(
+                    &mut cmd,
+                    &args,
+                    &e,
+                    None,
+                    ColorPolicy::Auto,
+                    None,
+                ) {
                     Some(display) => display.into(),
                     None => HelpResult::Error(e),
                 }
             }
         };
 
-        match self.intercept_help_word(&mut cmd, &matches, None, None) {
+        match self.intercept_help_word(&mut cmd, &matches, None, ColorPolicy::Auto, None) {
             Some(display) => display.into(),
             None => HelpResult::Matches(matches),
         }
@@ -887,25 +894,31 @@ impl App {
         cmd: &mut Command,
         matches: &ArgMatches,
         target: Option<crate::TargetProperties>,
+        color_policy: ColorPolicy,
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> Option<HelpDisplay> {
         if !self.help_handling {
             return None;
         }
         let (name, sub_matches) = matches.subcommand()?;
-        (name == "help").then(|| self.render_help_word(cmd, matches, sub_matches, target, warnings))
+        (name == "help").then(|| {
+            self.render_help_word(cmd, matches, sub_matches, target, color_policy, warnings)
+        })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn intercept_display_help(
         &self,
         cmd: &mut Command,
         args: &[std::ffi::OsString],
         error: &clap::Error,
         target: Option<crate::TargetProperties>,
+        color_policy: ColorPolicy,
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> Option<HelpDisplay> {
-        (self.help_handling && error.kind() == clap::error::ErrorKind::DisplayHelp)
-            .then(|| self.render_help_for_display_help_error(cmd, args, target, warnings))
+        (self.help_handling && error.kind() == clap::error::ErrorKind::DisplayHelp).then(|| {
+            self.render_help_for_display_help_error(cmd, args, target, color_policy, warnings)
+        })
     }
 
     fn help_target_properties(
@@ -946,6 +959,7 @@ impl App {
         template: crate::TemplateRef,
         format: Representation,
         target: crate::TargetProperties,
+        color_policy: ColorPolicy,
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> Result<String, RenderError> {
         render_via_request(
@@ -953,7 +967,7 @@ impl App {
             template,
             self.help_theme(),
             format,
-            ColorPolicy::Auto,
+            color_policy,
             target,
             self.template_engine.clone(),
             self.template_registry.clone(),
@@ -977,12 +991,14 @@ impl App {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_help_word(
         &self,
         cmd: &mut Command,
         matches: &ArgMatches,
         sub_matches: &ArgMatches,
         target: Option<crate::TargetProperties>,
+        color_policy: ColorPolicy,
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
         let format = self.extract_output_mode(matches);
@@ -998,12 +1014,27 @@ impl App {
             let keywords: Vec<_> = topic_args.map(|s| s.as_str()).collect();
             if !keywords.is_empty() {
                 return self.handle_help_request(
-                    cmd, &keywords, use_pager, config, format, target, warnings,
+                    cmd,
+                    &keywords,
+                    use_pager,
+                    config,
+                    format,
+                    target,
+                    color_policy,
+                    warnings,
                 );
             }
         }
 
-        self.render_root_help(cmd, config, format, target, warnings, use_pager)
+        self.render_root_help(
+            cmd,
+            config,
+            format,
+            target,
+            color_policy,
+            warnings,
+            use_pager,
+        )
     }
 
     fn render_failure(cmd: &Command, error: impl std::fmt::Display) -> HelpDisplay {
@@ -1020,6 +1051,7 @@ impl App {
         config: HelpConfig,
         format: Representation,
         target: crate::TargetProperties,
+        color_policy: ColorPolicy,
         warnings: Option<standout_render::warnings::WarningBuffer>,
         use_pager: bool,
     ) -> HelpDisplay {
@@ -1045,7 +1077,14 @@ impl App {
         .expect("the root is always at the empty path");
         self.help_display(
             cmd,
-            self.render_help_surface(&data, template, human_help_format(format), target, warnings),
+            self.render_help_surface(
+                &data,
+                template,
+                human_help_format(format),
+                target,
+                color_policy,
+                warnings,
+            ),
             use_pager,
         )
     }
@@ -1073,6 +1112,7 @@ impl App {
         cmd: &mut Command,
         args: &[std::ffi::OsString],
         target: Option<crate::TargetProperties>,
+        color_policy: ColorPolicy,
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
         let request = Self::help_request(cmd, args);
@@ -1085,11 +1125,28 @@ impl App {
         };
 
         if request.target.is_empty() {
-            return self.render_root_help(cmd, config, format, target, warnings, false);
+            return self.render_root_help(
+                cmd,
+                config,
+                format,
+                target,
+                color_policy,
+                warnings,
+                false,
+            );
         }
 
         let keywords: Vec<&str> = request.target.iter().map(|s| s.as_str()).collect();
-        self.handle_help_request(cmd, &keywords, false, config, format, target, warnings)
+        self.handle_help_request(
+            cmd,
+            &keywords,
+            false,
+            config,
+            format,
+            target,
+            color_policy,
+            warnings,
+        )
     }
 
     fn help_request(cmd: &Command, args: &[std::ffi::OsString]) -> HelpRequest {
@@ -1153,6 +1210,7 @@ impl App {
         config: HelpConfig,
         format: Representation,
         target: crate::TargetProperties,
+        color_policy: ColorPolicy,
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
         let sub_name = keywords[0];
@@ -1171,7 +1229,14 @@ impl App {
                 topics_list_data(&self.registry, &format!("{} help", cmd.get_name()), &target);
             return self.help_display(
                 cmd,
-                self.render_help_surface(&data, template, page_format, target, warnings),
+                self.render_help_surface(
+                    &data,
+                    template,
+                    page_format,
+                    target,
+                    color_policy,
+                    warnings,
+                ),
                 use_pager,
             );
         }
@@ -1197,7 +1262,14 @@ impl App {
             ) {
                 return self.help_display(
                     cmd,
-                    self.render_help_surface(&data, template, page_format, target, warnings),
+                    self.render_help_surface(
+                        &data,
+                        template,
+                        page_format,
+                        target,
+                        color_policy,
+                        warnings,
+                    ),
                     use_pager,
                 );
             }
@@ -1219,6 +1291,7 @@ impl App {
                     template,
                     page_format,
                     target,
+                    color_policy,
                     warnings,
                 ),
                 use_pager,

@@ -55,7 +55,7 @@ fn help_command() -> Command {
 #[test]
 #[serial]
 fn with_color_makes_a_styled_render_ansi_positive() {
-    let result = TestHarness::new().stdout_is_terminal(true).run(
+    let result = TestHarness::new().color_capable_terminal().run(
         &styled_app(),
         styled_command(),
         ["app", "say"],
@@ -70,7 +70,7 @@ fn with_color_makes_a_styled_render_ansi_positive() {
 #[test]
 #[serial]
 fn a_term_render_without_with_color_emits_escapes() {
-    let result = TestHarness::new().stdout_is_terminal(true).run(
+    let result = TestHarness::new().color_capable_terminal().run(
         &styled_app(),
         styled_command(),
         ["app", "say"],
@@ -84,7 +84,7 @@ fn a_term_render_without_with_color_emits_escapes() {
 #[test]
 #[serial]
 fn stripping_a_colored_term_render_recovers_the_text_render() {
-    let term = TestHarness::new().stdout_is_terminal(true).run(
+    let term = TestHarness::new().color_capable_terminal().run(
         &styled_app(),
         styled_command(),
         ["app", "say"],
@@ -107,7 +107,7 @@ fn stripping_a_colored_term_render_recovers_the_text_render() {
 #[serial]
 fn the_help_page_renders_ansi_through_the_default_help_theme() {
     let result = TestHarness::new()
-        .stdout_is_terminal(true)
+        .color_capable_terminal()
         .terminal_width(80)
         .run(&help_app(), help_command(), ["notes", "--help"]);
     result.assert_success();
@@ -126,7 +126,7 @@ fn the_help_page_renders_ansi_through_the_default_help_theme() {
 #[serial]
 fn with_color_does_not_call_set_colors_enabled() {
     let before = console::colors_enabled();
-    let result = TestHarness::new().stdout_is_terminal(true).run(
+    let result = TestHarness::new().color_capable_terminal().run(
         &styled_app(),
         styled_command(),
         ["app", "say"],

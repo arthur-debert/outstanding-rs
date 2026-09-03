@@ -212,23 +212,28 @@ bracket syntax.
 
 ---
 
-## Processing Modes
+## Style Modes
 
-Pass 2 (BBParser) processes style tags differently based on the output mode:
+Pass 2 (BBParser) processes style tags differently according to the `StyleMode`
+the run resolves to:
 
-| Mode | Behavior | Use Case |
+| Style mode | Behavior | Use Case |
 | ------ | ---------- | ---------- |
-| `Term` | Replace tags with ANSI escape codes | Rich terminal output |
-| `Text` | Strip tags completely | Plain text, pipes, files |
-| `TermDebug` | Keep tags as literal text | Debugging, testing |
+| `Ansi` | Replace tags with ANSI escape codes | Rich terminal output |
+| `Plain` | Strip tags completely | Plain text, pipes, files |
+| `Debug` | Keep tags as literal text | Debugging, testing |
 
-### Processing Modes Example
+`Ansi` and `Plain` are the two ways `Representation::Human` can render, chosen
+by the run's `ColorPolicy` against the destination's color capability. `Debug`
+is what `Representation::TermDebug` renders as.
+
+### Style Modes Example
 
 Template: `[title]Hello[/title]`
 
-- **Term**: `\x1b[1;36mHello\x1b[0m` (rendered as cyan bold)
-- **Text**: `Hello`
-- **TermDebug**: `[title]Hello[/title]`
+- **Ansi**: `\x1b[1;36mHello\x1b[0m` (rendered as cyan bold)
+- **Plain**: `Hello`
+- **Debug**: `[title]Hello[/title]`
 
 The "strip tags completely" behavior applies to tags the active theme defines.
 An *unknown* tag degrades differently, and an unbalanced unknown tag survives
@@ -455,6 +460,7 @@ The error lists every unknown or unbalanced tag.
 
 ```rust
 use standout_render::{
+    ColorPolicy, Representation,
     render,                  // Basic: template + data + theme
     render_with_output,      // With explicit output mode
     render_with_mode,        // With representation + color policy + color mode
@@ -486,7 +492,7 @@ let output = render_auto(template, &data, &theme, Representation::Json, ColorPol
 ### Renderer Struct
 
 ```rust
-use standout_render::Renderer;
+use standout_render::{ColorPolicy, Renderer};
 
 let mut renderer = Renderer::new(theme)?;
 renderer.add_template("name", "content")?;

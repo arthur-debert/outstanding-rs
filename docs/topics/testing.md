@@ -97,7 +97,7 @@ The harness doesn't invent new mechanisms; it wires together seams that Standout
 
 ### `TargetProperties` (standout-render)
 
-Detection is [`TargetProperties::detect()`](https://docs.rs/standout-render/latest/standout_render/struct.TargetProperties.html#method.detect) at the crate edge. Convenience wrappers and `App::run` call it there, then pass the result into `render_request`. Tests do not call `detect()`; they construct `TargetProperties` or inject facts through `TestHarness` (`terminal_width`, `stdout_is_terminal`, `color`, `color_scheme`, `icon_mode`, `ambiguous_width`). Unset facts take fixed defaults — `width: None`, `ColorMode::Dark`, `IconMode::Classic`, `AmbiguousWidth::Narrow` — so `$COLUMNS`, `$NERD_FONT`, and the OS appearance setting cannot change an in-process run.
+Detection is [`TargetProperties::detect()`](https://docs.rs/standout-render/latest/standout_render/struct.TargetProperties.html#method.detect) at the crate edge. Convenience wrappers and `App::run` call it there, then pass the result into `render_request`. Tests do not call `detect()`; they construct `TargetProperties` or inject facts through `TestHarness` (`terminal_width`, the four per-stream terminal and color-capability setters or the `color_capable_terminal()` convenience, `color`, `color_scheme`, `icon_mode`, `ambiguous_width`). Unset facts take fixed defaults — `width: None`, `ColorMode::Dark`, `IconMode::Classic`, `AmbiguousWidth::Narrow` — so `$COLUMNS`, `$NERD_FONT`, and the OS appearance setting cannot change an in-process run.
 
 There is no TTY detector ([ADR-0022](../adr/0022-delete-the-in-process-tty-seam.md)): terminal-dependent behavior is tested against a real process via `TestHarness::run_process`.
 
@@ -192,6 +192,7 @@ Pin terminal state for determinism, run, snapshot the output:
 
 ```rust
 use insta::assert_snapshot;
+use standout::ColorPolicy;
 
 #[test]
 #[serial]

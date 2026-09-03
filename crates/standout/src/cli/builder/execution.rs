@@ -217,6 +217,7 @@ impl App {
             dispatch_fn,
             sub_matches,
             &ctx,
+            &recorder,
             hooks,
             output_mode,
             color_policy,
@@ -295,6 +296,7 @@ impl App {
             Ok(output),
             sub_matches,
             &ctx,
+            recorder,
             None,
             &template,
             &self.theme,
@@ -359,9 +361,7 @@ impl App {
         } else {
             EntryStream::discarding()
         };
-        let mut ctx = CommandContext::new(path, self.app_state.clone())
-            .with_stream(stream)
-            .with_results(recorder.clone());
+        let mut ctx = CommandContext::new(path, self.app_state.clone()).with_stream(stream);
         ctx.extensions.insert(warnings.clone());
         Ok(ctx)
     }
@@ -548,6 +548,7 @@ impl App {
                     &args,
                     &e,
                     Some(target),
+                    color_policy,
                     Some(warnings.clone()),
                 ) {
                     return (display.into(), output_mode);
@@ -577,6 +578,7 @@ impl App {
             &mut augmented_cmd,
             &matches,
             Some(target),
+            color_policy,
             Some(warnings.clone()),
         ) {
             return (display.into(), output_mode);

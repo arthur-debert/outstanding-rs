@@ -101,7 +101,7 @@ fn themed_app() -> App {
 
 #[test]
 fn app_with_own_theme_renders_clean_help() {
-    let result = TestHarness::new().stdout_is_terminal(true).run(
+    let result = TestHarness::new().color_capable_terminal().run(
         &themed_app(),
         lookma(),
         ["lookma", "help"],

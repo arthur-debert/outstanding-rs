@@ -210,7 +210,7 @@ fn detectable_command() -> Command {
 fn harness_run_is_independent_of_detected_process_facts() {
     let app = build_detectable_facts_app();
     let cmd = detectable_command();
-    let baseline = || TestHarness::new().stdout_is_terminal(true);
+    let baseline = || TestHarness::new().color_capable_terminal();
     let perturb = || {
         baseline()
             .env("COLUMNS", "37")

@@ -34,7 +34,7 @@ fn every_matrix_cell_states_every_clap_fact() {
         for (entry, length) in ENTRY_POINTS {
             for styled in [false, true] {
                 let harness = if styled {
-                    TestHarness::new().stdout_is_terminal(true)
+                    TestHarness::new().color_capable_terminal()
                 } else {
                     TestHarness::new().stdout_is_terminal(false)
                 };

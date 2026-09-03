@@ -264,7 +264,7 @@ fn warning_block_uses_the_app_theme_not_theme_default() {
         .unwrap();
     let cmd = Command::new("app").subcommand(Command::new("say"));
     let result = TestHarness::new()
-        .stdout_is_terminal(true)
+        .color_capable_terminal()
         .run(&app, cmd, ["app", "say"]);
     result.assert_success();
     let target = TargetProperties {
@@ -332,7 +332,7 @@ fn stdout_plain_strips_the_styling_the_raw_accessor_keeps() {
     let app = styled_app();
     let cmd = Command::new("app").subcommand(Command::new("say"));
     let result = TestHarness::new()
-        .stdout_is_terminal(true)
+        .color_capable_terminal()
         .run(&app, cmd, ["app", "say"]);
     let raw = result.stdout();
     assert!(

@@ -21,7 +21,14 @@ fn a_forced_ambiguous_width_policy_is_refused() {
 #[should_panic(expected = "stdout_is_terminal()")]
 fn a_forced_terminal_destination_is_refused() {
     TestHarness::new()
-        .stdout_is_terminal(true)
+        .color_capable_terminal()
+        .run_process(UNSPAWNED, ["--version"]);
+}
+#[test]
+#[should_panic(expected = "stderr_is_terminal()")]
+fn one_forced_destination_fact_is_refused_on_its_own() {
+    TestHarness::new()
+        .stderr_color_capability(true)
         .run_process(UNSPAWNED, ["--version"]);
 }
 #[test]
@@ -52,7 +59,7 @@ fn every_refused_setting_is_named_in_one_message() {
     let panic = std::panic::catch_unwind(|| {
         TestHarness::new()
             .terminal_width(80)
-            .stdout_is_terminal(true)
+            .color_capable_terminal()
             .clipboard("copied")
             .run_process(UNSPAWNED, ["--version"]);
     })

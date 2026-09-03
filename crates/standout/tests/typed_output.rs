@@ -143,7 +143,7 @@ fn the_color_policy_and_the_destination_are_separate_settings() {
     assert_eq!(forced.stdout_plain(), "3 items for ada");
 
     let terminal = TestHarness::new()
-        .stdout_is_terminal(true)
+        .color_capable_terminal()
         .color(ColorPolicy::Never)
         .run(&app(), command(), ["app", "list"]);
     assert!(

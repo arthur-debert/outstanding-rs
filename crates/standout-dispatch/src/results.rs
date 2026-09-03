@@ -84,7 +84,10 @@ impl RunRecorder {
 }
 
 /// The handler's channel for the values a command produces while it runs.
-#[derive(Debug, Clone, Default)]
+///
+/// Not `Clone`: `Handler::handle` receives it as a `&mut` borrow the framework
+/// owns, and a clone would let a handler keep emitting past its own run.
+#[derive(Debug)]
 pub struct Results<E: Serialize> {
     recorder: Option<RunRecorder>,
     _event: PhantomData<fn(E)>,

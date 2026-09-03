@@ -1,7 +1,7 @@
 use crate::artifact::{Artifact, ArtifactRun};
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::hooks::HookPhase;
-use crate::results::{NoEvents, Results, RunRecorder};
+use crate::results::{NoEvents, Results};
 use crate::stream::EntryStream;
 use crate::verify::ExpectedArg;
 use clap::ArgMatches;
@@ -87,7 +87,6 @@ pub struct CommandContext {
     pub app_state: Rc<Extensions>,
     pub extensions: Extensions,
     pub stream: EntryStream,
-    results: Option<RunRecorder>,
 }
 impl CommandContext {
     pub fn new(command_path: Vec<String>, app_state: Rc<Extensions>) -> Self {
@@ -96,28 +95,11 @@ impl CommandContext {
             app_state,
             extensions: Extensions::new(),
             stream: EntryStream::discarding(),
-            results: None,
         }
     }
     pub fn with_stream(mut self, stream: EntryStream) -> Self {
         self.stream = stream;
         self
-    }
-    pub fn with_results(mut self, recorder: RunRecorder) -> Self {
-        self.results = Some(recorder);
-        self
-    }
-    /// The run's recorder, installed by an in-process entry point.
-    pub fn recorder(&self) -> Option<&RunRecorder> {
-        self.results.as_ref()
-    }
-    /// The channel `Handler::handle` receives; recording when an in-process
-    /// entry point installed a recorder, discarding otherwise.
-    pub fn results<E: Serialize>(&self) -> Results<E> {
-        match &self.results {
-            Some(recorder) => Results::recording(recorder.clone()),
-            None => Results::discarding(),
-        }
     }
     /// Live under `ndjson`, discarding in every other mode.
     pub fn stream(&self) -> &EntryStream {
@@ -131,7 +113,6 @@ impl Default for CommandContext {
             app_state: Rc::new(Extensions::new()),
             extensions: Extensions::new(),
             stream: EntryStream::discarding(),
-            results: None,
         }
     }
 }
@@ -767,7 +748,6 @@ mod tests {
             app_state: Rc::new(Extensions::new()),
             extensions: Extensions::new(),
             stream: EntryStream::discarding(),
-            results: None,
         };
         assert_eq!(ctx.command_path, vec!["config", "get"]);
     }
@@ -871,7 +851,6 @@ mod tests {
             app_state: app_state.clone(),
             extensions: Extensions::new(),
             stream: EntryStream::discarding(),
-            results: None,
         };
         let db = ctx.app_state.get::<Database>().unwrap();
         assert_eq!(db.url, "postgres://localhost");
@@ -889,7 +868,6 @@ mod tests {
             app_state: Rc::new(app_state),
             extensions: Extensions::new(),
             stream: EntryStream::discarding(),
-            results: None,
         };
         assert!(ctx.app_state.get_required::<Present>().is_ok());
         #[derive(Debug)]

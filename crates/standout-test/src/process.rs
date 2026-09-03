@@ -129,8 +129,12 @@ impl TestHarness {
         if self.color_policy != standout::ColorPolicy::Auto {
             rejected.push("color()");
         }
-        if self.stdout_is_terminal {
-            rejected.push("stdout_is_terminal()");
+        if self.stdout_is_terminal
+            || self.stderr_is_terminal
+            || self.stdout_color_capability
+            || self.stderr_color_capability
+        {
+            rejected.push("stdout_is_terminal()/stderr_is_terminal()/color_capability()");
         }
         if !matches!(self.stdin, StdinMode::Inherit) {
             rejected.push("piped_stdin()/interactive_stdin()");

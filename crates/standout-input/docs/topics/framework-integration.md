@@ -170,6 +170,7 @@ For interactive sources (prompts, editor), validation failure re-prompts instead
 The framework path composes naturally with `standout-test`:
 
 ```rust
+use standout::ColorPolicy;
 use standout_test::TestHarness;
 
 #[test]

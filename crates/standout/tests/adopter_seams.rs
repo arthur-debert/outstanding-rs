@@ -78,12 +78,12 @@ fn the_default_fallback_is_unchanged_for_an_app_that_sets_none() {
 fn both_help_spellings_render_the_human_page_on_a_terminal() {
     let app = systemdlike(Representation::Human);
 
-    let word = TestHarness::new().stdout_is_terminal(true).run(
+    let word = TestHarness::new().color_capable_terminal().run(
         &app,
         systemdlike_command(),
         ["systemdlike", "help"],
     );
-    let flag = TestHarness::new().stdout_is_terminal(true).run(
+    let flag = TestHarness::new().color_capable_terminal().run(
         &app,
         systemdlike_command(),
         ["systemdlike", "--help"],

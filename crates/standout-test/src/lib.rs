@@ -67,6 +67,9 @@ pub struct TestHarness {
     ambiguous_width: Option<AmbiguousWidth>,
     color_policy: ColorPolicy,
     stdout_is_terminal: bool,
+    stderr_is_terminal: bool,
+    stdout_color_capability: bool,
+    stderr_color_capability: bool,
     color_scheme: Option<ColorMode>,
     icon_mode: Option<IconMode>,
     output_mode: Option<Representation>,
@@ -87,6 +90,9 @@ impl TestHarness {
             ambiguous_width: None,
             color_policy: ColorPolicy::Auto,
             stdout_is_terminal: false,
+            stderr_is_terminal: false,
+            stdout_color_capability: false,
+            stderr_color_capability: false,
             color_scheme: None,
             icon_mode: None,
             output_mode: None,
@@ -121,10 +127,36 @@ impl TestHarness {
         self.color_policy = policy;
         self
     }
-    /// The destination fact an `auto` color policy reads; independent of the policy.
+    /// Whether stdout reports being a terminal; sets nothing else.
     pub fn stdout_is_terminal(mut self, is_terminal: bool) -> Self {
         self.stdout_is_terminal = is_terminal;
         self
+    }
+    /// Whether stderr reports being a terminal; sets nothing else.
+    pub fn stderr_is_terminal(mut self, is_terminal: bool) -> Self {
+        self.stderr_is_terminal = is_terminal;
+        self
+    }
+    /// The stdout destination fact an `auto` color policy reads; independent of
+    /// whether stdout is a terminal, and of the policy.
+    pub fn stdout_color_capability(mut self, capable: bool) -> Self {
+        self.stdout_color_capability = capable;
+        self
+    }
+    /// The stderr destination fact an `auto` color policy reads, which is what
+    /// warning rendering consults.
+    pub fn stderr_color_capability(mut self, capable: bool) -> Self {
+        self.stderr_color_capability = capable;
+        self
+    }
+    /// The ordinary color-capable TTY: both streams terminals, both reporting
+    /// color capability. Set the four facts individually to model a destination
+    /// that crosses them.
+    pub fn color_capable_terminal(self) -> Self {
+        self.stdout_is_terminal(true)
+            .stderr_is_terminal(true)
+            .stdout_color_capability(true)
+            .stderr_color_capability(true)
     }
     pub fn color_scheme(mut self, scheme: ColorMode) -> Self {
         self.color_scheme = Some(scheme);
@@ -315,9 +347,9 @@ impl TestHarness {
         TargetProperties {
             width: self.terminal_width.flatten(),
             stdout_is_terminal: self.stdout_is_terminal,
-            stderr_is_terminal: self.stdout_is_terminal,
-            stdout_color_capability: self.stdout_is_terminal,
-            stderr_color_capability: self.stdout_is_terminal,
+            stderr_is_terminal: self.stderr_is_terminal,
+            stdout_color_capability: self.stdout_color_capability,
+            stderr_color_capability: self.stderr_color_capability,
             color_scheme: self.color_scheme.unwrap_or(ColorMode::Dark),
             icon_mode: self.icon_mode.unwrap_or(IconMode::Classic),
             ambiguous_width: self.ambiguous_width.unwrap_or(AmbiguousWidth::Narrow),
@@ -363,7 +395,7 @@ mod target_properties_defaults {
     fn explicit_overrides_replace_the_fixed_defaults() {
         let target = TestHarness::new()
             .terminal_width(42)
-            .stdout_is_terminal(true)
+            .color_capable_terminal()
             .color_scheme(ColorMode::Light)
             .icon_mode(IconMode::NerdFont)
             .ambiguous_width(AmbiguousWidth::Wide)
@@ -376,6 +408,32 @@ mod target_properties_defaults {
         assert_eq!(target.color_scheme, ColorMode::Light);
         assert_eq!(target.icon_mode, IconMode::NerdFont);
         assert_eq!(target.ambiguous_width, AmbiguousWidth::Wide);
+    }
+    #[test]
+    fn each_destination_fact_moves_alone() {
+        let stdout_only = TestHarness::new()
+            .stdout_is_terminal(true)
+            .target_properties();
+        assert!(stdout_only.stdout_is_terminal);
+        assert!(!stdout_only.stderr_is_terminal);
+        assert!(!stdout_only.stdout_color_capability);
+        assert!(!stdout_only.stderr_color_capability);
+
+        // A terminal whose color capability is suppressed: unreachable while
+        // one setter drove all four facts.
+        let colorless_terminal = TestHarness::new()
+            .stdout_is_terminal(true)
+            .stderr_is_terminal(true)
+            .target_properties();
+        assert!(colorless_terminal.stdout_is_terminal);
+        assert!(!colorless_terminal.stdout_color_capability);
+
+        let stderr_only = TestHarness::new()
+            .stderr_color_capability(true)
+            .target_properties();
+        assert!(stderr_only.stderr_color_capability);
+        assert!(!stderr_only.stdout_color_capability);
+        assert!(!stderr_only.stderr_is_terminal);
     }
 }
 fn validate_relative_path(method: &str, path: &Path) -> PathBuf {

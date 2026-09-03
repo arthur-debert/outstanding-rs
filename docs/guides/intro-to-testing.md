@@ -294,7 +294,7 @@ Three orthogonal knobs. Two are destination facts injected on `TargetProperties`
 
 ```rust
 .terminal_width(80)              // forces a fixed width for tabular layouts
-.stdout_is_terminal(true)        // the destination fact an auto policy reads
+.color_capable_terminal()        // the ordinary TTY: all four destination facts
 .color(ColorPolicy::Never)       // or Always; decides ANSI without touching the destination
 ```
 
@@ -311,7 +311,7 @@ assert!(result.stdout().contains('\x1b'));    // really styled
 assert_eq!(result.stdout_plain(), expected);  // and strippable
 ```
 
-`stdout_is_terminal(true)` says the destination reports color capability instead, which is what an `auto` policy reads. Questions that genuinely depend on the *process* being (or not being) a terminal belong to a real process — see [`run_process`](#410-running-the-real-binary) and [ADR-0022](../adr/0022-delete-the-in-process-tty-seam.md).
+`color_capable_terminal()` says the destination is an ordinary TTY — both streams terminals, both reporting color capability — which is what an `auto` policy reads. The four facts also move one at a time (`stdout_is_terminal`, `stderr_is_terminal`, `stdout_color_capability`, `stderr_color_capability`), so a test can model a terminal whose color is suppressed, or a piped stdout beside a terminal stderr. Questions that genuinely depend on the *process* being (or not being) a terminal belong to a real process — see [`run_process`](#410-running-the-real-binary) and [ADR-0022](../adr/0022-delete-the-in-process-tty-seam.md).
 
 ### 4.7 Selecting a representation
 
@@ -581,7 +581,11 @@ TestHarness::new()
     // width None, ColorMode::Dark, IconMode::Classic, AmbiguousWidth::Narrow)
     .terminal_width(80)
     .no_terminal_width()
-    .stdout_is_terminal(true)                 // fills per-stream terminal and color capability
+    .color_capable_terminal()                 // all four facts: the ordinary TTY
+    .stdout_is_terminal(true)                 // or set each fact on its own
+    .stderr_is_terminal(true)
+    .stdout_color_capability(true)
+    .stderr_color_capability(true)
 
     // the run's color policy, independent of the destination
     .color(ColorPolicy::Never)                // or Always; default is Auto

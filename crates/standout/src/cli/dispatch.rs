@@ -7,6 +7,7 @@ use crate::cli::builder::{SharedTemplateEngine, TemplateAbsence, TemplateRef};
 use crate::cli::handler::Output as HandlerOutput;
 use crate::cli::handler::{
     AppFailure, CommandContext, Diagnostic, ExitStatus, ExternalFailure, RunError, RunErrorKind,
+    RunRecorder,
 };
 use crate::cli::hooks::{ArtifactOutput, HookError, Hooks};
 use crate::context::ContextRegistry;
@@ -214,6 +215,7 @@ pub(crate) fn render_handler_output<T: Serialize>(
     result: crate::cli::HandlerResult<T>,
     matches: &ArgMatches,
     ctx: &CommandContext,
+    recorder: &RunRecorder,
     hooks: Option<&Hooks>,
     template: &TemplateRef,
     theme: &Theme,
@@ -258,9 +260,7 @@ pub(crate) fn render_handler_output<T: Serialize>(
         HandlerOutput::Render(data) => {
             let json_data = serialize_handler_data(&data)?;
             let json_data = run_post_dispatch_hooks(json_data, matches, ctx, hooks)?;
-            if let Some(recorder) = ctx.recorder() {
-                recorder.record(json_data.clone());
-            }
+            recorder.record(json_data.clone());
             let request = request_for(json_data)?;
             let (formatted, raw) = render_via_request(&request)?;
             Ok(DispatchOutput::Text {
@@ -377,11 +377,15 @@ pub(crate) fn hook_run_error(mut error: HookError, phase: crate::cli::HookPhase)
         .with_source(error)
 }
 
+/// The recorder is a parameter rather than a `CommandContext` member: it is the
+/// framework's, and a handler that could reach it could record values the typed
+/// `Results` channel never saw.
 pub type DispatchFn = Rc<
     RefCell<
         dyn FnMut(
             &ArgMatches,
             &CommandContext,
+            &RunRecorder,
             Option<&Hooks>,
             crate::Representation,
             ColorPolicy,
@@ -396,6 +400,7 @@ pub fn dispatch(
     dispatch_fn: &DispatchFn,
     matches: &ArgMatches,
     ctx: &CommandContext,
+    recorder: &RunRecorder,
     hooks: Option<&Hooks>,
     output_mode: crate::Representation,
     color_policy: ColorPolicy,
@@ -405,6 +410,7 @@ pub fn dispatch(
     (dispatch_fn.borrow_mut())(
         matches,
         ctx,
+        recorder,
         hooks,
         output_mode,
         color_policy,

@@ -33,7 +33,7 @@ fn the_help_word_renders_themed_help_through_run() {
 #[serial]
 fn downstream_theme_help_preserves_option_cues_through_run() {
     let fixture = downstream().build();
-    let result = TestHarness::new().stdout_is_terminal(true).run(
+    let result = TestHarness::new().color_capable_terminal().run(
         fixture.app(),
         fixture.command(),
         ["lookma", "help"],
@@ -160,7 +160,7 @@ fn the_help_word_honours_the_output_flag_through_run() {
 #[serial]
 fn the_help_document_on_a_color_tty_carries_no_ansi() {
     let fixture = downstream().flat().build();
-    let result = TestHarness::new().stdout_is_terminal(true).run(
+    let result = TestHarness::new().color_capable_terminal().run(
         fixture.app(),
         fixture.command(),
         ["lookma", "help", "--output", "json"],
@@ -409,4 +409,51 @@ fn a_normal_invocation_is_untouched_through_run() {
     );
     result.assert_success();
     result.assert_stdout_eq("range=main..HEAD");
+}
+
+/// The two cases that cross the run's color policy against the destination.
+/// App-managed help renders through the same policy as command output, so an
+/// explicit policy has to outrank what the destination reports. Both assert on
+/// the raw bytes: `stdout_plain()` strips exactly the difference under test.
+#[test]
+#[serial]
+fn an_always_policy_colors_help_on_a_destination_that_is_not_a_terminal() {
+    let fixture = downstream().build();
+    for args in [
+        ["lookma", "--help"].as_slice(),
+        ["lookma", "help"].as_slice(),
+    ] {
+        let result = TestHarness::new().color(standout::ColorPolicy::Always).run(
+            fixture.app(),
+            fixture.command(),
+            args.iter().copied(),
+        );
+        result.assert_success();
+        assert!(
+            result.stdout().contains('\u{1b}'),
+            "an always policy colors help even off a terminal ({args:?}):\n{:?}",
+            result.stdout()
+        );
+    }
+}
+
+#[test]
+#[serial]
+fn a_never_policy_leaves_help_plain_on_a_color_capable_terminal() {
+    let fixture = downstream().build();
+    for args in [
+        ["lookma", "--help"].as_slice(),
+        ["lookma", "help"].as_slice(),
+    ] {
+        let result = TestHarness::new()
+            .color_capable_terminal()
+            .color(standout::ColorPolicy::Never)
+            .run(fixture.app(), fixture.command(), args.iter().copied());
+        result.assert_success();
+        assert!(
+            !result.stdout().contains('\u{1b}'),
+            "a never policy suppresses help color on a color TTY ({args:?}):\n{:?}",
+            result.stdout()
+        );
+    }
 }

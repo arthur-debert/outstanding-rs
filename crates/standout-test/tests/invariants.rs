@@ -147,7 +147,7 @@ fn standalone_renders_neither_accumulate_nor_reach_a_later_run() {
 #[test]
 #[serial]
 fn term_output_degrades_unresolved_tags_without_hiding_the_structural_record() {
-    let result = TestHarness::new().stdout_is_terminal(true).run(
+    let result = TestHarness::new().color_capable_terminal().run(
         &undefined_tag_app(),
         say_command(),
         ["app", "say"],
@@ -312,7 +312,7 @@ fn a_genuinely_styled_page_strips_back_to_its_plain_render() {
         .unwrap();
     let styled =
         TestHarness::new()
-            .stdout_is_terminal(true)
+            .color_capable_terminal()
             .run(&app, say_command(), ["app", "say"]);
     assert!(
         styled.stdout().contains('\x1b'),
