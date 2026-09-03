@@ -178,6 +178,18 @@ impl TestHarness {
                 Some(TempDir::new().expect("TestHarness: failed to create tempdir for fixtures"));
         }
     }
+    pub(crate) fn resolve_cwd(&mut self) -> Option<PathBuf> {
+        let Some(cwd) = self.cwd.clone() else {
+            return self.tempdir.as_ref().map(|d| d.path().to_path_buf());
+        };
+        if cwd.is_absolute() {
+            return Some(cwd);
+        }
+        self.ensure_tempdir();
+        let target = self.tempdir.as_ref().unwrap().path().join(cwd);
+        std::fs::create_dir_all(&target).expect("TestHarness: failed to create cwd directory");
+        Some(target)
+    }
     pub fn run<I, T>(mut self, app: &App, cmd: Command, args: I) -> TestResult
     where
         I: IntoIterator<Item = T>,
@@ -194,11 +206,7 @@ impl TestHarness {
                 std::fs::write(&abs, content).expect("TestHarness: failed to write fixture file");
             }
         }
-        let cwd_target = self
-            .cwd
-            .clone()
-            .or_else(|| self.tempdir.as_ref().map(|d| d.path().to_path_buf()));
-        if let Some(target) = cwd_target {
+        if let Some(target) = self.resolve_cwd() {
             restore.original_cwd = std::env::current_dir().ok();
             std::env::set_current_dir(&target)
                 .expect("TestHarness: failed to change working directory");

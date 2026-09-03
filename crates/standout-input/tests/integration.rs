@@ -1,7 +1,7 @@
 use clap::{Arg, Command};
 use standout_input::{
-    ArgSource, ClipboardSource, EnvSource, FlagSource, InputChain, InputError, InputSourceKind,
-    MockClipboard, MockEnv, MockStdin, StdinSource,
+    ArgSource, ClipboardSource, ConfigSource, EnvSource, FlagSource, InputChain, InputError,
+    InputSourceKind, MockClipboard, MockEnv, MockStdin, StdinSource,
 };
 
 fn create_test_command() -> Command {
@@ -367,4 +367,50 @@ fn mock_stdin_preserves_whitespace_when_configured() {
     let chain = InputChain::<String>::new()
         .try_source(StdinSource::with_reader(MockStdin::piped("  hello  \n")).trim(false));
     assert_eq!(chain.resolve(&matches).unwrap(), "  hello  \n");
+}
+
+#[test]
+fn config_source_yields_value_after_flag_is_absent() {
+    let matches = create_test_command()
+        .try_get_matches_from(["test"])
+        .unwrap();
+
+    let chain = InputChain::<bool>::new()
+        .try_source(FlagSource::new("yes"))
+        .try_source(ConfigSource::new(Some(true)));
+
+    let result = chain.resolve_with_source(&matches).unwrap();
+    assert!(result.value);
+    assert_eq!(result.source, InputSourceKind::Config);
+}
+
+#[test]
+fn flag_beats_config_source() {
+    let matches = create_test_command()
+        .try_get_matches_from(["test", "--yes"])
+        .unwrap();
+
+    let chain = InputChain::<bool>::new()
+        .try_source(FlagSource::new("yes"))
+        .try_source(ConfigSource::new(Some(false)));
+
+    let result = chain.resolve_with_source(&matches).unwrap();
+    assert!(result.value);
+    assert_eq!(result.source, InputSourceKind::Flag);
+}
+
+#[test]
+fn config_source_without_value_is_skipped() {
+    let matches = create_test_command()
+        .try_get_matches_from(["test"])
+        .unwrap();
+
+    let chain = InputChain::<String>::new()
+        .try_source(ArgSource::new("body"))
+        .try_source(ConfigSource::<String>::new(None))
+        .default("from default".to_string());
+
+    let result = chain.resolve_with_source(&matches).unwrap();
+    assert_eq!(result.value, "from default");
+    assert_eq!(result.source, InputSourceKind::Default);
 }

@@ -194,6 +194,7 @@ fn source_kind_from_name(name: &str) -> InputSourceKind {
         "file" => InputSourceKind::File,
         "stdin" => InputSourceKind::Stdin,
         "environment variable" => InputSourceKind::Env,
+        "config" => InputSourceKind::Config,
         "clipboard" => InputSourceKind::Clipboard,
         "editor" => InputSourceKind::Editor,
         "prompt" => InputSourceKind::Prompt,
