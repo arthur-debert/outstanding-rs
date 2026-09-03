@@ -2,9 +2,9 @@
 //! serialized data — table formatters, terminal info, environment values —
 //! via [`ContextProvider`]s that receive a [`RenderContext`] and return a
 //! MiniJinja [`Value`], either statically or computed from render-time
-//! conditions (output mode, terminal width, theme, data).
+//! conditions (representation, style mode, terminal width, theme, data).
 
-use super::output::OutputMode;
+use super::output::{Representation, StyleMode};
 use super::theme::Theme;
 use crate::AmbiguousWidth;
 use minijinja::Value;
@@ -14,7 +14,9 @@ use std::rc::Rc;
 
 #[derive(Debug, Clone)]
 pub struct RenderContext<'a> {
-    pub output_mode: OutputMode,
+    pub representation: Representation,
+
+    pub style: StyleMode,
 
     pub terminal_width: Option<usize>,
 
@@ -31,13 +33,15 @@ pub struct RenderContext<'a> {
 
 impl<'a> RenderContext<'a> {
     pub fn new(
-        output_mode: OutputMode,
+        representation: Representation,
+        style: StyleMode,
         terminal_width: Option<usize>,
         theme: &'a Theme,
         data: &'a serde_json::Value,
     ) -> Self {
         Self::with_ambiguous_width(
-            output_mode,
+            representation,
+            style,
             terminal_width,
             AmbiguousWidth::Narrow,
             theme,
@@ -46,7 +50,8 @@ impl<'a> RenderContext<'a> {
     }
 
     pub fn with_ambiguous_width(
-        output_mode: OutputMode,
+        representation: Representation,
+        style: StyleMode,
         terminal_width: Option<usize>,
         ambiguous_width: AmbiguousWidth,
         theme: &'a Theme,
@@ -59,7 +64,8 @@ impl<'a> RenderContext<'a> {
             }
         };
         Self {
-            output_mode,
+            representation,
+            style,
             terminal_width,
             theme,
             data,
@@ -178,9 +184,16 @@ mod tests {
     #[test]
     fn render_context_new() {
         let (theme, data) = test_context();
-        let ctx = RenderContext::new(OutputMode::Term, Some(80), &theme, &data);
+        let ctx = RenderContext::new(
+            Representation::Human,
+            StyleMode::Ansi,
+            Some(80),
+            &theme,
+            &data,
+        );
 
-        assert_eq!(ctx.output_mode, OutputMode::Term);
+        assert_eq!(ctx.representation, Representation::Human);
+        assert_eq!(ctx.style, StyleMode::Ansi);
         assert_eq!(ctx.terminal_width, Some(80));
         assert!(ctx.extras.is_empty());
     }
@@ -188,7 +201,7 @@ mod tests {
     #[test]
     fn render_context_with_extras() {
         let (theme, data) = test_context();
-        let ctx = RenderContext::new(OutputMode::Text, None, &theme, &data)
+        let ctx = RenderContext::new(Representation::Human, StyleMode::Plain, None, &theme, &data)
             .with_extra("key1", "value1")
             .with_extra("key2", "value2");
 
@@ -200,7 +213,7 @@ mod tests {
     #[test]
     fn static_provider() {
         let (theme, data) = test_context();
-        let ctx = RenderContext::new(OutputMode::Text, None, &theme, &data);
+        let ctx = RenderContext::new(Representation::Human, StyleMode::Plain, None, &theme, &data);
 
         let provider = StaticProvider::new(Value::from(42));
         let result = provider.provide(&ctx);
@@ -211,7 +224,13 @@ mod tests {
     #[test]
     fn closure_provider() {
         let (theme, data) = test_context();
-        let ctx = RenderContext::new(OutputMode::Term, Some(120), &theme, &data);
+        let ctx = RenderContext::new(
+            Representation::Human,
+            StyleMode::Ansi,
+            Some(120),
+            &theme,
+            &data,
+        );
 
         let provider =
             |ctx: &RenderContext| -> Value { Value::from(ctx.terminal_width.unwrap_or(80)) };
@@ -223,7 +242,7 @@ mod tests {
     #[test]
     fn context_registry_add_static() {
         let (theme, data) = test_context();
-        let ctx = RenderContext::new(OutputMode::Text, None, &theme, &data);
+        let ctx = RenderContext::new(Representation::Human, StyleMode::Plain, None, &theme, &data);
 
         let mut registry = ContextRegistry::new();
         registry.add_static("version", Value::from("1.0.0"));
@@ -235,7 +254,13 @@ mod tests {
     #[test]
     fn context_registry_add_provider() {
         let (theme, data) = test_context();
-        let ctx = RenderContext::new(OutputMode::Term, Some(100), &theme, &data);
+        let ctx = RenderContext::new(
+            Representation::Human,
+            StyleMode::Ansi,
+            Some(100),
+            &theme,
+            &data,
+        );
 
         let mut registry = ContextRegistry::new();
         registry.add_provider("width", |ctx: &RenderContext| {
@@ -249,7 +274,13 @@ mod tests {
     #[test]
     fn context_registry_multiple_entries() {
         let (theme, data) = test_context();
-        let ctx = RenderContext::new(OutputMode::Term, Some(120), &theme, &data);
+        let ctx = RenderContext::new(
+            Representation::Human,
+            StyleMode::Ansi,
+            Some(120),
+            &theme,
+            &data,
+        );
 
         let mut registry = ContextRegistry::new();
         registry.add_static("app", Value::from("myapp"));
@@ -284,24 +315,25 @@ mod tests {
     }
 
     #[test]
-    fn provider_uses_output_mode() {
+    fn provider_uses_the_style_mode() {
         let (theme, data) = test_context();
 
-        let provider =
-            |ctx: &RenderContext| -> Value { Value::from(format!("{:?}", ctx.output_mode)) };
+        let provider = |ctx: &RenderContext| -> Value { Value::from(format!("{:?}", ctx.style)) };
 
-        let ctx_term = RenderContext::new(OutputMode::Term, None, &theme, &data);
-        assert_eq!(provider.provide(&ctx_term), Value::from("Term"));
+        let ctx_term =
+            RenderContext::new(Representation::Human, StyleMode::Ansi, None, &theme, &data);
+        assert_eq!(provider.provide(&ctx_term), Value::from("Ansi"));
 
-        let ctx_text = RenderContext::new(OutputMode::Text, None, &theme, &data);
-        assert_eq!(provider.provide(&ctx_text), Value::from("Text"));
+        let ctx_text =
+            RenderContext::new(Representation::Human, StyleMode::Plain, None, &theme, &data);
+        assert_eq!(provider.provide(&ctx_text), Value::from("Plain"));
     }
 
     #[test]
     fn provider_uses_data() {
         let theme = Theme::new();
         let data = serde_json::json!({"count": 42});
-        let ctx = RenderContext::new(OutputMode::Text, None, &theme, &data);
+        let ctx = RenderContext::new(Representation::Human, StyleMode::Plain, None, &theme, &data);
 
         let provider = |ctx: &RenderContext| -> Value {
             let count = ctx.data.get("count").and_then(|v| v.as_i64()).unwrap_or(0);

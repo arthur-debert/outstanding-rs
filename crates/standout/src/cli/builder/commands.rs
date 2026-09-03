@@ -203,7 +203,7 @@ mod tests {
 
     use crate::cli::handler::FnHandler;
     use crate::cli::handler::Output as HandlerOutput;
-    use crate::OutputMode;
+    use crate::Representation;
     use clap::Command;
 
     #[test]
@@ -258,7 +258,7 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = app.dispatch(matches, OutputMode::Text);
+        let result = app.dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Items: 2"));
@@ -351,7 +351,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = app.dispatch(matches, OutputMode::Text);
+        let result = app.dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("true"));
@@ -444,7 +444,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = app.dispatch(matches, OutputMode::Text);
+        let result = app.dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("true"));
@@ -478,7 +478,7 @@ mod tests {
             Command::new("app").subcommand(Command::new("db").subcommand(Command::new("migrate")));
 
         let matches = cmd.try_get_matches_from(["app", "db", "migrate"]).unwrap();
-        let result = app.dispatch(matches, OutputMode::Json);
+        let result = app.dispatch(matches, Representation::Json);
 
         assert!(result.is_handled());
         let output = result.output().unwrap();
@@ -528,7 +528,7 @@ mod tests {
         let matches = cmd
             .try_get_matches_from(["cli", "app", "config", "get"])
             .unwrap();
-        let result = app.dispatch(matches, OutputMode::Json);
+        let result = app.dispatch(matches, Representation::Json);
 
         assert!(result.is_handled());
         let output = result.output().unwrap();
@@ -557,7 +557,7 @@ mod tests {
             Command::new("app").subcommand(Command::new("db").subcommand(Command::new("migrate")));
 
         let matches = cmd.try_get_matches_from(["app", "db", "migrate"]).unwrap();
-        let result = app.dispatch(matches, OutputMode::Text);
+        let result = app.dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Migrated 5 tables"));
@@ -595,7 +595,7 @@ mod tests {
             Command::new("app").subcommand(Command::new("db").subcommand(Command::new("migrate")));
 
         let matches = cmd.try_get_matches_from(["app", "db", "migrate"]).unwrap();
-        let result = app.dispatch(matches, OutputMode::Text);
+        let result = app.dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert!(hook_called.load(Ordering::SeqCst));
@@ -674,7 +674,7 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("init-sh"));
         let matches = cmd.try_get_matches_from(["app", "init-sh"]).unwrap();
         let app = builder.build().unwrap();
-        let result = app.dispatch(matches, OutputMode::Text);
+        let result = app.dispatch(matches, Representation::Human);
 
         assert!(called.load(Ordering::SeqCst));
         assert!(result.is_handled());
@@ -707,7 +707,7 @@ mod tests {
             Command::new("app").subcommand(Command::new("shell").subcommand(Command::new("init")));
         let matches = cmd.try_get_matches_from(["app", "shell", "init"]).unwrap();
         let app = builder.build().unwrap();
-        let result = app.dispatch(matches, OutputMode::Text);
+        let result = app.dispatch(matches, Representation::Human);
 
         assert!(called.load(Ordering::SeqCst));
         assert!(result.is_handled());

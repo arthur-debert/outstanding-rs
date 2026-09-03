@@ -128,7 +128,7 @@ The same render as an explicit request — destination facts on `TargetPropertie
 use std::collections::HashMap;
 use serde_json::json;
 use standout_render::{
-    AmbiguousWidth, ColorMode, ColorPolicy, IconMode, OutputMode, RenderRequest,
+    AmbiguousWidth, ColorMode, ColorPolicy, IconMode, Representation, RenderRequest,
     TargetProperties, TemplateRef, Theme, default_template_engine, render_request,
 };
 use console::Style;
@@ -138,8 +138,8 @@ let request = RenderRequest {
     data: json!({"name": "Tasks", "count": 42}),
     template: TemplateRef::Inline("[title]{{ name }}[/title]: {{ count }} items".into()),
     theme,
-    format: OutputMode::Text,
-    color_policy: ColorPolicy::Auto,
+    format: Representation::Human,
+    color_policy: ColorPolicy::Never,
     target: TargetProperties {
         width: Some(80),
         stdout_is_terminal: true,
@@ -313,40 +313,41 @@ Style tags:
 - Can span multiple lines
 - Can contain template logic: `[title]{% if x %}{{ x }}{% endif %}[/title]`
 
-### Output Modes: Rich, Plain, and Debug
+### Rich, Plain, and Debug
 
-`standout-render` processes style tags differently based on the output mode:
+`standout-render` processes style tags differently based on the representation
+and the color policy:
 
 ```rust
-use standout_render::{render_with_output, OutputMode};
+use standout_render::{render_with_output, ColorPolicy, Representation};
 
 // Rich terminal output (ANSI codes)
-let rich = render_with_output(template, &data, &theme, OutputMode::Term)?;
+let rich = render_with_output(template, &data, &theme, Representation::Human, ColorPolicy::Always)?;
 
 // Plain text (strips style tags)
-let plain = render_with_output(template, &data, &theme, OutputMode::Text)?;
+let plain = render_with_output(template, &data, &theme, Representation::Human, ColorPolicy::Never)?;
 
-// Debug mode (keeps tags visible)
-let debug = render_with_output(template, &data, &theme, OutputMode::TermDebug)?;
+// Debug (keeps tags visible)
+let debug = render_with_output(template, &data, &theme, Representation::TermDebug, ColorPolicy::Auto)?;
 ```
 
 **Single template for rich and plain text.** The same template serves both—no duplication needed.
 
 ```rust
-// Auto-detect based on terminal capabilities
-let output = render_with_output(template, &data, &theme, OutputMode::Auto)?;
+// Decide from the destination's color capability
+let output = render_with_output(template, &data, &theme, Representation::Human, ColorPolicy::Auto)?;
 ```
 
-In auto mode:
+Under an auto color policy:
 
 - TTY with color support → rich output
 - Pipe or redirect → plain text
 
-> **For standout framework users:** The framework's `--output` flag automatically sets the output mode. See the standout documentation for CLI integration.
+> **For standout framework users:** The framework's `--output` flag names the structured encoding, and a bare invocation renders the human template. See the standout documentation for CLI integration.
 
-### Debug Mode
+### Debug View
 
-Use `OutputMode::TermDebug` for debugging:
+Use `Representation::TermDebug` for debugging:
 
 ```text
 [title]Your Tasks[/title]
@@ -422,12 +423,12 @@ formatting directly.
 Beyond textual output, `standout-render` supports structured formats:
 
 ```rust
-use standout_render::{render_auto, OutputMode};
+use standout_render::{render_auto, ColorPolicy, Representation};
 
-// For Term/Text: renders template
+// For Human: renders the template
 // For Json/Yaml/etc: serializes data directly
-let json_output = render_auto(template, &data, &theme, OutputMode::Json)?;
-let yaml_output = render_auto(template, &data, &theme, OutputMode::Yaml)?;
+let json_output = render_auto(template, &data, &theme, Representation::Json, ColorPolicy::Auto)?;
+let yaml_output = render_auto(template, &data, &theme, Representation::Yaml, ColorPolicy::Auto)?;
 ```
 
 **Structured output for free.** Because your data is `Serialize`-able, JSON/YAML outputs work automatically. Automation (tests, scripts, other programs) no longer needs to reverse-engineer data from formatted output.

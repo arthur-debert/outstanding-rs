@@ -102,13 +102,13 @@ Contact: {user.profile.email}
 ### With Renderer
 
 ```rust
-use standout_render::{Renderer, Theme, OutputMode};
+use standout_render::{Renderer, Representation, Theme};
 use standout_render::template::SimpleEngine;
 
 let engine = Box::new(SimpleEngine::new());
 let mut renderer = Renderer::with_output_and_engine(
     Theme::new(),
-    OutputMode::Auto,
+    Representation::Human,
     engine,
 )?;
 
@@ -120,7 +120,7 @@ let output = renderer.render("status", &data)?;
 ### With render_auto_with_engine
 
 ```rust
-use standout_render::{render_auto_with_engine, Theme, OutputMode};
+use standout_render::{render_auto_with_engine, StyleMode, Theme};
 use standout_render::template::SimpleEngine;
 use standout_render::context::{ContextRegistry, RenderContext};
 
@@ -129,14 +129,14 @@ let theme = Theme::new();
 let data = serde_json::json!({"name": "World"});
 
 let registry = ContextRegistry::new();
-let render_ctx = RenderContext::new(OutputMode::Text, Some(80), &theme, &data);
+let render_ctx = RenderContext::new(Representation::Human, StyleMode::Plain, Some(80), &theme, &data);
 
 let output = render_auto_with_engine(
     &engine,
     "Hello, {name}!",
     &data,
     &theme,
-    OutputMode::Text,
+    StyleMode::Plain,
     &registry,
     &render_ctx,
 )?;
@@ -248,14 +248,14 @@ use standout_render::template::{
 ### Renderer with Custom Engine
 
 ```rust
-use standout_render::{Renderer, Theme, OutputMode};
+use standout_render::{Renderer, Representation, Theme};
 
 // Default (MiniJinja)
 let renderer = Renderer::new(theme)?;
 
 // With explicit engine
 let engine = Box::new(SimpleEngine::new());
-let renderer = Renderer::with_output_and_engine(theme, mode, engine)?;
+let renderer = Renderer::with_output_and_engine(theme, representation, engine)?;
 ```
 
 ### Standalone Rendering

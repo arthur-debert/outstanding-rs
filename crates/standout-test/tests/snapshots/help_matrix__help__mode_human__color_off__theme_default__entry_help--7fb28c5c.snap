@@ -2,7 +2,9 @@
 source: crates/standout-test/tests/help_matrix.rs
 expression: result.stdout_plain()
 ---
-Diff a git range
+Diff a git range.
+
+Names a change the way a human would.
 
 USAGE
   lookma [OPTIONS] [RANGE]
@@ -27,9 +29,8 @@ OPTIONS
   --summary <STYLE>          How much of each change to describe
                              default: brief
                              possible values: brief, full, none
-  --output <MODE>            Output format
-                             default: auto
-                             possible values: auto, term, text, term-debug, json, yaml, csv, ndjson
+  --output <MODE>            Structured output encoding
+                             possible values: json, yaml, csv, ndjson, term-debug
   --output-file-path <PATH>  Write output to file instead of stdout
   -h, --help                 Print help (see more with '--help')
 

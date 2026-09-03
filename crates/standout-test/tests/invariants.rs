@@ -7,7 +7,7 @@ use standout::cli::{App, DispatchResult, Output};
 use standout::EmbeddedTemplates;
 use standout::Theme;
 use standout_fixtures::downstream;
-use standout_render::{OutputMode, TagResolution};
+use standout_render::{Representation, TagResolution};
 use standout_test::invariants::{
     assert_descriptions_aligned, assert_descriptions_aligned_in_page, assert_every_tag_resolved,
     assert_metavar_for_valued_args, assert_metavar_for_valued_args_in_page,
@@ -47,18 +47,18 @@ fn fails_naming(needle: &str, assertion: impl FnOnce()) {
 fn fixture_command() -> Command {
     downstream().build().command()
 }
-fn fixture_help(mode: OutputMode) -> TestResult {
+fn fixture_help(mode: Representation) -> TestResult {
     let fixture = downstream().build();
     TestHarness::new()
         .terminal_width(80)
-        .no_color()
+        .stdout_is_terminal(false)
         .output_mode(mode)
         .run(fixture.app(), fixture.command(), ["lookma", "--help"])
 }
 #[test]
 #[serial]
 fn the_fixture_page_resolves_every_tag_in_both_modes() {
-    for mode in [OutputMode::Text, OutputMode::Term] {
+    for mode in [Representation::Human, Representation::Human] {
         let result = fixture_help(mode);
         result.assert_success();
         assert!(
@@ -88,10 +88,11 @@ fn say_command() -> Command {
 #[test]
 #[serial]
 fn the_structural_check_names_a_tag_no_marker_would_reveal() {
-    let result =
-        TestHarness::new()
-            .text_output()
-            .run(&undefined_tag_app(), say_command(), ["app", "say"]);
+    let result = TestHarness::new().stdout_is_terminal(false).run(
+        &undefined_tag_app(),
+        say_command(),
+        ["app", "say"],
+    );
     assert_eq!(
         result.stdout(),
         "hello",
@@ -129,7 +130,7 @@ fn standalone_renders_neither_accumulate_nor_reach_a_later_run() {
         standout_render::render("[headline]hello[/headline]", &json!({}), &theme)
             .expect("the standalone render succeeds");
     }
-    let result = fixture_help(OutputMode::Text);
+    let result = fixture_help(Representation::Human);
     result.assert_success();
     assert!(
         !result.tag_resolutions().is_empty(),
@@ -146,7 +147,7 @@ fn standalone_renders_neither_accumulate_nor_reach_a_later_run() {
 #[test]
 #[serial]
 fn term_output_degrades_unresolved_tags_without_hiding_the_structural_record() {
-    let result = TestHarness::new().output_mode(OutputMode::Term).run(
+    let result = TestHarness::new().stdout_is_terminal(true).run(
         &undefined_tag_app(),
         say_command(),
         ["app", "say"],
@@ -200,10 +201,11 @@ fn nesting_app() -> App {
 #[test]
 #[serial]
 fn a_nested_run_cannot_hide_its_unresolved_tags_from_the_outer_one() {
-    let result =
-        TestHarness::new()
-            .text_output()
-            .run(&nesting_app(), say_command(), ["app", "say"]);
+    let result = TestHarness::new().stdout_is_terminal(false).run(
+        &nesting_app(),
+        say_command(),
+        ["app", "say"],
+    );
     result.assert_success();
     assert_eq!(
         result.stdout(),
@@ -258,10 +260,11 @@ fn discarding_app() -> App {
 #[test]
 #[serial]
 fn a_discarded_nested_run_is_reported_and_distinguishable() {
-    let result =
-        TestHarness::new()
-            .text_output()
-            .run(&discarding_app(), say_command(), ["app", "say"]);
+    let result = TestHarness::new().stdout_is_terminal(false).run(
+        &discarding_app(),
+        say_command(),
+        ["app", "say"],
+    );
     result.assert_success();
     assert_eq!(
         result.stdout(),
@@ -289,8 +292,8 @@ fn a_discarded_nested_run_is_reported_and_distinguishable() {
 #[test]
 #[serial]
 fn the_styled_fixture_page_strips_back_to_the_plain_one() {
-    let styled = fixture_help(OutputMode::Term);
-    let plain = fixture_help(OutputMode::Text);
+    let styled = fixture_help(Representation::Human);
+    let plain = fixture_help(Representation::Human);
     assert_styling_preserves_layout(&styled, &plain);
 }
 #[test]
@@ -309,16 +312,17 @@ fn a_genuinely_styled_page_strips_back_to_its_plain_render() {
         .unwrap();
     let styled =
         TestHarness::new()
-            .output_mode(OutputMode::Term)
+            .stdout_is_terminal(true)
             .run(&app, say_command(), ["app", "say"]);
     assert!(
         styled.stdout().contains('\x1b'),
         "the fixture must actually emit ANSI, got {:?}",
         styled.stdout()
     );
-    let plain = TestHarness::new()
-        .text_output()
-        .run(&app, say_command(), ["app", "say"]);
+    let plain =
+        TestHarness::new()
+            .stdout_is_terminal(false)
+            .run(&app, say_command(), ["app", "say"]);
     assert_styling_preserves_layout(&styled, &plain);
 }
 #[test]
@@ -348,7 +352,7 @@ fn a_styled_page_that_lost_a_line_names_the_line_number() {
 #[test]
 #[serial]
 fn the_fixture_page_lists_no_possible_values_for_its_presence_flags() {
-    let result = fixture_help(OutputMode::Text);
+    let result = fixture_help(Representation::Human);
     result.assert_stdout_contains("--staged");
     result.assert_stdout_contains("possible values: brief, full, none");
     assert_no_possible_values_for_valueless_args(&result, &fixture_command());
@@ -392,7 +396,7 @@ OPTIONS
 #[test]
 #[serial]
 fn the_fixture_page_shows_a_metavar_for_every_valued_argument() {
-    let result = fixture_help(OutputMode::Text);
+    let result = fixture_help(Representation::Human);
     result.assert_stdout_contains("--threshold");
     assert_metavar_for_valued_args(&result, &fixture_command());
 }
@@ -490,7 +494,7 @@ OPTIONS
 #[test]
 #[serial]
 fn the_fixture_page_aligns_every_section() {
-    for mode in [OutputMode::Text, OutputMode::Term] {
+    for mode in [Representation::Human, Representation::Human] {
         let result = fixture_help(mode);
         result.assert_stdout_contains("COMMANDS");
         result.assert_stdout_contains("OPTIONS");

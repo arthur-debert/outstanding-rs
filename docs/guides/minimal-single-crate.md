@@ -128,7 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 cargo run
 cargo run -- list
 cargo run -- list --output json
-cargo run -- list --output text
+cargo run -- list
 ```
 
 This demonstrates command dispatch, template rendering, structured output, hot

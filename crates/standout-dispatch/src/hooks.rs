@@ -267,10 +267,10 @@ impl fmt::Debug for Hooks {
 mod tests {
     use super::*;
     fn test_context() -> CommandContext {
-        CommandContext {
-            command_path: vec!["test".into()],
-            ..Default::default()
-        }
+        CommandContext::new(
+            vec!["test".into()],
+            std::rc::Rc::new(crate::Extensions::new()),
+        )
     }
     fn test_matches() -> ArgMatches {
         clap::Command::new("test").get_matches_from(vec!["test"])

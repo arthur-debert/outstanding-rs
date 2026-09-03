@@ -8,12 +8,13 @@ use standout::cli::{
     App, AppFailure, ExitStatus, FnHandler, HandlerResult, HookError, HookPhase, Hooks, Output,
     RunErrorKind,
 };
-use standout::{EmbeddedTemplates, OutputMode};
+use standout::ColorPolicy;
+use standout::{EmbeddedTemplates, Representation};
 use standout_test::{serial, TestHarness};
 
 const TEMPLATES: &[(&str, &str)] = &[("status", "unit {{ unit }} is {{ state }}")];
 
-fn systemdlike(fallback: OutputMode) -> App {
+fn systemdlike(fallback: Representation) -> App {
     App::builder()
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .output_mode_fallback(fallback)
@@ -37,7 +38,7 @@ fn systemdlike_command() -> Command {
 #[serial]
 fn the_app_fallback_decides_the_mode_when_the_flag_is_absent() {
     let result = TestHarness::new().run(
-        &systemdlike(OutputMode::Json),
+        &systemdlike(Representation::Json),
         systemdlike_command(),
         ["systemdlike", "status"],
     );
@@ -50,20 +51,20 @@ fn the_app_fallback_decides_the_mode_when_the_flag_is_absent() {
 #[serial]
 fn an_explicit_output_flag_outranks_the_app_fallback() {
     let result = TestHarness::new().run(
-        &systemdlike(OutputMode::Json),
+        &systemdlike(Representation::Json),
         systemdlike_command(),
-        ["systemdlike", "status", "--output", "text"],
+        ["systemdlike", "status", "--output", "yaml"],
     );
 
     result.assert_success();
-    result.assert_stdout_eq("unit web is active");
+    result.assert_stdout_contains("state: active");
 }
 
 #[test]
 #[serial]
 fn the_default_fallback_is_unchanged_for_an_app_that_sets_none() {
     let result = TestHarness::new().run(
-        &systemdlike(OutputMode::Auto),
+        &systemdlike(Representation::Human),
         systemdlike_command(),
         ["systemdlike", "status"],
     );
@@ -74,31 +75,35 @@ fn the_default_fallback_is_unchanged_for_an_app_that_sets_none() {
 
 #[test]
 #[serial]
-fn both_help_spellings_render_in_the_app_fallback_mode() {
-    let app = systemdlike(OutputMode::Term);
+fn both_help_spellings_render_the_human_page_on_a_terminal() {
+    let app = systemdlike(Representation::Human);
 
-    let word = TestHarness::new().run(&app, systemdlike_command(), ["systemdlike", "help"]);
-    let flag = TestHarness::new().run(&app, systemdlike_command(), ["systemdlike", "--help"]);
-    let default_app = TestHarness::new().run(
-        &systemdlike(OutputMode::Auto),
+    let word = TestHarness::new().stdout_is_terminal(true).run(
+        &app,
+        systemdlike_command(),
+        ["systemdlike", "help"],
+    );
+    let flag = TestHarness::new().stdout_is_terminal(true).run(
+        &app,
         systemdlike_command(),
         ["systemdlike", "--help"],
     );
+    let piped = TestHarness::new().run(&app, systemdlike_command(), ["systemdlike", "--help"]);
 
     assert!(
         word.stdout().contains("\x1b["),
-        "`help` should render in the Term fallback, got {:?}",
+        "`help` should color on a terminal, got {:?}",
         word.stdout()
     );
     assert!(
         flag.stdout().contains("\x1b["),
-        "`--help` should render in the Term fallback, got {:?}",
+        "`--help` should color on a terminal, got {:?}",
         flag.stdout()
     );
     assert!(
-        !default_app.stdout().contains("\x1b["),
-        "an app that sets no fallback keeps the Auto help, got {:?}",
-        default_app.stdout()
+        !piped.stdout().contains("\x1b["),
+        "the same page through a pipe carries no escapes, got {:?}",
+        piped.stdout()
     );
 }
 
@@ -337,7 +342,7 @@ fn questionnaire_resolution_runs_where_its_call_sits_in_the_hook_chain() {
         .replace("\nlocalhost\n", "\ndb-1\n");
 
     let result = TestHarness::new()
-        .text_output()
+        .color(ColorPolicy::Never)
         .fixture("answers.txt", sheet)
         .run(
             &app,

@@ -140,14 +140,20 @@ one key:
 
 ```toml
 [term]
-output = "json"     # the output mode when --output is absent
+output = "json"     # the structured encoding a bare run produces
 ```
+
+`output` names one of the four structured encodings — `json`, `yaml`, `csv` or
+`ndjson` — and nothing else; a file naming a retired value (`auto`, `term`, `text`)
+fails the way any unknown configuration value fails, and `term-debug` is a
+diagnostic view with no configuration spelling.
 
 The value fills the same slot as `output_mode_fallback` on the builder, and an
 explicit `--output` still outranks it. It never applies to `--help` or a usage
 error, which are emitted before configuration exists; for the same reason the
-`[default: ...]` shown in `--help` for `--output` is the builder's static fallback,
-not the configured value. An application that used to read its own file into
+`[default: ...]` shown in `--help` for `--output` is the builder's static fallback
+when that fallback is a structured encoding, and absent when it is the human
+representation, which the flag cannot name. An application that used to read its own file into
 `output_mode_fallback` at build time should stop doing so and let `[term] output`
 carry the setting. Color, pager and verbosity
 keys join this section with the terminal-citizenship work; the theme is not a key,

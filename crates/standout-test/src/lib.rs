@@ -1,13 +1,17 @@
 //! In-process test harness for apps built on the `standout` CLI framework.
 //!
 //! [`TestHarness`] is a fluent builder over the injection seams a test
-//! needs: env vars, cwd, stdin, clipboard, output mode, color/theme facts on
-//! `TargetProperties`, and tempdir fixtures. `run` applies every override,
-//! calls into the app in-process, and a `Drop` impl restores everything on
-//! success or panic. [`TestResult`] then exposes what the run wrote to each
-//! stream (raw and ANSI-stripped), plus structured facts like style-tag
+//! needs: env vars, cwd, stdin, clipboard, the representation, the color
+//! policy and whether stdout is a terminal, theme facts on
+//! `TargetProperties`, and tempdir fixtures. The color policy and
+//! stdout-is-terminal are two settings, never one. `run` applies every
+//! override, calls into the app in-process, and a `Drop` impl restores
+//! everything on success or panic. [`TestResult`] then exposes the run's
+//! result values as data ([`TestResult::result`]), the rendered bytes
+//! ([`TestResult::stdout`]) and the delivery decision
+//! ([`TestResult::delivery`]) separately, plus structured facts like style-tag
 //! resolutions that a text search can't get at; [`assert_page_snapshot!`]
-//! and [`matrix`] pin a rendered page across output-mode/color/theme cells.
+//! and [`matrix`] pin a rendered page across representation/color/theme cells.
 //!
 //! There is no in-process TTY simulation: [`TestHarness::run_process`]
 //! spawns the real binary and [`TestHarness::run_pty`] (Unix) gives it a
@@ -18,13 +22,13 @@
 use clap::Command;
 use standout::cli::DispatchResult;
 use standout::cli::{
-    App, ArtifactDestination, ArtifactRun, Diagnostic, ExitStatus, RunErrorKind, StreamCapture,
-    StreamSink, SuccessKind,
+    App, ArtifactDestination, ArtifactRun, Delivery, Diagnostic, ExitStatus, RunErrorKind,
+    StreamCapture, StreamSink, SuccessKind,
 };
-use standout::{ColorMode, IconMode, InputSources, TargetProperties};
+use standout::{ColorMode, ColorPolicy, IconMode, InputSources, TargetProperties};
 use standout_input::env::{MockClipboard, MockStdin};
 use standout_input::PromptResponder;
-use standout_render::{AmbiguousWidth, OutputMode};
+use standout_render::{AmbiguousWidth, Representation};
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -61,10 +65,11 @@ pub struct TestHarness {
     fixtures: Vec<(PathBuf, Vec<u8>)>,
     terminal_width: Option<Option<usize>>,
     ambiguous_width: Option<AmbiguousWidth>,
-    color_capable: Option<bool>,
+    color_policy: ColorPolicy,
+    stdout_is_terminal: bool,
     color_scheme: Option<ColorMode>,
     icon_mode: Option<IconMode>,
-    output_mode: Option<OutputMode>,
+    output_mode: Option<Representation>,
     output_flag_name: String,
     stdin: StdinMode,
     clipboard: Option<String>,
@@ -80,7 +85,8 @@ impl TestHarness {
             fixtures: Vec::new(),
             terminal_width: None,
             ambiguous_width: None,
-            color_capable: None,
+            color_policy: ColorPolicy::Auto,
+            stdout_is_terminal: false,
             color_scheme: None,
             icon_mode: None,
             output_mode: None,
@@ -110,12 +116,14 @@ impl TestHarness {
         self.ambiguous_width = Some(policy);
         self
     }
-    pub fn with_color(mut self) -> Self {
-        self.color_capable = Some(true);
+    /// Whether the run may decorate human text; independent of the destination.
+    pub fn color(mut self, policy: ColorPolicy) -> Self {
+        self.color_policy = policy;
         self
     }
-    pub fn no_color(mut self) -> Self {
-        self.color_capable = Some(false);
+    /// The destination fact an `auto` color policy reads; independent of the policy.
+    pub fn stdout_is_terminal(mut self, is_terminal: bool) -> Self {
+        self.stdout_is_terminal = is_terminal;
         self
     }
     pub fn color_scheme(mut self, scheme: ColorMode) -> Self {
@@ -126,8 +134,8 @@ impl TestHarness {
         self.icon_mode = Some(mode);
         self
     }
-    pub fn output_mode(mut self, mode: OutputMode) -> Self {
-        self.output_mode = Some(mode);
+    pub fn output_mode(mut self, representation: Representation) -> Self {
+        self.output_mode = Some(representation);
         self
     }
     pub fn output_flag_name(mut self, name: impl Into<String>) -> Self {
@@ -135,7 +143,7 @@ impl TestHarness {
         self
     }
     pub fn text_output(self) -> Self {
-        self.output_mode(OutputMode::Text)
+        self.color(ColorPolicy::Never)
     }
     pub fn piped_stdin(mut self, content: impl Into<String>) -> Self {
         self.stdin = StdinMode::Piped(content.into());
@@ -251,15 +259,17 @@ impl TestHarness {
             sources = sources.with_responder(responder);
         }
         let mut argv: Vec<OsString> = args.into_iter().map(|a| a.into()).collect();
-        if let Some(mode) = self.output_mode {
-            argv.push(format!("--{}={}", self.output_flag_name, output_mode_flag(mode)).into());
+        if let Some(spelling) = self.output_mode.and_then(output_mode_flag) {
+            argv.push(format!("--{}={}", self.output_flag_name, spelling).into());
         }
         let target = self.target_properties();
         let captured = StreamCapture::default();
         let sink = StreamSink::new(captured.clone());
-        let run = app.run_with_sink(cmd, argv, target, sources, sink.clone());
+        let run = app.run_with_sink(cmd, argv, target, self.color_policy, sources, sink.clone());
         let warnings = run.warnings().to_vec();
         let output_mode = run.output_mode();
+        let results = run.results().to_vec();
+        let delivery = run.delivery().clone();
         let outcome = run.into_outcome();
         let tag_resolutions = standout_render::diagnostics::take_captured();
         let theme = app.get_default_theme();
@@ -282,7 +292,7 @@ impl TestHarness {
         if !standout::cli::carries_warning_entries(&outcome, output_mode) {
             stderr.push_str(&standout_render::warnings::render_block_for_target(
                 theme,
-                output_mode,
+                self.color_policy,
                 target,
                 &warnings,
             ));
@@ -294,6 +304,8 @@ impl TestHarness {
             outcome,
             warnings,
             output_mode,
+            results,
+            delivery,
             tag_resolutions,
             _tempdir: self.tempdir.take(),
             _restore: restore,
@@ -302,10 +314,10 @@ impl TestHarness {
     fn target_properties(&self) -> TargetProperties {
         TargetProperties {
             width: self.terminal_width.flatten(),
-            stdout_is_terminal: false,
-            stderr_is_terminal: false,
-            stdout_color_capability: self.color_capable.unwrap_or(false),
-            stderr_color_capability: self.color_capable.unwrap_or(false),
+            stdout_is_terminal: self.stdout_is_terminal,
+            stderr_is_terminal: self.stdout_is_terminal,
+            stdout_color_capability: self.stdout_is_terminal,
+            stderr_color_capability: self.stdout_is_terminal,
             color_scheme: self.color_scheme.unwrap_or(ColorMode::Dark),
             icon_mode: self.icon_mode.unwrap_or(IconMode::Classic),
             ambiguous_width: self.ambiguous_width.unwrap_or(AmbiguousWidth::Narrow),
@@ -351,14 +363,14 @@ mod target_properties_defaults {
     fn explicit_overrides_replace_the_fixed_defaults() {
         let target = TestHarness::new()
             .terminal_width(42)
-            .with_color()
+            .stdout_is_terminal(true)
             .color_scheme(ColorMode::Light)
             .icon_mode(IconMode::NerdFont)
             .ambiguous_width(AmbiguousWidth::Wide)
             .target_properties();
         assert_eq!(target.width, Some(42));
-        assert!(!target.stdout_is_terminal);
-        assert!(!target.stderr_is_terminal);
+        assert!(target.stdout_is_terminal);
+        assert!(target.stderr_is_terminal);
         assert!(target.stdout_color_capability);
         assert!(target.stderr_color_capability);
         assert_eq!(target.color_scheme, ColorMode::Light);
@@ -389,16 +401,16 @@ fn validate_relative_path(method: &str, path: &Path) -> PathBuf {
     }
     path.to_path_buf()
 }
-fn output_mode_flag(mode: OutputMode) -> &'static str {
-    match mode {
-        OutputMode::Auto => "auto",
-        OutputMode::Term => "term",
-        OutputMode::Text => "text",
-        OutputMode::TermDebug => "term-debug",
-        OutputMode::Json => "json",
-        OutputMode::Yaml => "yaml",
-        OutputMode::Csv => "csv",
-        OutputMode::Ndjson => "ndjson",
+/// `None` for the human representation, which `--output` cannot name: a run
+/// that wants it simply leaves the flag off.
+fn output_mode_flag(representation: Representation) -> Option<&'static str> {
+    match representation {
+        Representation::Human => None,
+        Representation::TermDebug => Some("term-debug"),
+        Representation::Json => Some("json"),
+        Representation::Yaml => Some("yaml"),
+        Representation::Csv => Some("csv"),
+        Representation::Ndjson => Some("ndjson"),
     }
 }
 #[derive(Default)]
@@ -425,7 +437,9 @@ pub struct TestResult {
     stdout_bytes: Vec<u8>,
     stderr: String,
     warnings: Vec<String>,
-    output_mode: OutputMode,
+    output_mode: Representation,
+    results: Vec<serde_json::Value>,
+    delivery: Delivery,
     tag_resolutions: Vec<TagResolution>,
     _tempdir: Option<TempDir>,
     _restore: RestoreState,
@@ -465,8 +479,22 @@ impl TestResult {
     pub fn error_kind(&self) -> Option<RunErrorKind> {
         self.outcome.error_kind()
     }
-    pub fn output_mode(&self) -> OutputMode {
+    pub fn output_mode(&self) -> Representation {
         self.output_mode
+    }
+    /// The run's result values as data, whatever representation it selected:
+    /// the batch value alone today, the ordered events and the summary once a
+    /// command emits them. `None` when the run produced no result value.
+    pub fn result(&self) -> Option<&serde_json::Value> {
+        self.results.last()
+    }
+    /// Every recorded result value, in the order the run produced it.
+    pub fn results(&self) -> &[serde_json::Value] {
+        &self.results
+    }
+    /// Where the rendered bytes went: stdout or the file the user named.
+    pub fn delivery(&self) -> &Delivery {
+        &self.delivery
     }
     /// `None` when the resolved mode carries no document or stdout is not one.
     pub fn diagnostic(&self) -> Option<Diagnostic> {

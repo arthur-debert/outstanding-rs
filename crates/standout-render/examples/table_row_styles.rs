@@ -3,7 +3,7 @@
 //! Run with: cargo run -p standout-render --example table_row_styles
 
 use serde::Serialize;
-use standout_render::{render_with_mode, ColorMode, OutputMode, Theme};
+use standout_render::{render_with_mode, ColorMode, ColorPolicy, Representation, Theme};
 
 #[derive(Serialize)]
 struct Data {
@@ -165,8 +165,15 @@ fn main() {
             );
 
             let data = Data { rows: rows.clone() };
-            let output =
-                render_with_mode(&template, &data, &theme, OutputMode::Term, mode).unwrap();
+            let output = render_with_mode(
+                &template,
+                &data,
+                &theme,
+                Representation::Human,
+                ColorPolicy::Always,
+                mode,
+            )
+            .unwrap();
             println!("--- tint: {} ---\n{}\n", tint, output);
         }
     }

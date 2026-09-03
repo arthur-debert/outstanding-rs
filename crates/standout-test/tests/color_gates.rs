@@ -6,7 +6,6 @@ use standout::cli::FnHandler;
 use standout::cli::{App, Output};
 use standout::EmbeddedTemplates;
 use standout::Theme;
-use standout_render::OutputMode;
 use standout_test::TestHarness;
 
 const TEMPLATES: &[(&str, &str)] = &[("say", "[shout]hello[/shout]"), ("list", "listed")];
@@ -56,10 +55,11 @@ fn help_command() -> Command {
 #[test]
 #[serial]
 fn with_color_makes_a_styled_render_ansi_positive() {
-    let result = TestHarness::new()
-        .with_color()
-        .output_mode(OutputMode::Term)
-        .run(&styled_app(), styled_command(), ["app", "say"]);
+    let result = TestHarness::new().stdout_is_terminal(true).run(
+        &styled_app(),
+        styled_command(),
+        ["app", "say"],
+    );
     let raw = result.stdout();
     assert!(
         raw.contains(RED),
@@ -70,7 +70,7 @@ fn with_color_makes_a_styled_render_ansi_positive() {
 #[test]
 #[serial]
 fn a_term_render_without_with_color_emits_escapes() {
-    let result = TestHarness::new().output_mode(OutputMode::Term).run(
+    let result = TestHarness::new().stdout_is_terminal(true).run(
         &styled_app(),
         styled_command(),
         ["app", "say"],
@@ -84,14 +84,15 @@ fn a_term_render_without_with_color_emits_escapes() {
 #[test]
 #[serial]
 fn stripping_a_colored_term_render_recovers_the_text_render() {
-    let term = TestHarness::new()
-        .with_color()
-        .output_mode(OutputMode::Term)
-        .run(&styled_app(), styled_command(), ["app", "say"]);
+    let term = TestHarness::new().stdout_is_terminal(true).run(
+        &styled_app(),
+        styled_command(),
+        ["app", "say"],
+    );
     let styled = term.stdout().to_string();
     let stripped = term.stdout_plain();
     drop(term);
-    let text = TestHarness::new().output_mode(OutputMode::Text).run(
+    let text = TestHarness::new().stdout_is_terminal(false).run(
         &styled_app(),
         styled_command(),
         ["app", "say"],
@@ -106,9 +107,8 @@ fn stripping_a_colored_term_render_recovers_the_text_render() {
 #[serial]
 fn the_help_page_renders_ansi_through_the_default_help_theme() {
     let result = TestHarness::new()
-        .with_color()
+        .stdout_is_terminal(true)
         .terminal_width(80)
-        .output_mode(OutputMode::Term)
         .run(&help_app(), help_command(), ["notes", "--help"]);
     result.assert_success();
     let raw = result.stdout();
@@ -126,10 +126,11 @@ fn the_help_page_renders_ansi_through_the_default_help_theme() {
 #[serial]
 fn with_color_does_not_call_set_colors_enabled() {
     let before = console::colors_enabled();
-    let result = TestHarness::new()
-        .with_color()
-        .output_mode(OutputMode::Term)
-        .run(&styled_app(), styled_command(), ["app", "say"]);
+    let result = TestHarness::new().stdout_is_terminal(true).run(
+        &styled_app(),
+        styled_command(),
+        ["app", "say"],
+    );
     assert_eq!(
         console::colors_enabled(),
         before,

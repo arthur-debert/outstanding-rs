@@ -53,8 +53,8 @@ still reports the binary and artifact case as an error), so a declared status
 is visible through `run`, `run_emitted`, `dispatch`, `run_with` and the test
 harness, which report it through `exit_status()`.
 
-The failure rows describe the human modes (`auto`, `term`, `text` and
-`term-debug`); under a structured mode a failure is the stdout document
+The failure rows describe the human representation and its `term-debug`
+diagnostic view; under a structured encoding a failure is the stdout document
 instead, [below](#failures-under-a-structured-mode).
 
 Framework warnings flush after the primary output and do not change its
@@ -63,7 +63,7 @@ status. A final write failure does replace a successful status with `1`
 
 ## Failures under a structured mode
 
-When the resolved output mode is `json`, `yaml`, `csv` or `ndjson`, stdout
+When the resolved representation is `json`, `yaml`, `csv` or `ndjson`, stdout
 carries the result or the diagnostic, never both, and stderr carries nothing
 the framework wrote for the failure. In the single-document modes that is one
 document per run; under `ndjson` the diagnostic is one compact line at the

@@ -1,8 +1,9 @@
 use clap::{Arg, ArgAction, Command};
 use console::{set_colors_enabled, Style};
-use standout::cli::{render_help, App, HelpConfig, HelpResult};
+use standout::cli::{render_help, App, HelpConfig};
 use standout::topics::{render_topic, Topic, TopicRenderConfig, TopicType};
-use standout::{OutputMode, Theme};
+use standout::{ColorPolicy, Theme};
+use standout_test::TestHarness;
 
 const BOLD: &str = "\u{1b}[1m";
 const CYAN: &str = "\u{1b}[36m";
@@ -56,7 +57,7 @@ fn unrelated_app_theme_leaves_no_literal_tags() {
     set_colors_enabled(true);
     let config = HelpConfig {
         theme: Some(change_tree()),
-        output_mode: Some(OutputMode::Term),
+        color: ColorPolicy::Always,
         ..Default::default()
     };
     let output = render_help(&lookma(), Some(config)).unwrap();
@@ -73,7 +74,7 @@ fn app_theme_overrides_the_tags_it_names_and_only_those() {
     set_colors_enabled(true);
     let config = HelpConfig {
         theme: Some(Theme::new().add("header", Style::new().cyan())),
-        output_mode: Some(OutputMode::Term),
+        color: ColorPolicy::Always,
         ..Default::default()
     };
     let output = render_help(&lookma(), Some(config)).unwrap();
@@ -100,17 +101,15 @@ fn themed_app() -> App {
 
 #[test]
 fn app_with_own_theme_renders_clean_help() {
-    set_colors_enabled(true);
-    let output = match themed_app().get_matches_from(
+    let result = TestHarness::new().stdout_is_terminal(true).run(
+        &themed_app(),
         lookma(),
-        ["lookma", "help", "--output", "term"],
-        &standout::InputSources::from_process(),
-    ) {
-        HelpResult::Help(text) | HelpResult::PagedHelp(text) => text,
-        other => panic!("expected rendered help, got: {other:?}"),
-    };
+        ["lookma", "help"],
+    );
+    result.assert_success();
+    let output = result.stdout();
 
-    assert_no_literal_tags(&output);
+    assert_no_literal_tags(output);
     assert!(
         output.contains(BOLD),
         "default help styling must survive the builder path:\n{output:?}"
@@ -128,7 +127,7 @@ fn topic_render_overlays_the_default_topic_theme() {
     );
     let config = TopicRenderConfig {
         theme: Some(change_tree()),
-        output_mode: Some(OutputMode::Term),
+        color: ColorPolicy::Always,
         ..Default::default()
     };
     let output = render_topic(&topic, Some(config)).unwrap();

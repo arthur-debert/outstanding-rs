@@ -245,7 +245,7 @@ fn real_process_status_and_stream_matrix() {
 #[test]
 fn real_process_structured_failures_are_stdout_documents() {
     use standout::cli::{parse_diagnostic, DiagnosticKind, HookPhase, RunErrorKind};
-    use standout::OutputMode;
+    use standout::Representation;
 
     let binary = fixture_binary();
     let cases: [(&[&str], RunErrorKind, i32, &str); 6] = [
@@ -291,15 +291,18 @@ fn real_process_structured_failures_are_stdout_documents() {
         assert_eq!(output.status.code(), Some(code), "{args:?}");
         assert!(output.stderr.is_empty(), "{args:?}: {:?}", output.stderr);
         let stdout = String::from_utf8(output.stdout).unwrap();
-        let diagnostic = parse_diagnostic(OutputMode::Json, &stdout)
+        let diagnostic = parse_diagnostic(Representation::Json, &stdout)
             .unwrap_or_else(|e| panic!("{args:?}: {e}:\n{stdout}"));
         assert_eq!(diagnostic.kind, DiagnosticKind::from(kind), "{args:?}");
         assert!(diagnostic.summary.contains(summary), "{args:?}: {stdout}");
     }
 
     let ranged = run(&binary, &["ranged", "--output", "yaml"]);
-    let ranged =
-        parse_diagnostic(OutputMode::Yaml, &String::from_utf8(ranged.stdout).unwrap()).unwrap();
+    let ranged = parse_diagnostic(
+        Representation::Yaml,
+        &String::from_utf8(ranged.stdout).unwrap(),
+    )
+    .unwrap();
     assert_eq!(ranged.detail, "expected `resource <name> <state>`");
     assert_eq!(ranged.range.unwrap().start.line, 2);
 
@@ -316,7 +319,7 @@ fn real_process_structured_failures_are_stdout_documents() {
     assert_eq!(warning_failure.status.code(), Some(1));
     let stdout = String::from_utf8(warning_failure.stdout).unwrap();
     assert!(
-        parse_diagnostic(OutputMode::Json, &stdout).is_ok(),
+        parse_diagnostic(Representation::Json, &stdout).is_ok(),
         "{stdout}"
     );
     let stderr = String::from_utf8_lossy(&warning_failure.stderr);
@@ -327,7 +330,7 @@ fn real_process_structured_failures_are_stdout_documents() {
     assert_eq!(external.status.code(), Some(128));
     assert_eq!(external.stderr, b"fatal: external fixture failed");
     let external = parse_diagnostic(
-        OutputMode::Json,
+        Representation::Json,
         &String::from_utf8(external.stdout).unwrap(),
     )
     .unwrap();

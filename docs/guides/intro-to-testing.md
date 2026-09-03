@@ -290,31 +290,30 @@ Open prompts (`Text`/`Password`/`Editor`) take `PromptResponse::Text(...)`; fini
 
 ### 4.6 Terminal state
 
-Two orthogonal knobs, injected on `TargetProperties` (never detected from the process):
+Three orthogonal knobs. Two are destination facts injected on `TargetProperties` (never detected from the process); the third is the run's color policy, which is a setting rather than a fact:
 
 ```rust
-.terminal_width(80)     // forces a fixed width for tabular layouts
-.no_color()             // forces OutputMode::Auto to behave like Text
-.with_color()           // forces Auto to behave like Term even when piped
+.terminal_width(80)              // forces a fixed width for tabular layouts
+.stdout_is_terminal(true)        // the destination fact an auto policy reads
+.color(ColorPolicy::Never)       // or Always; decides ANSI without touching the destination
 ```
 
-Useful for snapshot testing: pin the width, turn off color, and the rendered string is deterministic across developer machines and CI.
+Useful for snapshot testing: pin the width, ask for no color, and the rendered string is deterministic across developer machines and CI.
 
-`with_color()` is also what makes an *ANSI-positive* assertion possible in-process. Two switches stand between a styled template and escape bytes: Standout's own color decision, and `console`'s process-global color switch, which `Style::apply_to` consults and which is off in a non-TTY process — and a test binary is never a TTY. `with_color()` sets both (and restores the second on drop), so a `Term` render in a test emits the escapes a terminal user would see, with no `force_styling` needed in the theme:
+`color(ColorPolicy::Always)` is what makes an *ANSI-positive* assertion possible in-process. Two switches stand between a styled template and escape bytes: Standout's own color decision, and `console`'s process-global color switch, which `Style::apply_to` consults and which is off in a non-TTY process — and a test binary is never a TTY. An always policy sets both, so the render emits the escapes a terminal user would see, with no `force_styling` needed in the theme:
 
 ```rust
 let result = TestHarness::new()
-    .with_color()
-    .output_mode(OutputMode::Term)
+    .color(ColorPolicy::Always)
     .run(&app(), command(), ["myapp", "list"]);
 
 assert!(result.stdout().contains('\x1b'));    // really styled
 assert_eq!(result.stdout_plain(), expected);  // and strippable
 ```
 
-There is no TTY knob. Questions that genuinely depend on being (or not being) a terminal belong to a real process — see [`run_process`](#410-running-the-real-binary) and [ADR-0022](../adr/0022-delete-the-in-process-tty-seam.md).
+`stdout_is_terminal(true)` says the destination reports color capability instead, which is what an `auto` policy reads. Questions that genuinely depend on the *process* being (or not being) a terminal belong to a real process — see [`run_process`](#410-running-the-real-binary) and [ADR-0022](../adr/0022-delete-the-in-process-tty-seam.md).
 
-### 4.7 Forcing an output mode
+### 4.7 Selecting a representation
 
 Sometimes you want to assert on structured output regardless of what the user's `--output` flag would have chosen. Instead of manually appending `--output=json` to argv:
 
@@ -323,7 +322,7 @@ Sometimes you want to assert on structured output regardless of what the user's 
 #[serial]
 fn list_as_json_has_expected_shape() {
     let result = TestHarness::new()
-        .output_mode(OutputMode::Json)
+        .output_mode(Representation::Json)
         .run(&app, cmd, ["myapp", "list"]);
 
     let value: serde_json::Value =
@@ -353,7 +352,7 @@ offending element when it fails:
 ```rust
 use standout_test::invariants::*;
 
-let page = TestHarness::new().text_output().run(&app, cmd(), ["notes", "--help"]);
+let page = TestHarness::new().run(&app, cmd(), ["notes", "--help"]);
 
 assert_every_tag_resolved(&page);                        // the theme defines every tag rendered
 assert_no_unresolved_tag_markers(&page);                 // no `[tag?]` reached the page
@@ -391,7 +390,7 @@ outside standout — clap's own metadata:
 use standout::cli::HelpLength;
 use standout_test::clap_parity::assert_states_clap_facts;
 
-let page = TestHarness::new().text_output().run(&app, cmd(), ["notes", "--help"]);
+let page = TestHarness::new().run(&app, cmd(), ["notes", "--help"]);
 
 // `--help` and the `help` word owe `long_about`; `-h` owes `about`.
 assert_states_clap_facts(&page, &cmd(), HelpLength::Long);
@@ -456,7 +455,8 @@ Let's test a todo CLI end-to-end. The app reads todos from `$TODO_FILE` (or `tod
 use clap::Command;
 use serial_test::serial;
 use standout_test::TestHarness;
-use standout_render::OutputMode;
+use standout::ColorPolicy;
+use standout_render::Representation;
 
 fn app() -> standout::cli::App {
     // your real App::builder() -> build()
@@ -517,7 +517,7 @@ fn add_reads_from_piped_stdin_when_no_arg() {
 fn list_as_json_is_valid_and_shaped() {
     let result = TestHarness::new()
         .fixture("todos.txt", "a\nb\nc\n")
-        .output_mode(OutputMode::Json)
+        .output_mode(Representation::Json)
         .run(&app(), command(), ["todo", "list"]);
 
     let v: serde_json::Value = serde_json::from_str(result.stdout()).unwrap();
@@ -531,7 +531,7 @@ fn list_as_json_is_valid_and_shaped() {
 fn list_without_color_strips_ansi() {
     let result = TestHarness::new()
         .fixture("todos.txt", "one\n")
-        .no_color()
+        .color(ColorPolicy::Never)
         .run(&app(), command(), ["todo", "list"]);
 
     assert!(
@@ -581,11 +581,13 @@ TestHarness::new()
     // width None, ColorMode::Dark, IconMode::Classic, AmbiguousWidth::Narrow)
     .terminal_width(80)
     .no_terminal_width()
-    .with_color()                             // or .no_color(); fills per-stream capability
+    .stdout_is_terminal(true)                 // fills per-stream terminal and color capability
 
-    // forced output mode (injects --output=<mode> into argv)
-    .output_mode(OutputMode::Json)
-    .text_output()                            // shortcut for OutputMode::Text
+    // the run's color policy, independent of the destination
+    .color(ColorPolicy::Never)                // or Always; default is Auto
+
+    // the representation (injects --output=<encoding> into argv; Human names no flag)
+    .output_mode(Representation::Json)
     .output_flag_name("format")               // if AppBuilder::output_flag was renamed
 
     // stdin (routed through standout-input's default reader)

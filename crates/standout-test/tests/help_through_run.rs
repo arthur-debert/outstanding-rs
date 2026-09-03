@@ -19,10 +19,11 @@ fn configured_help(app: &App, cmd: Command, args: &[&str]) -> String {
 #[serial]
 fn the_help_word_renders_themed_help_through_run() {
     let fixture = downstream().flat().build();
-    let result =
-        TestHarness::new()
-            .text_output()
-            .run(fixture.app(), fixture.command(), ["lookma", "help"]);
+    let result = TestHarness::new().stdout_is_terminal(false).run(
+        fixture.app(),
+        fixture.command(),
+        ["lookma", "help"],
+    );
     result.assert_success();
     assert_eq!(result.success_kind(), Some(SuccessKind::ClapHelp));
     result.assert_stdout_contains("Diff a git range");
@@ -32,10 +33,11 @@ fn the_help_word_renders_themed_help_through_run() {
 #[serial]
 fn downstream_theme_help_preserves_option_cues_through_run() {
     let fixture = downstream().build();
-    let result =
-        TestHarness::new()
-            .with_color()
-            .run(fixture.app(), fixture.command(), ["lookma", "help"]);
+    let result = TestHarness::new().stdout_is_terminal(true).run(
+        fixture.app(),
+        fixture.command(),
+        ["lookma", "help"],
+    );
     result.assert_success();
     assert_eq!(result.success_kind(), Some(SuccessKind::ClapHelp));
     let output = result.stdout();
@@ -72,7 +74,7 @@ fn downstream_theme_help_preserves_option_cues_through_run() {
 fn the_help_flags_render_themed_help_through_run() {
     let fixture = downstream().flat().without_help_word().build();
     for flag in ["--help", "-h"] {
-        let result = TestHarness::new().text_output().run(
+        let result = TestHarness::new().stdout_is_terminal(false).run(
             fixture.app(),
             fixture.command(),
             ["lookma", flag],
@@ -86,7 +88,7 @@ fn the_help_flags_render_themed_help_through_run() {
 #[serial]
 fn the_help_word_renders_a_topic_through_run() {
     let fixture = downstream().flat().build();
-    let result = TestHarness::new().text_output().run(
+    let result = TestHarness::new().stdout_is_terminal(false).run(
         fixture.app(),
         fixture.command(),
         ["lookma", "help", "ranges"],
@@ -98,7 +100,7 @@ fn the_help_word_renders_a_topic_through_run() {
 #[serial]
 fn the_help_word_renders_a_subcommands_help_through_run() {
     let fixture = downstream().build();
-    let word = TestHarness::new().text_output().run(
+    let word = TestHarness::new().stdout_is_terminal(false).run(
         fixture.app(),
         fixture.command(),
         ["lookma", "help", "review"],
@@ -106,7 +108,7 @@ fn the_help_word_renders_a_subcommands_help_through_run() {
     word.assert_success();
     word.assert_stdout_contains("Review a range hunk by hunk");
     drop(word);
-    let flag = TestHarness::new().text_output().run(
+    let flag = TestHarness::new().stdout_is_terminal(false).run(
         fixture.app(),
         fixture.command(),
         ["lookma", "review", "--help"],
@@ -158,7 +160,7 @@ fn the_help_word_honours_the_output_flag_through_run() {
 #[serial]
 fn the_help_document_on_a_color_tty_carries_no_ansi() {
     let fixture = downstream().flat().build();
-    let result = TestHarness::new().with_color().run(
+    let result = TestHarness::new().stdout_is_terminal(true).run(
         fixture.app(),
         fixture.command(),
         ["lookma", "help", "--output", "json"],
@@ -215,15 +217,17 @@ fn the_output_flag_reaches_the_word_and_the_flags_alike() {
         &[
             "lookma",
             "--output",
-            "text",
+            "json",
             "--help",
             "--output",
             "term-debug",
         ][..],
     ] {
-        let result = TestHarness::new()
-            .no_color()
-            .run(fixture.app(), fixture.command(), args);
+        let result = TestHarness::new().stdout_is_terminal(false).run(
+            fixture.app(),
+            fixture.command(),
+            args,
+        );
         result.assert_success();
         assert!(
             result.stdout().contains("[header]USAGE[/header]"),
@@ -231,7 +235,7 @@ fn the_output_flag_reaches_the_word_and_the_flags_alike() {
             result.stdout()
         );
     }
-    let text = TestHarness::new().no_color().run(
+    let text = TestHarness::new().stdout_is_terminal(false).run(
         fixture.app(),
         fixture.command(),
         [
@@ -255,7 +259,7 @@ fn the_output_flag_reaches_the_word_and_the_flags_alike() {
 #[serial]
 fn a_pager_request_rides_back_as_a_typed_success() {
     let fixture = downstream().flat().build();
-    let result = TestHarness::new().text_output().run(
+    let result = TestHarness::new().stdout_is_terminal(false).run(
         fixture.app(),
         fixture.command(),
         ["lookma", "help", "--page"],
@@ -363,10 +367,7 @@ fn a_render_failure_is_not_disguised_as_an_unrecognized_topic() {
 #[serial]
 fn both_entry_points_render_the_same_help() {
     let fixture = downstream().flat().build();
-    for args in [
-        ["lookma", "help", "--output", "text"],
-        ["lookma", "--help", "--output", "text"],
-    ] {
+    for args in [["lookma", "help"], ["lookma", "--help"]] {
         let dispatched = TestHarness::new().run(fixture.app(), fixture.command(), args);
         dispatched.assert_success();
         let configured = configured_help(fixture.app(), fixture.command(), &args);
@@ -381,10 +382,11 @@ fn both_entry_points_render_the_same_help() {
 #[serial]
 fn a_flat_command_keeps_the_word_as_data_through_run_without_the_opt_in() {
     let fixture = downstream().flat().without_help_word().build();
-    let result =
-        TestHarness::new()
-            .text_output()
-            .run(fixture.app(), fixture.command(), ["lookma", "help"]);
+    let result = TestHarness::new().stdout_is_terminal(false).run(
+        fixture.app(),
+        fixture.command(),
+        ["lookma", "help"],
+    );
     result.assert_success();
     result.assert_stdout_eq("range=help");
 }
@@ -400,7 +402,7 @@ fn the_escape_delivers_the_literal_word_through_run() {
 #[serial]
 fn a_normal_invocation_is_untouched_through_run() {
     let fixture = downstream().flat().build();
-    let result = TestHarness::new().text_output().run(
+    let result = TestHarness::new().stdout_is_terminal(false).run(
         fixture.app(),
         fixture.command(),
         ["lookma", "main..HEAD"],

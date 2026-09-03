@@ -2,71 +2,83 @@
 
 Standout supports multiple output formats through a single handler because modern CLI tools serve two masters: human operators and machine automation.
 
-The same handler logic produces styled terminal output for eyes, plain text for logs, or structured JSON for `jq` pipelines—controlled entirely by the user's `--output` flag. This frees you from writing separate "API" and "CLI" logic.
+The same handler logic produces a rendered page for eyes or structured JSON for
+`jq` pipelines. This frees you from writing separate "API" and "CLI" logic.
 
-## The OutputMode Enum
+## Representation and style are two decisions
+
+**What the run produces** is its representation. **Whether the rendered human
+text carries escape sequences** is its style mode. They are separate types, and
+no type combines them:
 
 ```rust
-pub enum OutputMode {
-    Auto,       // Auto-detect terminal capabilities
-    Term,       // Always use ANSI escape codes
-    Text,       // Never use ANSI codes (plain text)
-    TermDebug,  // Keep style tags as [name]...[/name]
+pub enum Representation {
+    Human,      // Render the command's template: what a bare invocation produces
+    TermDebug,  // Render it, keeping style tags as [name]...[/name]
     Json,       // Serialize as JSON (skip template)
     Yaml,       // Serialize as YAML (skip template)
     Csv,        // Serialize as CSV (skip template)
     Ndjson,     // One JSON object per line: a stream, not a document
 }
+
+pub enum StyleMode {
+    Ansi,   // escape sequences applied
+    Plain,  // style tags removed
+    Debug,  // style tags kept as literals
+}
 ```
 
-Three categories:
+The human representation has no `--output` name: it is what a bare invocation
+renders. `term-debug` stays on the flag as the diagnostic view of the template's
+style tags, outside the stability contract. `Ndjson` is the one stream
+representation, [below](#ndjson-mode).
 
-**Templated modes** (Auto, Term, Text): Render the template, vary ANSI handling.
+There is no XML representation. `--output xml` is a clap usage error like any
+other value the flag does not accept, exit `2`.
 
-**Debug mode** (TermDebug): Render the template, keep tags as literals for inspection.
+## The style decision
 
-**Structured modes** (Json, Yaml, Csv, Ndjson): Skip the template entirely,
-serialize handler data directly. `Ndjson` is the one stream mode among them,
-[below](#ndjson-mode).
-
-There is no XML mode. `--output xml` is a clap usage error like any other
-value the flag does not accept, exit `2`.
-
-## Auto Mode
-
-`Auto` is the default when `--output` is absent, and an application can change
-that default with
-[`output_mode_fallback(mode)`](./app-configuration.md#output-mode-fallback) — an
-explicit `--output` still outranks it. `Auto` queries the terminal for color
-support:
+The style mode is resolved per run from the representation, the run's
+[`ColorPolicy`](#the-color-policy) and the destination's reported color
+capability:
 
 ```rust
 Term::stdout().features().colors_supported()
 ```
 
-If colors are supported, Auto behaves like Term (ANSI codes applied). If not, Auto behaves like Text (tags stripped).
-
-This detection happens at render time, not startup. Piping output to a file or another process typically disables color support, so:
+Under `ColorPolicy::Auto`, a capable destination renders with escape sequences
+and an incapable one renders plain. Detection happens at render time, not
+startup, so piping to a file or another process turns the page plain:
 
 ```bash
-myapp list              # Colors (if terminal supports)
+myapp list              # Colors (if the terminal supports them)
 myapp list > file.txt   # No colors (not a TTY)
 myapp list | less       # No colors (pipe)
 ```
 
+`NO_COLOR` and `TERM=dumb` suppress the reported capability, so they turn a
+bare run plain. `CLICOLOR_FORCE` is not part of that probe, so it does not turn
+a plain destination colored. A structured encoding never carries escape
+sequences, whatever the policy says.
+
+## The color policy
+
+`ColorPolicy` is `Auto`, `Always` or `Never`. In-process entry points name it —
+`App::run_with_color`, `App::run_command`, `HelpConfig::color`,
+`TopicRenderConfig::color`, and `TestHarness::color` — and everything else
+resolves `Auto` against the destination.
+
 ## The --output Flag
 
-Standout adds a global `--output` flag accepting these values:
+Standout adds a global `--output` flag naming a structured encoding:
 
 ```bash
-myapp list --output=auto        # Default
-myapp list --output=term        # Force ANSI codes
-myapp list --output=text        # Force plain text
-myapp list --output=term-debug  # Show style tags
+myapp list                      # the human template
 myapp list --output=json        # JSON serialization
 myapp list --output=yaml        # YAML serialization
 myapp list --output=csv         # CSV serialization
 myapp list --output=ndjson      # Newline-delimited JSON stream
+myapp list --output=term-debug  # Show style tags
 ```
 
 The flag is global—it applies to all subcommands. `--output` accepts a single
@@ -83,39 +95,11 @@ which is the one a `#[flag]` handler parameter reads. A root-declared global
 `--quiet`, for example, is visible as `#[flag] quiet: bool` in a handler for a
 nested command such as `config set`.
 
-## Term vs Text
+## Literal escape bytes
 
-**Term**: turns every resolved style tag into ANSI escape codes, including
-when the destination is a pipe rather than a terminal:
-
-```bash
-myapp list --output=term > colored.txt
-```
-
-Useful when you want to preserve colors for later display (e.g., `less -R`).
-
-A `term` request is unconditional, and the environment's color conventions do
-not override it: `NO_COLOR=1 myapp list --output=term` still emits ANSI, the
-same way `CLICOLOR_FORCE=1 myapp list --output=text` still emits none. `auto`
-is the only mode the environment reaches, and it reaches it through one value:
-the destination's reported color capability. `auto` resolves to `term` when
-that capability is reported and to `text` when it is not. `NO_COLOR` and
-`TERM=dumb` suppress the capability, so they turn `auto` plain;
-`CLICOLOR_FORCE` is not part of that capability probe, so it never turns `auto`
-into `term`.
-
-**Text**: removes Standout's own style tags and adds no ANSI of its own:
-
-```bash
-myapp list --output=text
-```
-
-Useful for clean output regardless of terminal capabilities, or when processing output with other tools.
-
-Neither `term` nor `text` touches ANSI bytes that a handler or template
-writes literally into the rendered text — the framework does not sanitize
-those bytes and does not promise to. A caller that needs them gone strips
-them itself.
+No style mode touches ANSI bytes that a handler or template writes literally
+into the rendered text — the framework does not sanitize those bytes and does
+not promise to. A caller that needs them gone strips them itself.
 
 `term-debug` is internal ([What Is Contract](./stability.md)): do not build
 automation against its output.
@@ -230,7 +214,7 @@ a caller needs explicit columns and headers:
 
 ```rust
 use standout::tabular::{Column, FlatDataSpec, Width};
-use standout::OutputMode;
+use standout::{ColorPolicy, Representation};
 use standout_render::render_auto_with_spec;
 
 let spec = FlatDataSpec::builder()
@@ -238,7 +222,14 @@ let spec = FlatDataSpec::builder()
     .column(Column::new(Width::Fixed(10)).key("meta.role").header("Role"))
     .build();
 
-render_auto_with_spec(template, &data, &theme, OutputMode::Csv, Some(&spec))?
+render_auto_with_spec(
+    template,
+    &data,
+    &theme,
+    Representation::Csv,
+    ColorPolicy::Auto,
+    Some(&spec),
+)?
 ```
 
 The `key` field uses dot notation for nested paths (`"meta.role"` extracts `data["meta"]["role"]`).
@@ -292,7 +283,7 @@ which is how the framework's own diagnostic document becomes a CSV row: a
 `range_filename`, `range_line` and `range_column`, with `null_repr("")` so
 they are empty when no range is set.
 
-The projection applies only to CSV. Text and terminal modes still use the
+The projection applies only to CSV. The human representation still uses the
 template, while JSON and YAML serialize the canonical response. In the
 pipeline, post-dispatch hooks run before projection and post-output hooks run
 after it; `run`, `run_with`, output-file handling, and final emission
@@ -316,7 +307,7 @@ async behind it.
 ### What a run writes
 
 `Output::Render(data)` becomes one `result` entry where the other structured
-modes write their document:
+encodings write their document:
 
 ```text
 {"type":"result","data":{"items":[...],"total":42}}
@@ -335,7 +326,8 @@ room for a payload.
 ### Handler-emitted entries
 
 `ctx.stream()` returns the run's `EntryStream`. `emit(&value)` writes the
-value as one line under `ndjson` and does nothing in every other mode:
+value as one line under `ndjson` and does nothing under any other
+representation:
 
 ```rust
 #[derive(Serialize)]
@@ -374,8 +366,8 @@ line cannot be written; propagate it with `?` and the run fails with it.
 A handler whose entries *are* its result can skip the `result` line by
 returning `Output::Silent` when the stream is live — `ctx.stream().is_live()`
 is true only under `ndjson` — and `Output::Render` otherwise, so the human
-modes still render their page. That is the one presentation branch a handler
-is meant to take.
+representation still renders its page. That is the one presentation branch a
+handler is meant to take.
 
 ## File Output
 
@@ -415,41 +407,42 @@ App::builder()
     .build()?
 ```
 
-## Keep Output Mode Out of Handlers
+## Keep the Representation Out of Handlers
 
-Output mode is a rendering concern and is deliberately absent from
-`CommandContext`. A handler should return the same serializable data regardless
-of whether the caller selected terminal, text, or structured output. If a
-command's behavior genuinely differs, model that as an explicit command or
-argument rather than an implicit presentation-mode branch.
+The representation is a rendering concern and is deliberately absent from
+`CommandContext`. A handler should return the same serializable data whether the
+caller took the human page or a structured encoding. If a command's behavior
+genuinely differs, model that as an explicit command or argument rather than an
+implicit presentation branch.
 
-The one mode-aware member of the context is `ctx.stream()`, live only under
-`ndjson`; the single branch a handler takes on it is in
+The one representation-aware member of the context is `ctx.stream()`, live only
+under `ndjson`; the single branch a handler takes on it is in
 [Handler-emitted entries](#handler-emitted-entries).
 
 ## Rendering Without CLI
 
-For standalone rendering with explicit mode:
+For standalone rendering with an explicit representation:
 
 ```rust
-use standout::{render_auto, OutputMode};
+use standout::{render_auto, ColorPolicy, Representation};
 
-// Renders template for Term/Text, serializes for Json/Yaml
-let output = render_auto(template, &data, &theme, OutputMode::Json)?;
+// Renders the template for Human, serializes for Json/Yaml
+let output = render_auto(template, &data, &theme, Representation::Json, ColorPolicy::Auto)?;
 ```
 
 The "auto" in `render_auto` refers to template-vs-serialize dispatch, not color detection.
 
-For full control over both output mode and color mode:
+For control over the representation, the color policy and the color mode:
 
 ```rust
-use standout::{render_with_mode, ColorMode};
+use standout::{render_with_mode, ColorMode, ColorPolicy, Representation};
 
 let output = render_with_mode(
     template,
     &data,
     &theme,
-    OutputMode::Term,
+    Representation::Human,
+    ColorPolicy::Always,
     ColorMode::Dark,
 )?;
 ```

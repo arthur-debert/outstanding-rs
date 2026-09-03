@@ -18,10 +18,10 @@ fn a_forced_ambiguous_width_policy_is_refused() {
         .run_process(UNSPAWNED, ["--version"]);
 }
 #[test]
-#[should_panic(expected = "with_color()/no_color()")]
-fn a_forced_color_capability_is_refused() {
+#[should_panic(expected = "stdout_is_terminal()")]
+fn a_forced_terminal_destination_is_refused() {
     TestHarness::new()
-        .with_color()
+        .stdout_is_terminal(true)
         .run_process(UNSPAWNED, ["--version"]);
 }
 #[test]
@@ -52,7 +52,7 @@ fn every_refused_setting_is_named_in_one_message() {
     let panic = std::panic::catch_unwind(|| {
         TestHarness::new()
             .terminal_width(80)
-            .no_color()
+            .stdout_is_terminal(true)
             .clipboard("copied")
             .run_process(UNSPAWNED, ["--version"]);
     })
@@ -62,7 +62,7 @@ fn every_refused_setting_is_named_in_one_message() {
         .expect("panic payload should be a String");
     for expected in [
         "terminal_width()/no_terminal_width()",
-        "with_color()/no_color()",
+        "stdout_is_terminal()",
         "clipboard()",
     ] {
         assert!(

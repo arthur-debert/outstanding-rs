@@ -1,5 +1,7 @@
-use crate::cli::handler::{DispatchResult, ExitStatus, RunError, RunErrorKind, RunOutput};
-use crate::OutputMode;
+use crate::cli::handler::{
+    Delivery, DispatchResult, ExitStatus, RunError, RunErrorKind, RunOutput, RunRecorder,
+};
+use crate::{ColorPolicy, Representation};
 
 #[must_use = "exit the process with `status`, or otherwise act on the outcome"]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,7 +14,10 @@ pub struct ProcessOutcome {
 pub struct CompletedRun {
     inner: DispatchResult,
     warnings: Vec<String>,
-    output_mode: OutputMode,
+    output_mode: Representation,
+    color_policy: ColorPolicy,
+    results: Vec<serde_json::Value>,
+    delivery: Delivery,
     entries: String,
 }
 
@@ -20,12 +25,17 @@ impl CompletedRun {
     pub fn from_dispatch(
         inner: DispatchResult,
         warnings: Vec<String>,
-        output_mode: OutputMode,
+        output_mode: Representation,
+        color_policy: ColorPolicy,
+        recorder: &RunRecorder,
     ) -> Self {
         Self {
             inner,
             warnings,
             output_mode,
+            color_policy,
+            results: recorder.records(),
+            delivery: recorder.delivery(),
             entries: String::new(),
         }
     }
@@ -52,8 +62,22 @@ impl CompletedRun {
         &self.warnings
     }
 
-    pub fn output_mode(&self) -> OutputMode {
+    pub fn output_mode(&self) -> Representation {
         self.output_mode
+    }
+
+    pub fn color_policy(&self) -> ColorPolicy {
+        self.color_policy
+    }
+
+    /// The run's result values as data, whatever representation it selected.
+    pub fn results(&self) -> &[serde_json::Value] {
+        &self.results
+    }
+
+    /// Where the rendered bytes went.
+    pub fn delivery(&self) -> &Delivery {
+        &self.delivery
     }
 }
 

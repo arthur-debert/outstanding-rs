@@ -2,6 +2,7 @@ use clap::Command;
 use serde_json::json;
 use standout::cli::FnHandler;
 use standout::cli::{App, Output};
+use standout::ColorPolicy;
 use standout::EmbeddedTemplates;
 use standout_test::TestHarness;
 
@@ -56,7 +57,7 @@ fn command() -> Command {
 
 fn lines(args: [&str; 2]) -> Vec<String> {
     let result = TestHarness::new()
-        .text_output()
+        .color(ColorPolicy::Never)
         .terminal_width(80)
         .run(&app(), command(), args);
     result.assert_success();

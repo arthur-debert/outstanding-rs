@@ -169,7 +169,7 @@ let list = render_topics_list(&registry, "myapp help <topic>", None)?;
 // With custom config
 let config = TopicRenderConfig {
     theme: Some(my_theme),
-    output_mode: Some(OutputMode::Text),
+    color: ColorPolicy::Never,
     ..Default::default()
 };
 let output = render_topic(&topic, Some(config))?;

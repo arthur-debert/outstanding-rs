@@ -6,7 +6,7 @@ use standout::cli::{
     App, AppFailure, CommandContextInput, Diagnostic, DiagnosticKind, ExitStatus, ExternalFailure,
     FnHandler, HandlerResult, HookError, HookPhase, Hooks, Output, RunErrorKind, Severity,
 };
-use standout::{EmbeddedTemplates, OutputMode};
+use standout::{EmbeddedTemplates, Representation};
 use standout_test::TestHarness;
 use std::collections::HashMap;
 
@@ -204,7 +204,11 @@ fn the_summary_is_the_error_text_without_the_prose_framing() {
 #[test]
 #[serial]
 fn a_handler_returned_diagnostic_keeps_its_detail_and_range() {
-    for mode in [OutputMode::Json, OutputMode::Yaml, OutputMode::Csv] {
+    for mode in [
+        Representation::Json,
+        Representation::Yaml,
+        Representation::Csv,
+    ] {
         let result = TestHarness::new()
             .output_mode(mode)
             .run(&app(), command(), ["app", "ranged"]);
@@ -223,10 +227,11 @@ fn a_handler_returned_diagnostic_keeps_its_detail_and_range() {
 #[test]
 #[serial]
 fn yaml_and_csv_carry_the_handler_error_as_their_own_document() {
-    let yaml =
-        TestHarness::new()
-            .output_mode(OutputMode::Yaml)
-            .run(&app(), command(), ["app", "fail"]);
+    let yaml = TestHarness::new().output_mode(Representation::Yaml).run(
+        &app(),
+        command(),
+        ["app", "fail"],
+    );
     yaml.assert_stderr_empty();
     assert!(
         yaml.stdout().starts_with("type: diagnostic\n"),
@@ -242,7 +247,7 @@ fn yaml_and_csv_carry_the_handler_error_as_their_own_document() {
 
     let csv =
         TestHarness::new()
-            .output_mode(OutputMode::Csv)
+            .output_mode(Representation::Csv)
             .run(&app(), command(), ["app", "fail"]);
     csv.assert_stderr_empty();
     assert_eq!(
@@ -252,10 +257,11 @@ fn yaml_and_csv_carry_the_handler_error_as_their_own_document() {
     );
     assert_eq!(csv.expect_diagnostic().kind, DiagnosticKind::Handler);
 
-    let ranged =
-        TestHarness::new()
-            .output_mode(OutputMode::Csv)
-            .run(&app(), command(), ["app", "ranged"]);
+    let ranged = TestHarness::new().output_mode(Representation::Csv).run(
+        &app(),
+        command(),
+        ["app", "ranged"],
+    );
     assert!(
         ranged.stdout().ends_with(",main.tfl,2,1\n"),
         "{}",
@@ -310,10 +316,10 @@ fn a_malformed_output_value_stays_a_prose_usage_error() {
 #[serial]
 fn human_modes_keep_prose_on_stderr_and_stdout_empty() {
     for mode in [
-        OutputMode::Auto,
-        OutputMode::Term,
-        OutputMode::Text,
-        OutputMode::TermDebug,
+        Representation::Human,
+        Representation::Human,
+        Representation::Human,
+        Representation::TermDebug,
     ] {
         let result =
             TestHarness::new()

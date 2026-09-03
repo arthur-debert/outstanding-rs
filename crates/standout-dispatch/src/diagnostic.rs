@@ -1,5 +1,5 @@
 //! The diagnostic document: the one shape a failure takes on stdout under a
-//! structured output mode.
+//! structured representation.
 //!
 //! A handler returns a [`Diagnostic`] as its error when it has a `detail` or a
 //! source `range` to report; any other error type reaches the document with

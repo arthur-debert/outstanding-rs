@@ -70,7 +70,7 @@ fn list_reads_from_env_configured_file() {
     let result = TestHarness::new()
         .env("TODO_FILE", "other.txt")
         .fixture("other.txt", "buy milk\nwrite tests\n")
-        .no_color()
+        .color(ColorPolicy::Never)
         .run(&app, cmd, ["myapp", "list"]);
 
     result.assert_success();

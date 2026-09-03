@@ -3,8 +3,9 @@ use serde_json::json;
 use standout::cli::{
     App, DispatchResult, FnHandler, HandlerResult, Output, StreamCapture, StreamSink,
 };
+use standout::ColorPolicy;
 use standout::{
-    AmbiguousWidth, ColorMode, EmbeddedTemplates, IconMode, InputSources, OutputMode,
+    AmbiguousWidth, ColorMode, EmbeddedTemplates, IconMode, InputSources, Representation,
     TargetProperties, TemplateRef,
 };
 
@@ -87,7 +88,7 @@ fn run_with_captures_the_entries_beside_the_result() {
 #[test]
 fn dispatch_captures_the_entries_beside_the_result() {
     let matches = command().try_get_matches_from(["app", "stream"]).unwrap();
-    let run = app().dispatch(matches, OutputMode::Ndjson);
+    let run = app().dispatch(matches, Representation::Ndjson);
     assert_eq!(run.entries(), ENTRIES);
     assert_eq!(
         run.output(),
@@ -108,6 +109,7 @@ fn run_command_streams_to_the_sink_it_is_given_under_ndjson_only() {
             sub,
             stream_handler,
             TemplateRef::Inline("{{ applied }} applied".to_string()),
+            ColorPolicy::Auto,
             StreamSink::new(capture.clone()),
         )
         .unwrap();
@@ -128,6 +130,7 @@ fn run_command_streams_to_the_sink_it_is_given_under_ndjson_only() {
             sub,
             stream_handler,
             TemplateRef::Inline("{{ applied }} applied".to_string()),
+            ColorPolicy::Auto,
             StreamSink::new(capture.clone()),
         )
         .unwrap();
@@ -151,6 +154,7 @@ fn run_command_rejects_binary_output_under_ndjson() {
                 })
             },
             TemplateRef::Absent,
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         )
         .unwrap_err();

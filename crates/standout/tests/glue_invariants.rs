@@ -137,10 +137,10 @@ fn is_if_keyword_at(text: &str, i: usize) -> bool {
 
 fn consume_output_mode_variant(text: &str, i: &mut usize) -> bool {
     *i = skip_ws(text, *i);
-    if !text[*i..].starts_with("OutputMode") {
+    if !text[*i..].starts_with("Representation") {
         return false;
     }
-    *i += "OutputMode".len();
+    *i += "Representation".len();
     *i = skip_ws(text, *i);
     if !text[*i..].starts_with("::") {
         return false;
@@ -212,9 +212,9 @@ fn output_mode_match_arms(source: &str) -> Vec<(usize, String)> {
     let text = uncommented_source(source);
     let mut arms = Vec::new();
     let mut search_from = 0;
-    while let Some(rel) = text[search_from..].find("OutputMode") {
+    while let Some(rel) = text[search_from..].find("Representation") {
         let start = search_from + rel;
-        let mut i = start + "OutputMode".len();
+        let mut i = start + "Representation".len();
         i = skip_ws(&text, i);
         if !text[i..].starts_with("::") {
             search_from = start + 1;
@@ -418,7 +418,7 @@ fn glue_has_no_serializer_match_arms_on_output_mode() {
             let owner = enclosing_fn(&lines, idx).unwrap_or("<module>");
             if !ALLOWED_OUTPUT_MODE_ARM_FNS.contains(&owner) {
                 violations.push(format!(
-                    "{}:{} in `{owner}`: OutputMode::{variant} =>",
+                    "{}:{} in `{owner}`: Representation::{variant} =>",
                     path.strip_prefix(glue_root()).unwrap_or(&path).display(),
                     idx + 1
                 ));
@@ -427,7 +427,7 @@ fn glue_has_no_serializer_match_arms_on_output_mode() {
     }
     assert!(
         violations.is_empty(),
-        "glue must not match on OutputMode to serialize (that copy lives in standout-render):\n{}",
+        "glue must not match on Representation to serialize (that copy lives in standout-render):\n{}",
         violations.join("\n")
     );
 }
@@ -457,9 +457,9 @@ fn glue_does_not_call_leaf_serializers() {
 #[test]
 fn output_mode_arm_scan_rejects_future_variant() {
     let src = r#"
-        fn serialize_in_glue(mode: OutputMode) {
+        fn serialize_in_glue(mode: Representation) {
             match mode {
-                OutputMode::Toml => drop("future serializer copy"),
+                Representation::Toml => drop("future serializer copy"),
             }
         }
     "#;
@@ -469,9 +469,9 @@ fn output_mode_arm_scan_rejects_future_variant() {
 #[test]
 fn output_mode_arm_scan_rejects_serde_json_serializer_branch() {
     let src = r#"
-        fn serialize_in_glue(mode: OutputMode, data: &Value) {
+        fn serialize_in_glue(mode: Representation, data: &Value) {
             match mode {
-                OutputMode::Json => serde_json::to_string(data).unwrap(),
+                Representation::Json => serde_json::to_string(data).unwrap(),
             }
         }
     "#;
@@ -486,9 +486,9 @@ fn output_mode_arm_scan_rejects_serde_json_serializer_branch() {
 fn output_mode_arm_scan_handles_whitespace_and_or_patterns() {
     let src = r#"
         match mode {
-            OutputMode::Yaml
+            Representation::Yaml
                 => {}
-            OutputMode::Json | OutputMode::Toml => {}
+            Representation::Json | Representation::Toml => {}
         }
     "#;
     let variants = output_mode_arm_variants(src);
@@ -498,10 +498,10 @@ fn output_mode_arm_scan_handles_whitespace_and_or_patterns() {
 #[test]
 fn output_mode_arm_scan_ignores_matches_macro_and_comments() {
     let src = r#"
-        // OutputMode::Toml => would be a serializer copy
-        /// OutputMode::Csv => documented, not code
-        matches!(mode, OutputMode::Json | OutputMode::Yaml);
-        let _ = OutputMode::Toml;
+        // Representation::Toml => would be a serializer copy
+        /// Representation::Csv => documented, not code
+        matches!(mode, Representation::Json | Representation::Yaml);
+        let _ = Representation::Toml;
     "#;
     assert!(
         output_mode_arm_variants(src).is_empty(),
@@ -513,10 +513,10 @@ fn output_mode_arm_scan_ignores_matches_macro_and_comments() {
 fn output_mode_arm_scan_rejects_guarded_arms() {
     let src = r#"
         match mode {
-            OutputMode::Json if should_serialize() => drop("guarded copy"),
-            OutputMode::Toml
+            Representation::Json if should_serialize() => drop("guarded copy"),
+            Representation::Toml
                 if extra() => {}
-            OutputMode::Yaml | OutputMode::Csv if both() => {}
+            Representation::Yaml | Representation::Csv if both() => {}
         }
     "#;
     assert_eq!(
@@ -529,11 +529,11 @@ fn output_mode_arm_scan_rejects_guarded_arms() {
 fn output_mode_arm_scan_reports_the_arm_line_not_an_earlier_use() {
     let src = r#"
 fn set_mode() {
-    let _ = OutputMode::Text;
+    let _ = Representation::Human;
 }
-fn serialize_in_glue(mode: OutputMode) {
+fn serialize_in_glue(mode: Representation) {
     match mode {
-        OutputMode::Json => {}
+        Representation::Json => {}
     }
 }
 "#;

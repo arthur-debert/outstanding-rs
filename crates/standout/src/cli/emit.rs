@@ -1,22 +1,23 @@
 //! The one place a completed run becomes bytes on stdout and stderr.
 //!
 //! `run_emitted` and `standout-test`'s harness both call [`emit_run_result`],
-//! so what a test observes is what a process writes. The output mode decides
+//! so what a test observes is what a process writes. The representation decides
 //! where a failure goes: under `json`, `yaml`, `csv` and `ndjson` the failure
 //! is the stdout document, serialized from [`RunError::diagnostic`], and
-//! stderr carries nothing the framework wrote for it; under every human mode
-//! the failure is prose on stderr. An `App` or `External` failure writes its
-//! verbatim bytes to stderr in every mode and adds the stdout document in the
-//! structured ones. A status a successful handler declared
+//! stderr carries nothing the framework wrote for it; under the human
+//! representation the failure is prose on stderr. An `App` or `External`
+//! failure writes its verbatim bytes to stderr under every representation and
+//! adds the stdout document in the structured ones. A status a successful handler declared
 //! (`Output::with_exit_status`) changes none of this: the outcome is
 //! `Handled`, emitted as any success is, and only the process status differs.
 //!
-//! Under `ndjson` the document is one compact line, and it is the only mode
-//! whose warnings are stdout entries too: [`emit_warning_entries`] writes each
-//! as a `severity: warning` diagnostic of kind `framework` after the result or
-//! the failure. The single-document modes keep warnings as stderr prose,
-//! which `standout_render::warnings::flush_to_stderr` owns, and so does a
-//! `NoMatch` handoff in every mode, since the framework then owns no stdout.
+//! Under `ndjson` the document is one compact line, and it is the only
+//! representation whose warnings are stdout entries too:
+//! [`emit_warning_entries`] writes each as a `severity: warning` diagnostic of
+//! kind `framework` after the result or the failure. The single-document
+//! encodings keep warnings as stderr prose, which
+//! `standout_render::warnings::flush_to_stderr` owns, and so does a `NoMatch`
+//! handoff under every representation, since the framework then owns no stdout.
 //! Both callers write the `ndjson` bytes through the run's `StreamSink`, the
 //! destination the handler's entries already went to, so an output file
 //! override that retargeted the sink receives the whole stream.
@@ -34,13 +35,13 @@ use crate::cli::handler::{
     Severity,
 };
 use crate::tabular::{Column, Width};
-use crate::{CsvProjection, OutputMode};
+use crate::{CsvProjection, Representation};
 
 /// `Ok(false)` only for a `NoMatch` handoff; `Err` is a final-write failure whose
 /// status replaces the run's own.
 pub fn emit_run_result<W: Write + ?Sized, E: Write + ?Sized>(
     result: &DispatchResult,
-    output_mode: OutputMode,
+    output_mode: Representation,
     stdout: &mut W,
     stderr: &mut E,
 ) -> Result<bool, RunError> {
@@ -78,7 +79,7 @@ pub fn emit_run_result<W: Write + ?Sized, E: Write + ?Sized>(
 
 fn emit_failure<W: Write + ?Sized, E: Write + ?Sized>(
     error: &RunError,
-    output_mode: OutputMode,
+    output_mode: Representation,
     stdout: &mut W,
     stderr: &mut E,
 ) -> Option<RunError> {
@@ -107,15 +108,15 @@ fn emit_failure<W: Write + ?Sized, E: Write + ?Sized>(
 }
 
 /// The modes whose failure is a stdout document rather than stderr prose.
-pub fn carries_diagnostic_document(output_mode: OutputMode) -> bool {
+pub fn carries_diagnostic_document(output_mode: Representation) -> bool {
     matches!(
         output_mode,
-        OutputMode::Json | OutputMode::Yaml | OutputMode::Csv | OutputMode::Ndjson
+        Representation::Json | Representation::Yaml | Representation::Csv | Representation::Ndjson
     )
 }
 
 /// Only under `ndjson`, and never for a `NoMatch` handoff.
-pub fn carries_warning_entries(result: &DispatchResult, output_mode: OutputMode) -> bool {
+pub fn carries_warning_entries(result: &DispatchResult, output_mode: Representation) -> bool {
     output_mode.is_stream() && !matches!(result, DispatchResult::NoMatch(_))
 }
 
@@ -123,7 +124,7 @@ pub fn carries_warning_entries(result: &DispatchResult, output_mode: OutputMode)
 pub fn emit_warning_entries<W: Write + ?Sized>(
     result: &DispatchResult,
     warnings: &[String],
-    output_mode: OutputMode,
+    output_mode: Representation,
     stdout: &mut W,
 ) -> Result<(), RunError> {
     if !carries_warning_entries(result, output_mode) || warnings.is_empty() {
@@ -145,8 +146,8 @@ pub fn emit_warning_entries<W: Write + ?Sized>(
 }
 
 /// Newline-terminated; panics on a mode `carries_diagnostic_document` rejects.
-pub fn render_diagnostic(diagnostic: &Diagnostic, output_mode: OutputMode) -> String {
-    let rendered = if output_mode == OutputMode::Csv {
+pub fn render_diagnostic(diagnostic: &Diagnostic, output_mode: Representation) -> String {
+    let rendered = if output_mode == Representation::Csv {
         serde_json::to_value(diagnostic)
             .map_err(|error| error.to_string())
             .and_then(|document| {
@@ -187,7 +188,7 @@ pub struct DiagnosticDocumentError(String);
 
 /// The inverse of [`render_diagnostic`]; under `ndjson`, the stream's first error-severity entry.
 pub fn parse_diagnostic(
-    output_mode: OutputMode,
+    output_mode: Representation,
     text: &str,
 ) -> Result<Diagnostic, DiagnosticDocumentError> {
     let malformed =
@@ -203,7 +204,7 @@ pub fn parse_diagnostic(
                     "the stream carries no error-severity diagnostic entry".into(),
                 )
             })
-    } else if output_mode == OutputMode::Csv {
+    } else if output_mode == Representation::Csv {
         let row: DiagnosticRow =
             standout_render::deserialize_document(output_mode, text).map_err(malformed)?;
         row.into_diagnostic()
@@ -352,7 +353,10 @@ mod tests {
         }
     }
 
-    fn emit(result: &DispatchResult, mode: OutputMode) -> (Result<bool, RunError>, String, String) {
+    fn emit(
+        result: &DispatchResult,
+        mode: Representation,
+    ) -> (Result<bool, RunError>, String, String) {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let emitted = emit_run_result(result, mode, &mut stdout, &mut stderr);
@@ -367,7 +371,7 @@ mod tests {
     fn final_emission_routes_success_and_diagnostics_to_distinct_streams() {
         let (handled, stdout, stderr) = emit(
             &DispatchResult::Handled(RunOutput::command("hello")),
-            OutputMode::Text,
+            Representation::Human,
         );
         assert!(handled.unwrap());
         assert_eq!(stdout, "hello\n");
@@ -375,7 +379,7 @@ mod tests {
 
         let (handled, stdout, stderr) = emit(
             &DispatchResult::Error(RunError::new("bad argv", RunErrorKind::ClapUsage)),
-            OutputMode::Text,
+            Representation::Human,
         );
         assert!(handled.unwrap());
         assert!(stdout.is_empty());
@@ -385,10 +389,10 @@ mod tests {
     #[test]
     fn every_human_mode_keeps_prose_on_stderr() {
         for mode in [
-            OutputMode::Auto,
-            OutputMode::Term,
-            OutputMode::Text,
-            OutputMode::TermDebug,
+            Representation::Human,
+            Representation::Human,
+            Representation::Human,
+            Representation::TermDebug,
         ] {
             let (handled, stdout, stderr) = emit(
                 &DispatchResult::Error(RunError::new("Error: boom", RunErrorKind::Handler)),
@@ -403,7 +407,7 @@ mod tests {
     #[test]
     fn a_structured_mode_puts_the_diagnostic_on_stdout_and_nothing_on_stderr() {
         let error = RunError::new("Error: boom", RunErrorKind::Hook(HookPhase::PreDispatch));
-        let (handled, stdout, stderr) = emit(&DispatchResult::Error(error), OutputMode::Json);
+        let (handled, stdout, stderr) = emit(&DispatchResult::Error(error), Representation::Json);
         assert!(handled.unwrap());
         assert!(stderr.is_empty(), "{stderr}");
         let document: serde_json::Value = serde_json::from_str(&stdout).unwrap();
@@ -420,10 +424,10 @@ mod tests {
     #[test]
     fn an_owner_declared_failure_keeps_its_stderr_bytes_and_adds_the_document() {
         let error = RunError::from(AppFailure::new(3, "app: refused\n").unwrap());
-        let (handled, stdout, stderr) = emit(&DispatchResult::Error(error), OutputMode::Yaml);
+        let (handled, stdout, stderr) = emit(&DispatchResult::Error(error), Representation::Yaml);
         assert!(handled.unwrap());
         assert_eq!(stderr, "app: refused\n");
-        let document = parse_diagnostic(OutputMode::Yaml, &stdout).unwrap();
+        let document = parse_diagnostic(Representation::Yaml, &stdout).unwrap();
         assert_eq!(document.kind, DiagnosticKind::App);
         assert_eq!(document.summary, "app: refused");
         assert_eq!(document.detail, "app: refused\n");
@@ -437,10 +441,10 @@ mod tests {
         let plain = Diagnostic::error("boom, with a \"quote\" and a, comma");
         for diagnostic in [ranged, plain] {
             for mode in [
-                OutputMode::Json,
-                OutputMode::Yaml,
-                OutputMode::Csv,
-                OutputMode::Ndjson,
+                Representation::Json,
+                Representation::Yaml,
+                Representation::Csv,
+                Representation::Ndjson,
             ] {
                 let text = render_diagnostic(&diagnostic, mode);
                 assert!(text.ends_with('\n'), "{mode:?}: {text:?}");
@@ -459,12 +463,12 @@ mod tests {
             .detail("why")
             .range("main.tfl", 2, 1);
         assert_eq!(
-            render_diagnostic(&ranged, OutputMode::Csv),
+            render_diagnostic(&ranged, Representation::Csv),
             "type,schema_version,severity,kind,summary,detail,range_filename,range_line,range_column\n\
              diagnostic,1,error,handler,bad line,why,main.tfl,2,1\n"
         );
         assert_eq!(
-            render_diagnostic(&Diagnostic::error("bad"), OutputMode::Csv),
+            render_diagnostic(&Diagnostic::error("bad"), Representation::Csv),
             "type,schema_version,severity,kind,summary,detail,range_filename,range_line,range_column\n\
              diagnostic,1,error,handler,bad,,,,\n"
         );
@@ -474,7 +478,7 @@ mod tests {
     fn a_partial_csv_range_is_refused() {
         let text = "type,schema_version,severity,kind,summary,detail,range_filename,range_line,range_column\n\
                     diagnostic,1,error,handler,bad,,main.tfl,,\n";
-        let error = parse_diagnostic(OutputMode::Csv, text).unwrap_err();
+        let error = parse_diagnostic(Representation::Csv, text).unwrap_err();
         assert!(
             error.to_string().contains("all set or all empty"),
             "{error}"
@@ -488,14 +492,14 @@ mod tests {
                 .detail("expected `resource <name> <state>`")
                 .range("main.tfl", 2, 1),
         );
-        let (handled, stdout, stderr) = emit(&DispatchResult::Error(error), OutputMode::Ndjson);
+        let (handled, stdout, stderr) = emit(&DispatchResult::Error(error), Representation::Ndjson);
         assert!(handled.unwrap());
         assert!(stderr.is_empty(), "{stderr}");
         assert_eq!(
             stdout,
             "{\"type\":\"diagnostic\",\"schema_version\":1,\"severity\":\"error\",\"kind\":\"handler\",\"summary\":\"line 2 does not parse\",\"detail\":\"expected `resource <name> <state>`\",\"range\":{\"filename\":\"main.tfl\",\"start\":{\"line\":2,\"column\":1}}}\n"
         );
-        assert!(carries_diagnostic_document(OutputMode::Ndjson));
+        assert!(carries_diagnostic_document(Representation::Ndjson));
     }
 
     #[test]
@@ -503,11 +507,11 @@ mod tests {
         let stream = "{\"type\":\"version\",\"format_version\":1}\n\
                       {\"type\":\"diagnostic\",\"schema_version\":1,\"severity\":\"warning\",\"kind\":\"framework\",\"summary\":\"soft\",\"detail\":\"\"}\n\
                       {\"type\":\"diagnostic\",\"schema_version\":1,\"severity\":\"error\",\"kind\":\"handler\",\"summary\":\"boom\",\"detail\":\"\"}\n";
-        let document = parse_diagnostic(OutputMode::Ndjson, stream).unwrap();
+        let document = parse_diagnostic(Representation::Ndjson, stream).unwrap();
         assert_eq!(document.summary, "boom");
         assert_eq!(document.kind, DiagnosticKind::Handler);
         let error = parse_diagnostic(
-            OutputMode::Ndjson,
+            Representation::Ndjson,
             "{\"type\":\"version\",\"format_version\":1}\n",
         )
         .unwrap_err();
@@ -519,47 +523,57 @@ mod tests {
         let warnings = vec!["first".to_string(), "second".to_string()];
         let handled = DispatchResult::Handled(RunOutput::command("{}".to_string()));
         let mut stdout = Vec::new();
-        emit_warning_entries(&handled, &warnings, OutputMode::Ndjson, &mut stdout).unwrap();
+        emit_warning_entries(&handled, &warnings, Representation::Ndjson, &mut stdout).unwrap();
         let stdout = String::from_utf8(stdout).unwrap();
         assert_eq!(
             stdout,
             "{\"type\":\"diagnostic\",\"schema_version\":1,\"severity\":\"warning\",\"kind\":\"framework\",\"summary\":\"first\",\"detail\":\"\"}\n\
              {\"type\":\"diagnostic\",\"schema_version\":1,\"severity\":\"warning\",\"kind\":\"framework\",\"summary\":\"second\",\"detail\":\"\"}\n"
         );
-        assert!(carries_warning_entries(&handled, OutputMode::Ndjson));
+        assert!(carries_warning_entries(&handled, Representation::Ndjson));
         for mode in [
-            OutputMode::Text,
-            OutputMode::Json,
-            OutputMode::Yaml,
-            OutputMode::Csv,
+            Representation::Human,
+            Representation::Json,
+            Representation::Yaml,
+            Representation::Csv,
         ] {
             let mut stdout = Vec::new();
             emit_warning_entries(&handled, &warnings, mode, &mut stdout).unwrap();
             assert!(stdout.is_empty(), "{mode:?}");
             assert!(!carries_warning_entries(&handled, mode), "{mode:?}");
         }
-        let failure =
-            emit_warning_entries(&handled, &warnings, OutputMode::Ndjson, &mut ClosedWriter)
-                .unwrap_err();
+        let failure = emit_warning_entries(
+            &handled,
+            &warnings,
+            Representation::Ndjson,
+            &mut ClosedWriter,
+        )
+        .unwrap_err();
         assert_eq!(failure.kind(), RunErrorKind::FinalWrite(OutputKind::Text));
-        emit_warning_entries(&handled, &warnings, OutputMode::Ndjson, &mut FailingWriter).unwrap();
+        emit_warning_entries(
+            &handled,
+            &warnings,
+            Representation::Ndjson,
+            &mut FailingWriter,
+        )
+        .unwrap();
     }
 
     #[test]
     fn a_no_match_handoff_writes_no_warning_entries_under_ndjson() {
         let warnings = vec!["startup".to_string()];
         let handoff = DispatchResult::NoMatch(clap::ArgMatches::default());
-        assert!(!carries_warning_entries(&handoff, OutputMode::Ndjson));
+        assert!(!carries_warning_entries(&handoff, Representation::Ndjson));
         let mut stdout = Vec::new();
-        emit_warning_entries(&handoff, &warnings, OutputMode::Ndjson, &mut stdout).unwrap();
+        emit_warning_entries(&handoff, &warnings, Representation::Ndjson, &mut stdout).unwrap();
         assert!(stdout.is_empty());
     }
 
     #[test]
     fn a_human_mode_has_no_document_to_parse() {
-        assert!(parse_diagnostic(OutputMode::Text, "Error: boom\n").is_err());
-        assert!(!carries_diagnostic_document(OutputMode::Text));
-        assert!(carries_diagnostic_document(OutputMode::Csv));
+        assert!(parse_diagnostic(Representation::Human, "Error: boom\n").is_err());
+        assert!(!carries_diagnostic_document(Representation::Human));
+        assert!(carries_diagnostic_document(Representation::Csv));
     }
 
     #[test]
@@ -567,7 +581,7 @@ mod tests {
         let mut stderr = Vec::new();
         let failure = emit_run_result(
             &DispatchResult::Error(RunError::new("Error: boom", RunErrorKind::Handler)),
-            OutputMode::Json,
+            Representation::Json,
             &mut ClosedWriter,
             &mut stderr,
         )
@@ -583,7 +597,7 @@ mod tests {
         let mut stderr = Vec::new();
         let handled = emit_run_result(
             &DispatchResult::Error(RunError::new("bad argv", RunErrorKind::ClapUsage)),
-            OutputMode::Json,
+            Representation::Json,
             &mut FailingWriter,
             &mut stderr,
         );
@@ -596,7 +610,7 @@ mod tests {
         let mut stderr = Vec::new();
         let handled = emit_run_result(
             &DispatchResult::Handled(RunOutput::command("hello")),
-            OutputMode::Text,
+            Representation::Human,
             &mut FailingWriter,
             &mut stderr,
         );
@@ -609,7 +623,7 @@ mod tests {
         let mut stderr = Vec::new();
         let binary_failure = emit_run_result(
             &DispatchResult::Binary(vec![0, 1], "data.bin".into()),
-            OutputMode::Text,
+            Representation::Human,
             &mut FailingWriter,
             &mut stderr,
         )
@@ -629,7 +643,7 @@ mod tests {
         let mut text_stdout = FlushFailingWriter::default();
         let handled = emit_run_result(
             &DispatchResult::Handled(RunOutput::command("hello")),
-            OutputMode::Text,
+            Representation::Human,
             &mut text_stdout,
             &mut Vec::new(),
         );
@@ -642,7 +656,7 @@ mod tests {
         let mut binary_stdout = FlushFailingWriter::default();
         let binary_failure = emit_run_result(
             &DispatchResult::Binary(vec![0, 1], "data.bin".into()),
-            OutputMode::Text,
+            Representation::Human,
             &mut binary_stdout,
             &mut Vec::new(),
         )
@@ -664,7 +678,7 @@ mod tests {
         );
         let file_report_failure = emit_run_result(
             &DispatchResult::Artifact(file_run),
-            OutputMode::Text,
+            Representation::Human,
             &mut FailingWriter,
             &mut Vec::new(),
         )
@@ -683,7 +697,7 @@ mod tests {
         let mut stdout = Vec::new();
         let stdout_report_failure = emit_run_result(
             &DispatchResult::Artifact(stdout_run),
-            OutputMode::Text,
+            Representation::Human,
             &mut stdout,
             &mut FailingWriter,
         )

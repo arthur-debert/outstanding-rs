@@ -3,8 +3,9 @@ use serde_json::json;
 use serial_test::serial;
 use standout::cli::FnHandler;
 use standout::cli::{App, AppBuilder, DispatchResult, Output};
+use standout::ColorPolicy;
 use standout::EmbeddedTemplates;
-use standout::{EmbeddedSource, OutputMode, TemplateResource};
+use standout::{EmbeddedSource, Representation, TemplateResource};
 use standout_test::TestHarness;
 
 const TEMPLATES: &[(&str, &str)] = &[("show", "report.txt"), ("show-4", "docs/output")];
@@ -166,7 +167,7 @@ fn templates_after_commands_resolve_at_build() {
         .unwrap();
 
     let result = TestHarness::new()
-        .text_output()
+        .color(ColorPolicy::Never)
         .run(&app, command(), ["app", "show"]);
 
     result.assert_success();
@@ -209,7 +210,7 @@ fn named_template_renders_through_extension_fallback() {
         .unwrap();
 
     let result = TestHarness::new()
-        .text_output()
+        .color(ColorPolicy::Never)
         .run(&app, command(), ["app", "show"]);
 
     result.assert_success();
@@ -231,7 +232,7 @@ fn explicit_structured_only_without_application_registry_allows_structured_outpu
 
     let result =
         TestHarness::new()
-            .output_mode(OutputMode::Json)
+            .output_mode(Representation::Json)
             .run(&app, command(), ["app", "show"]);
 
     result.assert_success();
@@ -255,7 +256,7 @@ fn convention_resolves_a_jinja_entry_without_extension_configuration() {
         .unwrap();
 
     let result = TestHarness::new()
-        .text_output()
+        .color(ColorPolicy::Never)
         .run(&app, command(), ["app", "show"]);
 
     result.assert_success();
@@ -282,9 +283,11 @@ fn convention_resolves_a_nested_jinja_entry_without_extension_configuration() {
         .build()
         .unwrap();
 
-    let result = TestHarness::new()
-        .text_output()
-        .run(&app, group_command(), ["app", "db", "show"]);
+    let result = TestHarness::new().color(ColorPolicy::Never).run(
+        &app,
+        group_command(),
+        ["app", "db", "show"],
+    );
 
     result.assert_success();
     assert_eq!(result.stdout(), "Hello Ada");
@@ -309,7 +312,7 @@ fn templates_dir_hot_reloads_between_renders() {
         .unwrap();
 
     let first = TestHarness::new()
-        .text_output()
+        .color(ColorPolicy::Never)
         .run(&app, command(), ["app", "show"]);
     first.assert_success();
     assert_eq!(first.stdout(), "Hello Ada");
@@ -317,7 +320,7 @@ fn templates_dir_hot_reloads_between_renders() {
     std::fs::write(dir.path().join("show.jinja"), "Bye {{ name }}").unwrap();
 
     let second = TestHarness::new()
-        .text_output()
+        .color(ColorPolicy::Never)
         .run(&app, command(), ["app", "show"]);
     second.assert_success();
     assert_eq!(second.stdout(), "Bye Ada");
@@ -348,7 +351,7 @@ fn file_backed_extended_template_hot_reloads_between_renders() {
         .unwrap();
 
     let first = TestHarness::new()
-        .text_output()
+        .color(ColorPolicy::Never)
         .run(&app, command(), ["app", "show"]);
     first.assert_success();
     assert_eq!(first.stdout(), "Old Ada");
@@ -356,7 +359,7 @@ fn file_backed_extended_template_hot_reloads_between_renders() {
     std::fs::write(&base_path, "New {% block body %}{% endblock %}").unwrap();
 
     let second = TestHarness::new()
-        .text_output()
+        .color(ColorPolicy::Never)
         .run(&app, command(), ["app", "show"]);
     second.assert_success();
     assert_eq!(second.stdout(), "New Ada");
@@ -391,7 +394,7 @@ fn file_backed_imported_template_hot_reloads_between_renders() {
         .unwrap();
 
     let first = TestHarness::new()
-        .text_output()
+        .color(ColorPolicy::Never)
         .run(&app, command(), ["app", "show"]);
     first.assert_success();
     assert_eq!(first.stdout(), "Hello Ada");
@@ -403,7 +406,7 @@ fn file_backed_imported_template_hot_reloads_between_renders() {
     .unwrap();
 
     let second = TestHarness::new()
-        .text_output()
+        .color(ColorPolicy::Never)
         .run(&app, command(), ["app", "show"]);
     second.assert_success();
     assert_eq!(second.stdout(), "Bye Ada");
@@ -438,7 +441,7 @@ fn file_backed_dynamic_include_hot_reloads_between_renders() {
         .unwrap();
 
     let first = TestHarness::new()
-        .text_output()
+        .color(ColorPolicy::Never)
         .run(&app, command(), ["app", "show"]);
     first.assert_success();
     assert_eq!(first.stdout(), "Hello Ada");
@@ -446,7 +449,7 @@ fn file_backed_dynamic_include_hot_reloads_between_renders() {
     std::fs::write(&partial_path, "Bye {{ name }}").unwrap();
 
     let second = TestHarness::new()
-        .text_output()
+        .color(ColorPolicy::Never)
         .run(&app, command(), ["app", "show"]);
     second.assert_success();
     assert_eq!(second.stdout(), "Bye Ada");
@@ -482,7 +485,7 @@ fn file_backed_dynamic_include_discovers_new_template_between_renders() {
     std::fs::write(&partial_path, "Hello {{ name }}").unwrap();
 
     let result = TestHarness::new()
-        .text_output()
+        .color(ColorPolicy::Never)
         .run(&app, command(), ["app", "show"]);
     result.assert_success();
     assert_eq!(result.stdout(), "Hello Ada");
@@ -509,7 +512,7 @@ fn file_backed_whitespace_control_include_hot_reloads_between_renders() {
         .unwrap();
 
     let first = TestHarness::new()
-        .text_output()
+        .color(ColorPolicy::Never)
         .run(&app, command(), ["app", "show"]);
     first.assert_success();
     assert_eq!(first.stdout(), "Hello Ada");
@@ -517,7 +520,7 @@ fn file_backed_whitespace_control_include_hot_reloads_between_renders() {
     std::fs::write(&partial_path, "Bye {{ name }}").unwrap();
 
     let second = TestHarness::new()
-        .text_output()
+        .color(ColorPolicy::Never)
         .run(&app, command(), ["app", "show"]);
     second.assert_success();
     assert_eq!(second.stdout(), "Bye Ada");
@@ -545,7 +548,7 @@ fn deleted_file_backed_template_errors_at_render() {
     std::fs::remove_file(&template_path).unwrap();
 
     let result = TestHarness::new()
-        .text_output()
+        .color(ColorPolicy::Never)
         .run(&app, command(), ["app", "show"]);
     result.assert_error_contains("template `show`");
     result.assert_error_contains(&template_path.display().to_string());
@@ -573,7 +576,7 @@ fn corrupted_file_backed_template_errors_at_render() {
     std::fs::write(&template_path, "{% if").unwrap();
 
     let result = TestHarness::new()
-        .text_output()
+        .color(ColorPolicy::Never)
         .run(&app, command(), ["app", "show"]);
     result.assert_error_contains("template `show`");
     result.assert_error_contains(&template_path.display().to_string());
@@ -603,7 +606,7 @@ fn corrupted_file_backed_include_names_include_path_at_render() {
     std::fs::write(&partial_path, "{% if").unwrap();
 
     let result = TestHarness::new()
-        .text_output()
+        .color(ColorPolicy::Never)
         .run(&app, command(), ["app", "show"]);
     result.assert_error_contains("template `_partial`");
     result.assert_error_contains(&partial_path.display().to_string());
@@ -627,7 +630,7 @@ fn app_render_refreshes_changed_dependency() {
         app.render_with(
             standout::TemplateRef::Named(("show").to_string()),
             &json!({"name": "Ada"}),
-            OutputMode::Text,
+            Representation::Human,
             standout::TargetProperties::detect()
         )
         .unwrap(),
@@ -640,7 +643,7 @@ fn app_render_refreshes_changed_dependency() {
         app.render_with(
             standout::TemplateRef::Named(("show").to_string()),
             &json!({"name": "Ada"}),
-            OutputMode::Text,
+            Representation::Human,
             standout::TargetProperties::detect()
         )
         .unwrap(),
@@ -665,7 +668,7 @@ fn app_render_refreshes_newly_added_dependency() {
         app.render_with(
             standout::TemplateRef::Named(("show").to_string()),
             &json!({"name": "Ada"}),
-            OutputMode::Text,
+            Representation::Human,
             standout::TargetProperties::detect()
         )
         .unwrap(),
@@ -679,7 +682,7 @@ fn app_render_refreshes_newly_added_dependency() {
         app.render_with(
             standout::TemplateRef::Named(("show").to_string()),
             &json!({"name": "Ada"}),
-            OutputMode::Text,
+            Representation::Human,
             standout::TargetProperties::detect()
         )
         .unwrap(),
@@ -706,7 +709,7 @@ fn app_render_reports_deleted_dependency() {
         .render_with(
             standout::TemplateRef::Named(("show").to_string()),
             &json!({"name": "Ada"}),
-            OutputMode::Text,
+            Representation::Human,
             standout::TargetProperties::detect(),
         )
         .unwrap_err()
@@ -734,7 +737,7 @@ fn app_render_reports_corrupted_dependency() {
         .render_with(
             standout::TemplateRef::Named(("show").to_string()),
             &json!({"name": "Ada"}),
-            OutputMode::Text,
+            Representation::Human,
             standout::TargetProperties::detect(),
         )
         .unwrap_err()
@@ -771,7 +774,7 @@ fn standalone_app_render_warning_cannot_leak_into_a_later_run() {
         app.render_with(
             standout::TemplateRef::Named(("show").to_string()),
             &json!({"name": "Ada"}),
-            OutputMode::Text,
+            Representation::Human,
             standout::TargetProperties::detect()
         )
         .unwrap(),
@@ -780,7 +783,7 @@ fn standalone_app_render_warning_cannot_leak_into_a_later_run() {
 
     std::fs::write(&template_path, "Hello {{ name }}").unwrap();
     let result = TestHarness::new()
-        .text_output()
+        .color(ColorPolicy::Never)
         .run(&app, command(), ["app", "show"]);
     result.assert_success();
     assert!(result.warnings().is_empty(), "{:?}", result.warnings());
@@ -815,7 +818,7 @@ fn dependency_scanner_ignores_non_tag_syntax_and_quoted_delimiters() {
         app.render_with(
             standout::TemplateRef::Named(("show").to_string()),
             &json!({"name": "Ada"}),
-            OutputMode::Text,
+            Representation::Human,
             standout::TargetProperties::detect()
         )
         .unwrap(),
@@ -830,7 +833,7 @@ fn dependency_scanner_ignores_non_tag_syntax_and_quoted_delimiters() {
 }
 
 #[test]
-fn structured_only_maps_machine_modes_and_rejects_human_modes() {
+fn structured_only_serializes_every_representation_but_the_style_tag_view() {
     let app = App::builder()
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
@@ -843,10 +846,10 @@ fn structured_only_maps_machine_modes_and_rejects_human_modes() {
         .unwrap();
 
     for mode in [
-        OutputMode::Auto,
-        OutputMode::Json,
-        OutputMode::Yaml,
-        OutputMode::Csv,
+        Representation::Human,
+        Representation::Json,
+        Representation::Yaml,
+        Representation::Csv,
     ] {
         let matches = command().try_get_matches_from(["app", "show"]).unwrap();
         let result = app.dispatch(matches, mode);
@@ -856,19 +859,19 @@ fn structured_only_maps_machine_modes_and_rejects_human_modes() {
         );
     }
 
-    for mode in [OutputMode::Term, OutputMode::Text, OutputMode::TermDebug] {
-        let matches = command().try_get_matches_from(["app", "show"]).unwrap();
-        let result = app.dispatch(matches, mode);
-        match result.into_outcome() {
-            DispatchResult::Error(error) => {
-                let message = error.to_string();
-                assert!(message.contains("command `show` is declared structured-only"));
-                assert!(message.contains("--output"));
-                assert!(message.contains(".template(...)"));
-                assert!(message.contains(".template_name(...)"));
-            }
-            other => panic!("expected {mode:?} to reject structured-only output, got {other:?}"),
+    let matches = command().try_get_matches_from(["app", "show"]).unwrap();
+    match app
+        .dispatch(matches, Representation::TermDebug)
+        .into_outcome()
+    {
+        DispatchResult::Error(error) => {
+            let message = error.to_string();
+            assert!(message.contains("command `show` is declared structured-only"));
+            assert!(message.contains("--output"));
+            assert!(message.contains(".template(...)"));
+            assert!(message.contains(".template_name(...)"));
         }
+        other => panic!("expected term-debug to reject structured-only output, got {other:?}"),
     }
 }
 

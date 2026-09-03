@@ -242,7 +242,7 @@ are balanced:
   inner text `x` is kept as unstyled text.
 - An **unbalanced** tag, `[unknown]` with no matching close, is emitted verbatim
   as literal text — the brackets survive, so the output contains `[unknown]`.
-  This is why a stray `[compute]` appears verbatim under `--output text`.
+  This is why a stray `[compute]` appears verbatim in a plain render.
 
 `TermDebug` mode keeps every tag, known or unknown, as literal text for
 inspection.

@@ -15,8 +15,7 @@ COMMANDS
 OPTIONS
   -f, --file <PATH>          Notes file to read
   --all                      Include archived notes
-  --output <MODE>            Output format
-                             default: auto
-                             possible values: auto, term, text, term-debug, json, yaml, csv, ndjson
+  --output <MODE>            Structured output encoding
+                             possible values: json, yaml, csv, ndjson, term-debug
   --output-file-path <PATH>  Write output to file instead of stdout
   -h, --help                 Print help

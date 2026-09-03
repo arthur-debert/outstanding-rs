@@ -75,7 +75,7 @@ pub(crate) fn payload_without_a_stream(output: &str) -> RunError {
 }
 
 pub(crate) fn reject_payload_under_stream(
-    output_mode: crate::OutputMode,
+    output_mode: crate::Representation,
     is_binary: bool,
     is_artifact: bool,
 ) -> Result<(), RunError> {
@@ -96,7 +96,7 @@ fn render_time_template(
     command_path: &str,
     template: &TemplateRef,
     template_registry: Option<&Rc<crate::TemplateRegistry>>,
-    output_mode: crate::OutputMode,
+    output_mode: crate::Representation,
 ) -> Result<standout_render::TemplateRef, RunError> {
     match template {
         TemplateRef::Named(name) => {
@@ -116,13 +116,11 @@ fn render_time_template(
                 TemplateAbsence::Silent | TemplateAbsence::Binary => Err(
                     absent_template_render_error(command_path, *reason, output_mode),
                 ),
+                // A structured-only command has no template, so its human
+                // representation is the JSON its bare invocation serializes;
+                // only the style-tag diagnostic view has nothing to show.
                 TemplateAbsence::StructuredOnly => {
-                    if matches!(
-                        output_mode,
-                        crate::OutputMode::Term
-                            | crate::OutputMode::Text
-                            | crate::OutputMode::TermDebug
-                    ) {
+                    if output_mode.is_debug() {
                         return Err(absent_template_render_error(
                             command_path,
                             *reason,
@@ -145,7 +143,8 @@ fn build_render_request(
     context_registry: &ContextRegistry,
     template_engine: &SharedTemplateEngine,
     template_registry: Option<&Rc<crate::TemplateRegistry>>,
-    output_mode: crate::OutputMode,
+    output_mode: crate::Representation,
+    color_policy: ColorPolicy,
     structured_output_projection: Option<&StructuredOutputProjection>,
     target: TargetProperties,
     warnings: Option<standout_render::warnings::WarningBuffer>,
@@ -156,7 +155,7 @@ fn build_render_request(
         template,
         theme: theme.clone(),
         format: output_mode,
-        color_policy: ColorPolicy::Auto,
+        color_policy,
         target,
         engine: template_engine.clone(),
         registry: template_registry.cloned(),
@@ -180,7 +179,7 @@ fn render_error(error: standout_render::RenderError) -> RunError {
 fn absent_template_render_error(
     command_path: &str,
     reason: TemplateAbsence,
-    output_mode: crate::OutputMode,
+    output_mode: crate::Representation,
 ) -> RunError {
     let reason = match reason {
         TemplateAbsence::Silent => "silent",
@@ -221,7 +220,8 @@ pub(crate) fn render_handler_output<T: Serialize>(
     context_registry: &ContextRegistry,
     template_engine: &SharedTemplateEngine,
     template_registry: Option<&Rc<crate::TemplateRegistry>>,
-    output_mode: crate::OutputMode,
+    output_mode: crate::Representation,
+    color_policy: ColorPolicy,
     structured_output_projection: Option<&StructuredOutputProjection>,
     target: TargetProperties,
 ) -> Result<DispatchOutput, RunError> {
@@ -247,6 +247,7 @@ pub(crate) fn render_handler_output<T: Serialize>(
             template_engine,
             template_registry,
             output_mode,
+            color_policy,
             structured_output_projection,
             target,
             warnings.clone(),
@@ -257,6 +258,9 @@ pub(crate) fn render_handler_output<T: Serialize>(
         HandlerOutput::Render(data) => {
             let json_data = serialize_handler_data(&data)?;
             let json_data = run_post_dispatch_hooks(json_data, matches, ctx, hooks)?;
+            if let Some(recorder) = ctx.recorder() {
+                recorder.record(json_data.clone());
+            }
             let request = request_for(json_data)?;
             let (formatted, raw) = render_via_request(&request)?;
             Ok(DispatchOutput::Text {
@@ -379,7 +383,8 @@ pub type DispatchFn = Rc<
             &ArgMatches,
             &CommandContext,
             Option<&Hooks>,
-            crate::OutputMode,
+            crate::Representation,
+            ColorPolicy,
             &crate::Theme,
             TargetProperties,
         ) -> Result<DispatchOutput, RunError>,
@@ -392,9 +397,18 @@ pub fn dispatch(
     matches: &ArgMatches,
     ctx: &CommandContext,
     hooks: Option<&Hooks>,
-    output_mode: crate::OutputMode,
+    output_mode: crate::Representation,
+    color_policy: ColorPolicy,
     theme: &crate::Theme,
     target: TargetProperties,
 ) -> Result<DispatchOutput, RunError> {
-    (dispatch_fn.borrow_mut())(matches, ctx, hooks, output_mode, theme, target)
+    (dispatch_fn.borrow_mut())(
+        matches,
+        ctx,
+        hooks,
+        output_mode,
+        color_policy,
+        theme,
+        target,
+    )
 }

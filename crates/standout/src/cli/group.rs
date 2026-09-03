@@ -71,10 +71,12 @@ where
         move |matches: &ArgMatches,
               ctx: &CommandContext,
               hooks: Option<&Hooks>,
-              output_mode: crate::OutputMode,
+              output_mode: crate::Representation,
+              color_policy: crate::ColorPolicy,
               theme: &crate::Theme,
               target: crate::TargetProperties| {
-            let result = handler.borrow_mut().handle(matches, ctx);
+            let mut results = ctx.results::<H::Event>();
+            let result = handler.borrow_mut().handle(matches, ctx, &mut results);
             render_handler_output(
                 result,
                 matches,
@@ -86,6 +88,7 @@ where
                 &template_engine,
                 template_registry.as_ref(),
                 output_mode,
+                color_policy,
                 structured_output_projection.as_ref(),
                 target,
             )
@@ -101,7 +104,8 @@ where
         move |matches: &ArgMatches,
               ctx: &CommandContext,
               _hooks: Option<&Hooks>,
-              _output_mode: crate::OutputMode,
+              _output_mode: crate::Representation,
+              _color_policy: crate::ColorPolicy,
               _theme: &crate::Theme,
               _target: crate::TargetProperties| {
             match (handler.borrow_mut())(matches, ctx) {

@@ -1,9 +1,9 @@
-//! The entry stream a handler writes to under the `ndjson` output mode.
+//! The entry stream a handler writes to under the `ndjson` representation.
 //!
 //! [`EntryStream::emit`] serializes one value as compact JSON and writes it
 //! as one line, followed by a flush, so a consumer reading the pipe sees the
 //! entry when the handler produced it. The framework builds the stream at the
-//! dispatch edge: live, over a [`StreamSink`], when the resolved mode is
+//! dispatch edge: live, over a [`StreamSink`], when the resolved representation is
 //! `ndjson`; discarding otherwise, in which case `emit` neither serializes
 //! nor writes. Nothing more than line-per-value: no buffering, no
 //! backpressure, no async.

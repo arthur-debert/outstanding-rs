@@ -4,9 +4,10 @@ use serde_json::json;
 use serial_test::serial;
 use standout::cli::FnHandler;
 use standout::cli::{App, Artifact, ExternalFailure, HandlerResult, Output};
+use standout::ColorPolicy;
 use standout::EmbeddedTemplates;
 use standout::Theme;
-use standout_render::OutputMode;
+use standout_render::Representation;
 use standout_test::{assert_page_snapshot, SnapshotCase, TestHarness};
 
 const TEMPLATES: &[(&str, &str)] = &[
@@ -263,7 +264,7 @@ fn warning_block_uses_the_app_theme_not_theme_default() {
         .unwrap();
     let cmd = Command::new("app").subcommand(Command::new("say"));
     let result = TestHarness::new()
-        .with_color()
+        .stdout_is_terminal(true)
         .run(&app, cmd, ["app", "say"]);
     result.assert_success();
     let target = TargetProperties {
@@ -276,7 +277,7 @@ fn warning_block_uses_the_app_theme_not_theme_default() {
         icon_mode: IconMode::Classic,
         ambiguous_width: AmbiguousWidth::Narrow,
     };
-    let expected = render_block_for_target(&theme, OutputMode::Auto, target, result.warnings());
+    let expected = render_block_for_target(&theme, ColorPolicy::Auto, target, result.warnings());
     assert_eq!(
         result.stderr(),
         expected,
@@ -284,7 +285,7 @@ fn warning_block_uses_the_app_theme_not_theme_default() {
     );
     let default_block = render_block_for_target(
         &Theme::default(),
-        OutputMode::Auto,
+        ColorPolicy::Auto,
         target,
         result.warnings(),
     );
@@ -331,7 +332,7 @@ fn stdout_plain_strips_the_styling_the_raw_accessor_keeps() {
     let app = styled_app();
     let cmd = Command::new("app").subcommand(Command::new("say"));
     let result = TestHarness::new()
-        .output_mode(OutputMode::Term)
+        .stdout_is_terminal(true)
         .run(&app, cmd, ["app", "say"]);
     let raw = result.stdout();
     assert!(
@@ -358,7 +359,7 @@ fn stdout_plain_is_a_no_op_on_unstyled_output() {
     let app = styled_app();
     let cmd = Command::new("app").subcommand(Command::new("say"));
     let result = TestHarness::new()
-        .text_output()
+        .stdout_is_terminal(false)
         .run(&app, cmd, ["app", "say"]);
     assert_eq!(result.stdout_plain(), result.stdout());
 }
@@ -400,14 +401,13 @@ fn the_help_page_is_pinned_by_snapshot() {
     let app = help_app();
     let result = TestHarness::new()
         .terminal_width(80)
-        .no_color()
-        .text_output()
+        .stdout_is_terminal(false)
         .run(&app, help_command(), ["notes", "--help"]);
     result.assert_success();
     assert_page_snapshot!(
         result,
         SnapshotCase::new("help")
-            .output_mode(OutputMode::Text)
+            .output_mode(Representation::Human)
             .tty(false)
             .theme("default")
             .entry_point("--help")

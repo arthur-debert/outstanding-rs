@@ -1,7 +1,7 @@
 //! Standout is a CLI output framework that decouples application logic from
 //! terminal presentation: template rendering (MiniJinja + styled tag syntax),
-//! adaptive light/dark themes, terminal capability detection, output-mode
-//! control (Auto/Term/Text/TermDebug), help topics, and pager support. It is
+//! adaptive light/dark themes, terminal capability detection, the
+//! representation and color policy of a run, help topics, and pager support. It is
 //! CLI-agnostic at its core; for clap integration see the [`cli`] module.
 //!
 //! [`render_request`] is the contract: [`render`] and its siblings detect
@@ -47,7 +47,7 @@ pub use standout_render::{
 };
 
 pub use standout_render::{
-    open_output_file, write_binary_output, write_output, OutputDestination, OutputMode,
+    open_output_file, write_binary_output, write_output, OutputDestination, Representation,
 };
 pub use standout_render::{AmbiguousWidth, WidthCalculator};
 pub use standout_render::{

@@ -14,7 +14,7 @@ use standout::{
     ColorMode, CsvProjection, IconDefinition, IconMode, StructuredOutputProjection, Theme,
 };
 use standout_input::{ClipboardSource, EnvSource, InputChain, StdinSource};
-use standout_render::{AmbiguousWidth, OutputMode};
+use standout_render::{AmbiguousWidth, Representation};
 use standout_test::TestHarness;
 
 const TEMPLATES: &[(&str, &str)] = &[
@@ -210,11 +210,7 @@ fn detectable_command() -> Command {
 fn harness_run_is_independent_of_detected_process_facts() {
     let app = build_detectable_facts_app();
     let cmd = detectable_command();
-    let baseline = || {
-        TestHarness::new()
-            .with_color()
-            .output_mode(OutputMode::Term)
-    };
+    let baseline = || TestHarness::new().stdout_is_terminal(true);
     let perturb = || {
         baseline()
             .env("COLUMNS", "37")
@@ -673,7 +669,7 @@ fn fixture_files_are_materialized_in_cwd() {
 #[serial]
 fn output_mode_override_forces_json() {
     let app = build_echo_app("echo");
-    let result = TestHarness::new().output_mode(OutputMode::Json).run(
+    let result = TestHarness::new().output_mode(Representation::Json).run(
         &app,
         echo_command(),
         vec!["app", "echo", "hello"],
@@ -738,7 +734,7 @@ fn rustloc_fixture_uses_configured_csv_projection() {
     let cmd = Command::new("rustloc").subcommand(Command::new("summary"));
     let result =
         TestHarness::new()
-            .output_mode(OutputMode::Csv)
+            .output_mode(Representation::Csv)
             .run(&app, cmd, ["rustloc", "summary"]);
     result.assert_stdout_eq(
         "LANGUAGE,CODE,NET\nRust,120,100\nPython,70,60\nTOTAL,190,160\nSKIPPED,-,0\n",
@@ -748,11 +744,10 @@ fn rustloc_fixture_uses_configured_csv_projection() {
 #[serial]
 fn terminal_width_override_does_not_install_a_detector() {
     let app = build_echo_app("echo");
-    let result = TestHarness::new().terminal_width(42).no_color().run(
-        &app,
-        echo_command(),
-        vec!["app", "echo", "hi"],
-    );
+    let result = TestHarness::new()
+        .terminal_width(42)
+        .stdout_is_terminal(false)
+        .run(&app, echo_command(), vec!["app", "echo", "hi"]);
     result.assert_stdout_eq("hi");
 }
 #[test]
@@ -817,7 +812,7 @@ fn output_flag_name_is_configurable() {
         .build()
         .unwrap();
     let result = TestHarness::new()
-        .output_mode(OutputMode::Json)
+        .output_mode(Representation::Json)
         .output_flag_name("format")
         .run(&app, echo_command(), vec!["app", "echo", "hello"]);
     let out = result.stdout();
@@ -919,7 +914,7 @@ fn harness_asserts_the_report_data_in_structured_mode() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("export.csv");
     let app = build_export_app(Some(path.clone()));
-    let result = TestHarness::new().output_mode(OutputMode::Json).run(
+    let result = TestHarness::new().output_mode(Representation::Json).run(
         &app,
         export_command(),
         ["app", "export"],

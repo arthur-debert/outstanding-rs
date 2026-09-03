@@ -46,7 +46,7 @@ flowchart TB
     end
 
     subgraph RenderDispatch["Render Dispatch"]
-        MODE{"OutputMode?"}
+        MODE{"Representation?"}
 
         subgraph Structured["Structured Modes"]
             STRUCT_SER["Direct Serialization"]
@@ -137,7 +137,7 @@ flowchart TB
 | Handler | `(&ArgMatches, &CommandContext)` | `Result<Output<T>, Error>` |
 | Serialization | `Output<T>` | `serde_json::Value` |
 | Post-Hooks | `Value` | Transformed `Value` |
-| Render (Structured) | `Value` + `OutputMode` | Formatted string (JSON/YAML/etc) |
+| Render (Structured) | `Value` + `Representation` | Formatted string (JSON/YAML/etc) |
 | Render (Text Pass 1) | Template + `Value` | String with style tags |
 | Render (Text Pass 2) | Tagged string + `TagTransform` | ANSI/plain/debug string |
 | Result | `RenderResult` | `DispatchOutput` |
