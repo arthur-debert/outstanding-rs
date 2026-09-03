@@ -29,9 +29,10 @@ crates/todo-example/
 └── tdoo/
     ├── Cargo.toml             Binary package; depends on todo-core + Standout
     └── src/
-        ├── main.rs            Resolve dependencies, build, run
-        ├── cli.rs             Clap model and environment lookup
-        ├── app.rs             Standout App, InputChain, hook, harness tests
+        ├── main.rs            Build, run
+        ├── cli.rs             Clap model
+        ├── config.rs          clapfig schema and builder
+        ├── app.rs             Standout App, config seam, harness tests
         ├── handlers.rs        Thin adapters, view DTOs, typed-handler tests
         ├── templates/         MiniJinja views
         └── styles/            Semantic CSS theme
@@ -78,10 +79,8 @@ The `tdoo` package adapts the shell to the core library.
 
 ### `cli.rs`: shell input and configuration
 
-Clap's `Cli` and `Commands` types live here. So does `resolve_store_path`, which
-maps `TODO_FILE` or the platform home directory (`$HOME`, then `%USERPROFILE%`)
-into the explicit path required by `TodoStore::load`. The core never reads
-process environment.
+Clap's `Cli` and `Commands` types live here. The core never reads process
+environment.
 
 ### `handlers.rs`: adapters, not application logic
 
@@ -92,11 +91,20 @@ into CLI-owned serializable view models:
 #[handler]
 pub(crate) fn list(
     #[flag] all: bool,
+    #[matches] matches: &ArgMatches,
     #[ctx] ctx: &CommandContext,
 ) -> Result<Output<TodoListView>, anyhow::Error> {
-    let store = ctx.app_state.get_required::<TodoStore>()?;
+    let config: &TdooConfig = ctx.config()?;
+    let reverse = InputChain::<bool>::new()
+        .try_source(FlagSource::new("reverse"))
+        .try_source(ConfigSource::new(Some(config.reverse)))
+        .resolve_from(matches, ctx.input_sources())?;
+    let store = TodoStore::load(config.store_path())?;
     let filter = if all { TodoFilter::All } else { TodoFilter::Pending };
-    let todos: Vec<_> = store.list(filter).into_iter().map(TodoView::from).collect();
+    let mut todos: Vec<_> = store.list(filter).into_iter().map(TodoView::from).collect();
+    if reverse {
+        todos.reverse();
+    }
     let total = todos.len();
     Ok(Output::Render(TodoListView { todos, total }))
 }
@@ -174,13 +182,12 @@ pub(crate) fn add_inputs<H>(config: CommandConfig<H>) -> CommandConfig<H> {
 }
 ```
 
-`app.rs` is then wiring and nothing else: application state, the version clap
-reports, the invocation policy for a bare `tdoo`, the presentation assets, and
-the one call that registers the whole command set.
+`app.rs` is then wiring and nothing else: the version clap reports, the
+invocation policy for a bare `tdoo`, the presentation assets, the configuration
+seam, and the one call that registers the whole command set.
 
 ```rust
 App::builder()
-    .app_state(store)
     .version(env!("CARGO_PKG_VERSION"))
     .default_command_with(|ctx| {
         Some(if ctx.stdin_is_piped() { "add" } else { "list" }.to_string())
@@ -188,6 +195,8 @@ App::builder()
     .templates(embed_templates!("src/templates"))
     .styles(embed_styles!("src/styles"))
     .default_theme("todo")
+    .config(config::builder(user_scope))
+    .term_settings(|config: &TdooConfig| &config.term)
     .commands(Commands::dispatch_config())?
     .build()?;
 ```
@@ -227,23 +236,23 @@ needed; this example has no process-only behavior that the harness cannot model.
 
 ```bash
 # Default store path is .todos.json under $HOME or %USERPROFILE%; override it per run.
-TODO_FILE=/tmp/tdoo.json cargo run -p tdoo -- add --title "buy milk"
-TODO_FILE=/tmp/tdoo.json cargo run -p tdoo -- list
-TODO_FILE=/tmp/tdoo.json cargo run -p tdoo -- done 1
-TODO_FILE=/tmp/tdoo.json cargo run -p tdoo -- list --all
+TDOO__STORE=/tmp/tdoo.json cargo run -p tdoo -- add --title "buy milk"
+TDOO__STORE=/tmp/tdoo.json cargo run -p tdoo -- list
+TDOO__STORE=/tmp/tdoo.json cargo run -p tdoo -- done 1
+TDOO__STORE=/tmp/tdoo.json cargo run -p tdoo -- list --all
 
 # Input chain fallback.
-echo "write tests" | TODO_FILE=/tmp/tdoo.json cargo run -p tdoo -- add
+echo "write tests" | TDOO__STORE=/tmp/tdoo.json cargo run -p tdoo -- add
 
 # Standout output modes.
-TODO_FILE=/tmp/tdoo.json cargo run -p tdoo -- list --output json
-TODO_FILE=/tmp/tdoo.json cargo run -p tdoo -- list --output yaml
-TODO_FILE=/tmp/tdoo.json cargo run -p tdoo -- list --output text
+TDOO__STORE=/tmp/tdoo.json cargo run -p tdoo -- list --output json
+TDOO__STORE=/tmp/tdoo.json cargo run -p tdoo -- list --output yaml
+TDOO__STORE=/tmp/tdoo.json cargo run -p tdoo -- list --output text
 
 # Compound artifact: Standout owns the destination and the write.
-TODO_FILE=/tmp/tdoo.json cargo run -p tdoo -- export                 # writes ./todos.csv
-TODO_FILE=/tmp/tdoo.json cargo run -p tdoo -- export --output-file-path /tmp/todos.csv
-TODO_FILE=/tmp/tdoo.json cargo run -p tdoo -- export --stdout > /tmp/todos.csv  # report on stderr
+TDOO__STORE=/tmp/tdoo.json cargo run -p tdoo -- export                 # writes ./todos.csv
+TDOO__STORE=/tmp/tdoo.json cargo run -p tdoo -- export --output-file-path /tmp/todos.csv
+TDOO__STORE=/tmp/tdoo.json cargo run -p tdoo -- export --stdout > /tmp/todos.csv  # report on stderr
 
 # Test the reusable library and the CLI independently.
 cargo test -p todo-core

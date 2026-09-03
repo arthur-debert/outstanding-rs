@@ -36,7 +36,7 @@ pub trait InputCollector<T>: Send + Sync {
 }
 ```
 
-`name()` is not only for humans: the chain turns it into the `InputSourceKind` a handler reads back through `ctx.input_source(...)`, matching `argument`, `flag`, `file`, `stdin`, `environment variable`, `clipboard`, `editor`, `prompt` and `default`. A name outside that set reports `InputSourceKind::Default`, so a custom source that wants a provenance of its own registers with `try_source_with_kind` instead of `try_source`.
+`name()` is not only for humans: the chain turns it into the `InputSourceKind` a handler reads back through `ctx.input_source(...)`, matching `argument`, `flag`, `file`, `stdin`, `environment variable`, `config`, `clipboard`, `editor`, `prompt` and `default`. A name outside that set reports `InputSourceKind::Default`, so a custom source that wants a provenance of its own registers with `try_source_with_kind` instead of `try_source`.
 
 The chain calls `is_available()` first. If it returns `false`, the source is skipped. Otherwise, `collect()` is called. If validation fails and `can_retry()` is `true`, the source is retried (for interactive sources).
 
@@ -76,7 +76,6 @@ let source = FlagSource::new("no-color").inverted();  // --no-color → false
 **Behavior:**
 
 - `is_available()`: Returns `true` if the flag was provided (set to true)
-- `collect()`: Returns `Some(true)` if set, `None` otherwise
 - `inverted()`: Inverts the logic (flag set → `false`)
 - Type: `bool`
 
@@ -161,6 +160,13 @@ use standout_input::{ClipboardSource, MockClipboard};
 let source = ClipboardSource::with_reader(MockClipboard::with_content("text"));
 let source = ClipboardSource::with_reader(MockClipboard::empty());
 ```
+
+### ConfigSource
+
+`ConfigSource::new(Option<T>)` carries a value the handler read from its typed
+configuration. `None` skips the source; `Some(value)` yields it and reports
+`InputSourceKind::Config`. It carries a value rather than a key because the
+handler already holds the resolved struct.
 
 ### DefaultSource
 

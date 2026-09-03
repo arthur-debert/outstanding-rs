@@ -154,17 +154,22 @@ impl TestHarness {
         self
     }
     pub fn cwd(mut self, path: impl Into<PathBuf>) -> Self {
-        self.cwd = Some(path.into());
+        let path = path.into();
+        if !path.is_absolute() {
+            validate_relative_path("cwd", &path);
+            self.ensure_tempdir();
+        }
+        self.cwd = Some(path);
         self
     }
     pub fn fixture(mut self, path: impl AsRef<Path>, content: impl Into<String>) -> Self {
-        let path = validate_fixture_path(path.as_ref());
+        let path = validate_relative_path("fixture", path.as_ref());
         self.fixtures.push((path, content.into().into_bytes()));
         self.ensure_tempdir();
         self
     }
     pub fn fixture_bytes(mut self, path: impl AsRef<Path>, content: impl Into<Vec<u8>>) -> Self {
-        let path = validate_fixture_path(path.as_ref());
+        let path = validate_relative_path("fixture", path.as_ref());
         self.fixtures.push((path, content.into()));
         self.ensure_tempdir();
         self
@@ -177,6 +182,18 @@ impl TestHarness {
             self.tempdir =
                 Some(TempDir::new().expect("TestHarness: failed to create tempdir for fixtures"));
         }
+    }
+    pub(crate) fn resolve_cwd(&mut self) -> Option<PathBuf> {
+        let Some(cwd) = self.cwd.clone() else {
+            return self.tempdir.as_ref().map(|d| d.path().to_path_buf());
+        };
+        if cwd.is_absolute() {
+            return Some(cwd);
+        }
+        self.ensure_tempdir();
+        let target = self.tempdir.as_ref().unwrap().path().join(cwd);
+        std::fs::create_dir_all(&target).expect("TestHarness: failed to create cwd directory");
+        Some(target)
     }
     pub fn run<I, T>(mut self, app: &App, cmd: Command, args: I) -> TestResult
     where
@@ -194,11 +211,7 @@ impl TestHarness {
                 std::fs::write(&abs, content).expect("TestHarness: failed to write fixture file");
             }
         }
-        let cwd_target = self
-            .cwd
-            .clone()
-            .or_else(|| self.tempdir.as_ref().map(|d| d.path().to_path_buf()));
-        if let Some(target) = cwd_target {
+        if let Some(target) = self.resolve_cwd() {
             restore.original_cwd = std::env::current_dir().ok();
             std::env::set_current_dir(&target)
                 .expect("TestHarness: failed to change working directory");
@@ -305,6 +318,21 @@ impl Default for TestHarness {
     }
 }
 #[cfg(test)]
+mod relative_cwd {
+    use super::*;
+    #[test]
+    fn a_relative_cwd_alone_creates_the_tempdir() {
+        let harness = TestHarness::new().cwd("proj");
+        assert!(harness.tempdir().is_some());
+    }
+    #[test]
+    fn an_absolute_cwd_needs_no_tempdir() {
+        let dir = TempDir::new().unwrap();
+        let harness = TestHarness::new().cwd(dir.path().to_path_buf());
+        assert!(harness.tempdir().is_none());
+    }
+}
+#[cfg(test)]
 mod target_properties_defaults {
     use super::*;
     #[test]
@@ -338,26 +366,23 @@ mod target_properties_defaults {
         assert_eq!(target.ambiguous_width, AmbiguousWidth::Wide);
     }
 }
-fn validate_fixture_path(path: &Path) -> PathBuf {
+fn validate_relative_path(method: &str, path: &Path) -> PathBuf {
     use std::path::Component;
     if path.is_absolute() {
         panic!(
-            "TestHarness::fixture: path {:?} is absolute; only relative paths are allowed so \
-             the fixture is confined to the harness tempdir",
-            path
+            "TestHarness::{method}: path {path:?} is absolute; only relative paths are allowed so \
+             the {method} is confined to the harness tempdir"
         );
     }
     for component in path.components() {
         match component {
             Component::ParentDir => panic!(
-                "TestHarness::fixture: path {:?} contains a `..` component; only relative \
-                 paths that stay inside the tempdir are allowed",
-                path
+                "TestHarness::{method}: path {path:?} contains a `..` component; only relative \
+                 paths that stay inside the tempdir are allowed"
             ),
             Component::Prefix(_) | Component::RootDir => panic!(
-                "TestHarness::fixture: path {:?} has a root or prefix component; only \
-                 relative paths inside the tempdir are allowed",
-                path
+                "TestHarness::{method}: path {path:?} has a root or prefix component; only \
+                 relative paths inside the tempdir are allowed"
             ),
             _ => {}
         }

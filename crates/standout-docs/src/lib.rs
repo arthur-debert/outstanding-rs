@@ -24,4 +24,7 @@ pub mod examples {
 
     #[doc = include_str!("../../standout-dispatch/docs/topics/handler-contract.md")]
     pub mod handler_contract {}
+
+    #[doc = include_str!("../../../docs/topics/config-files.md")]
+    pub mod config_files {}
 }

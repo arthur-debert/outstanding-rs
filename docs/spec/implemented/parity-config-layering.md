@@ -289,21 +289,24 @@ app-declared `config` fails `build()`; `config list` renders the same entries in
 reach `handle` with the right `ConfigAction` (assert on the written file and the
 confirmation, not on merge semantics); `config gen` and `config schema` are artifacts.
 
-**WS03. Chain source, harness, docs, wizard.** `ConfigSource<T>` and
-`InputSourceKind::Config` in `standout-input`; `TestHarness::cwd` relative to the
-tempdir; a `docs/topics/config-files.md` topic that states the ladder once, names
-clapfig as the owner of everything under it and shows the harness pattern; the
-`new-project` wizard offers a config struct with `TermSettings` and the `.config(...)`
-call, with `generated_manifests_only_depend_on_publishable_workspace_crates` allowing
-clapfig. Tests: the topic's examples are doc tests; the generated project builds and
-its own config test passes.
+**WS03. Chain source and harness.** `ConfigSource<T>` and `InputSourceKind::Config`
+in `standout-input`; `TestHarness::cwd` relative to the tempdir. Independent of
+clapfig, so it runs alongside WS00. Tests: a chain reports `Config` as the source kind
+and takes a flag before a config value; a relative `cwd` lands inside the tempdir.
 
-**WS04. `tdoo` adopts config end to end.** `crates/todo-example/tdoo` gains a config
+**WS04. `tdoo` and the wizard adopt config.** `crates/todo-example/tdoo` gains a config
 struct (store location, default ordering, `TermSettings`), `.config(...)` with a
 project and a user persist scope, the injected `config` command, one chain that puts a
 flag above a config value, and `TestHarness` tests for each client shape listed above.
-Done when those tests pass and `tdoo config list --output json` returns typed values.
-This is the epic's proof, inside this repository; downstream ports stay in #480.
+The `new-project` wizard generates the same shape (a config struct with `TermSettings`
+and the `.config(...)` call), with
+`generated_manifests_only_depend_on_publishable_workspace_crates` allowing clapfig.
+Done when the shape tests pass, `tdoo config list --output json` returns typed values,
+and the generated project builds and passes its own config test. This is the epic's
+proof, inside this repository; downstream ports stay in #480.
+
+The `docs/topics/config-files.md` topic is written by the coordinator after the
+workstreams merge, on the epic branch, together with any module-level rustdoc.
 
 ## Exit criteria
 

@@ -160,14 +160,15 @@ let filename = result.value;
 
 These sources don't require user interaction and work in CI/scripted environments:
 
-| Source             | Type     | Description                                  |
-| ------------------ | -------- | -------------------------------------------- |
-| `ArgSource`        | `String` | CLI argument value                           |
-| `FlagSource`       | `bool`   | CLI flag (true/false)                        |
-| `StdinSource`      | `String` | Piped stdin (skipped if stdin is a terminal) |
-| `EnvSource`        | `String` | Environment variable                         |
-| `ClipboardSource`  | `String` | System clipboard contents                    |
-| `DefaultSource<T>` | `T`      | Fallback value                               |
+| Source             | Type     | Description                                                                      |
+| ------------------ | -------- | -------------------------------------------------------------------------------- |
+| `ArgSource`        | `String` | CLI argument value                                                               |
+| `FlagSource`       | `bool`   | CLI flag (true/false)                                                            |
+| `StdinSource`      | `String` | Piped stdin (skipped if stdin is a terminal)                                     |
+| `EnvSource`        | `String` | Environment variable                                                             |
+| `ClipboardSource`  | `String` | System clipboard contents                                                        |
+| `ConfigSource<T>`  | `T`      | A value the handler already resolved from its configuration; skipped when `None` |
+| `DefaultSource<T>` | `T`      | Fallback value                                                                   |
 
 ### Interactive Sources (Feature-Gated)
 

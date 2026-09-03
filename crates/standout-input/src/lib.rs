@@ -36,8 +36,8 @@ pub use responder::{
 };
 
 pub use sources::{
-    read_if_piped, read_if_piped_from, ArgSource, ClipboardSource, DefaultSource, EnvSource,
-    FlagSource, StdinSource,
+    read_if_piped, read_if_piped_from, ArgSource, ClipboardSource, ConfigSource, DefaultSource,
+    EnvSource, FlagSource, StdinSource,
 };
 
 #[cfg(feature = "editor")]

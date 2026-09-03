@@ -332,6 +332,7 @@ pub enum RunErrorKind {
     FinalWrite(OutputKind),
     External,
     App,
+    Config,
 }
 #[derive(Debug, Clone)]
 pub struct RunOutput {

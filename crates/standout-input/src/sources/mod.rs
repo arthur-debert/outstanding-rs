@@ -1,5 +1,6 @@
 mod arg;
 mod clipboard;
+mod config;
 mod default;
 mod env;
 mod stdin;
@@ -15,6 +16,7 @@ mod inquire_adapters;
 
 pub use arg::{ArgSource, FlagSource};
 pub use clipboard::ClipboardSource;
+pub use config::ConfigSource;
 pub use default::DefaultSource;
 pub use env::EnvSource;
 pub use stdin::{read_if_piped, read_if_piped_from, StdinSource};

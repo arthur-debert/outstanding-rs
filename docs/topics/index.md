@@ -10,6 +10,10 @@ In-depth documentation for specific Standout systems and use cases.
 
 The `AppBuilder` API for configuring your application. Covers embedding templates and styles, theme selection, command registration, hooks, context injection, flag customization, and the complete setup workflow.
 
+### [Configuration Files](config-files.md)
+
+Settings from files, environment and flags through clapfig. Covers the precedence ladder, the `config` command, the `[term]` section, a flag above a configured value, config errors, and how tests stay hermetic.
+
 ### [Output Modes](output-modes.md)
 
 The `--output` flag and `OutputMode` enum. Covers auto/term/text modes for terminal output, structured modes (JSON, YAML, CSV, NDJSON), file output, and why the mode stays out of handlers.
