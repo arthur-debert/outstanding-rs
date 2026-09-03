@@ -1,6 +1,6 @@
-// Objective evaluation of the produced binary: build it and sweep the
-// invariant matrix. Everything here is black-box and treats the produced
-// code as untrusted.
+//! Objective evaluation of the produced binary: build it and sweep the
+//! invariant matrix. Everything here is black-box and treats the produced
+//! code as untrusted.
 
 use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -124,12 +124,6 @@ pub fn not_run_invariants(invariants: &Invariants, reason: &str) -> Vec<Invarian
     sweep_plan(invariants, |_, _, _| ModeRuns::new(), reason, None)
 }
 
-// Declining `--output` entirely is a fact about the binary, not one
-// command: probed once, ahead of the matrix, against the binary's own
-// `--help`. A probe that cannot complete (the binary crashes, hangs, exits
-// nonzero, or is missing) states nothing about that choice, so the matrix
-// still runs and lets the real invocations report whatever that failure
-// actually is.
 fn accepts_output_flag(
     binary: &Path,
     timeout: Duration,
@@ -153,10 +147,6 @@ fn accepts_output_flag(
     }
 }
 
-// Matches `--output` as its own token: neither side may be flanked by an
-// alphanumeric, `-`, or `_`, so a longer flag like `--output-file-path` or
-// `--no-output` doesn't count, while `[--output]`, `--output=json` and
-// `--output <mode>` do.
 fn mentions_output_flag(page: &str) -> bool {
     const FLAG: &str = "--output";
     let is_word_char = |c: char| c.is_alphanumeric() || c == '-' || c == '_';
@@ -188,12 +178,6 @@ fn sweep_plan(
 ) -> Vec<InvariantCell> {
     let mut cells = Vec::new();
     for command in &invariants.commands {
-        // `either` is resolved once, from the command's first cell
-        // that actually settles it, and held for the rest of that command's
-        // plan. A cell that gives no real evidence either way — some or all
-        // of its modes never ran (spawn error, timeout) — locks in no
-        // contract; if no cell ever settles it, no contract is ever locked
-        // and each cell's checks fail on their own errors instead.
         let mut resolved_either: Option<InvariantContract> = None;
         for color in &invariants.colors {
             for theme in &invariants.themes {
@@ -226,18 +210,6 @@ fn sweep_plan(
     cells
 }
 
-// Whichever of `rendered` or `opaque-bytes` a cell's runs positively
-// establish, each read only from a clean (exit 0) invocation so a failure's
-// stray output can't lock in the wrong contract: JSON-mode output that
-// parses as JSON is rendered; failing that, a non-text mode whose bytes
-// match the text baseline is opaque. Either signal, once found, settles it
-// regardless of what else in the cell failed to run or exited nonzero.
-// Absent a positive signal, the cell only defaults to `rendered`
-// (surfacing the ambiguity as ordinary check failures rather than
-// vanishing as not-applicable) when every planned mode actually ran — a
-// cell missing some of its modes (spawn error, timeout) gives no real
-// evidence either way, so it settles nothing and `None` lets a later cell
-// decide.
 fn resolve_either_contract(runs: &ModeRuns) -> Option<InvariantContract> {
     if let Some(Ok((Some(0), page))) = runs.get(InvariantMode::Json.as_str()) {
         if serde_json::from_str::<serde_json::Value>(page).is_ok() {
@@ -409,10 +381,6 @@ fn applicability_reason(
     check: &str,
     equal_across_modes: bool,
 ) -> String {
-    // `equal_across_modes` is the reason a check doesn't apply only when the
-    // contract and mode would otherwise have let it run: reusing
-    // `check_applies` with `equal_across_modes` forced true is what confirms
-    // that. Otherwise the mismatch is about contract or mode, handled below.
     if !equal_across_modes && check_applies(contract, mode, check, true) {
         return "command's content varies by output mode".to_string();
     }

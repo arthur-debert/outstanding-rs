@@ -1,6 +1,6 @@
-// Archetype manifest loading: `corpus/archetypes/<name>/manifest.toml`,
-// schema in `corpus/README.md`'s "Manifest format" section. `smoke` carries
-// no manifest (README's Layout exception); every roster archetype does.
+//! Archetype manifest loading: `corpus/archetypes/<name>/manifest.toml`,
+//! schema in `corpus/README.md`'s "Manifest format" section. `smoke` carries
+//! no manifest (README's Layout exception); every roster archetype does.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -66,8 +66,6 @@ impl GapEntry {
     }
 }
 
-/// A parsed `evidence` claim. `uses-crate:<name>` — the produced app depends
-/// on the named crate — is the only kind today.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Evidence<'a> {
     UsesCrate(&'a str),
@@ -78,8 +76,6 @@ impl<'a> Evidence<'a> {
         text.strip_prefix("uses-crate:").map(Evidence::UsesCrate)
     }
 
-    /// Whether the produced app's `Cargo.toml` declares this dependency,
-    /// under `[dependencies]`, by key or by a `package` rename.
     pub fn satisfied_by(&self, cargo_toml: &str) -> bool {
         let Evidence::UsesCrate(name) = self;
         let Ok(doc) = cargo_toml.parse::<toml::Value>() else {
@@ -124,8 +120,6 @@ impl Manifest {
         Ok(manifest)
     }
 
-    /// Loads the manifest when present; `smoke` carries none, and an
-    /// archetype with no `[gaps]` table reads as an empty map.
     pub fn load_optional(archetypes_dir: &Path, name: &str) -> anyhow::Result<Option<Self>> {
         if !archetypes_dir.join(name).join("manifest.toml").is_file() {
             return Ok(None);
