@@ -1,7 +1,7 @@
 # PAR04: The Corpus Runner as a Pipeline
 
 > **Implemented** by PAR04 (#478): WS01 #492, WS02 #493, WS03 #494 (ADR-0024
-> amended), WS04 #495, and a convergence stage. As built, where the text below
+> amended), WS04 #495, convergence #496. As built, where the text below
 > differs:
 >
 > - D25's post-run file assertions read a single inventory of the whole
