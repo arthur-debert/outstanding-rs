@@ -1354,6 +1354,59 @@ fn generated_json_pipeline_test(spec: &ProjectSpec) -> String {
     )
 }
 
+fn generated_config_test(spec: &ProjectSpec) -> String {
+    let primary_value = match spec.inputs[0].value_type {
+        InputValueType::Path => "config.toml",
+        _ => "Grace",
+    };
+    let (field, expected) = expected_first_field(spec, primary_value);
+    let executable = quote(&spec.executable_name);
+    let file = quote(&format!("{}.toml", spec.executable_name));
+    let mut harness = harness_for_samples(spec, primary_value);
+    if !harness.contains('\n') {
+        harness = harness.replace("::new().no_color()", "::new()\n            .no_color()");
+    }
+    harness.push_str(&format!("\n            .fixture({file}, CONFIG_FILE)"));
+    let mut args = vec![executable.clone(), quote(&spec.command_name)];
+    args.extend(sample_command_args(spec, primary_value));
+    let inline_args = format!("&app, cli::command(), [{}]", args.join(", "));
+    let run = if inline_args.len() <= FN_CALL_WIDTH {
+        format!("        let result = harness.run({inline_args});")
+    } else {
+        format!(
+            "        let result = harness.run(\n            &app,\n            cli::command(),\n            {},\n        );",
+            rust_array(&args, 16, 63)
+        )
+    };
+    format!(
+        r#"    #[test]
+    #[serial]
+    fn term_output_in_the_config_file_selects_json() {{
+        let app = build_app().unwrap();
+        let harness = {harness};
+{run}
+
+        result.assert_success();
+        assert_eq!(result.output_mode(), OutputMode::Json);
+        let value: Value = serde_json::from_str(result.stdout()).unwrap();
+        assert_eq!(value["{field}"], {expected});
+
+        let shown = TestHarness::new()
+            .no_color()
+            .fixture({file}, CONFIG_FILE)
+            .run(
+                &app,
+                cli::command(),
+                [{executable}, "config", "get", "greeting"],
+            );
+
+        shown.assert_success();
+        shown.assert_stdout_contains("greeting = Hi");
+    }}"#,
+        expected = quote(&expected)
+    )
+}
+
 fn readme_input_policy(spec: &ProjectSpec) -> String {
     spec.inputs
         .iter()
@@ -2030,9 +2083,13 @@ fn model(spec: &ProjectSpec) -> minijinja::Value {
         readme_examples => readme_examples(spec),
         command_syntax => spec.inputs.iter().map(command_syntax_fragment).collect::<Vec<_>>().join(" "),
         standout_version => spec.standout_version,
+        clapfig_version => CLAPFIG_VERSION,
+        config_test => generated_config_test(spec),
         local_patch_root => spec.local_patch_root.as_deref().map(toml_basic_string_content),
     }
 }
+
+const CLAPFIG_VERSION: &str = "0.26";
 
 const FILE_MAP: &[(&str, &str)] = &[
     ("Cargo.toml", "workspace"),
@@ -2042,6 +2099,7 @@ const FILE_MAP: &[(&str, &str)] = &[
     ("crates/{{ executable_name }}/README.md", "readme"),
     ("crates/{{ executable_name }}/src/main.rs", "main"),
     ("crates/{{ executable_name }}/src/cli.rs", "cli"),
+    ("crates/{{ executable_name }}/src/config.rs", "config"),
     ("crates/{{ executable_name }}/src/handlers.rs", "handlers"),
     (
         "crates/{{ executable_name }}/src/templates/{{ command_name }}.jinja",
@@ -2138,6 +2196,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+clapfig = "{{ clapfig_version }}"
 serde = { version = "1", features = ["derive"] }
 standout = "{{ standout_version }}"
 standout-dispatch = "{{ standout_version }}"
@@ -2153,6 +2212,7 @@ standout-test = "{{ standout_version }}"
     (
         "main",
         r#"mod cli;
+mod config;
 mod handlers;
 
 use anyhow::Result;
@@ -2170,6 +2230,8 @@ fn build_app() -> Result<standout::cli::App> {
         .templates(embed_templates!("src/templates"))
         .styles(embed_styles!("src/styles"))
         .default_theme("{{ project_name }}")
+        .config(config::builder())
+        .term_settings(|config: &config::Config| &config.term)
         .commands(cli::Commands::dispatch_config())?
         .build()?)
 }
@@ -2179,7 +2241,10 @@ mod tests {
     use super::*;
     use serde_json::Value;
     use serial_test::serial;
+    use standout::OutputMode;
     use standout_test::TestHarness;
+
+    const CONFIG_FILE: &str = "greeting = \"Hi\"\n\n[term]\noutput = \"json\"\n";
 
     #[test]
     #[serial]
@@ -2193,6 +2258,8 @@ mod tests {
     }
 
 {{ pipeline_json_test }}
+
+{{ config_test }}
 }
 "#,
     ),
@@ -2221,6 +2288,27 @@ pub(crate) enum Commands {
 
 pub(crate) fn command() -> clap::Command {
     Cli::command()
+}
+"#,
+    ),
+    (
+        "config",
+        r#"use serde::{Deserialize, Serialize};
+use standout::TermSettings;
+
+#[derive(Debug, Clone, Serialize, Deserialize, clapfig::Schema)]
+pub(crate) struct Config {
+    #[clapfig(default = "Hello")]
+    pub(crate) greeting: String,
+    pub(crate) term: TermSettings,
+}
+
+pub(crate) fn builder() -> clapfig::TypedBuilder<Config> {
+    clapfig::Clapfig::typed::<Config>()
+        .app_name("{{ executable_name }}")
+        .add_search_path(clapfig::SearchPath::Cwd)
+        .persist_scope("local", clapfig::SearchPath::Cwd)
+        .persist_scope("global", clapfig::SearchPath::Platform)
 }
 "#,
     ),
@@ -2470,6 +2558,17 @@ mod tests {
              published to crates.io: {stranded:?}. A generated project cannot resolve \
              them at any version this workspace pins. Publish those crates or stop \
              generating a dependency on them.\nemitted: {emitted:?}\npublishable: {publishable:?}"
+        );
+
+        assert!(emitted.contains("clapfig"), "{emitted:?}");
+        assert_eq!(
+            crates_io_requirement(
+                &spec.destination.join("Cargo.toml"),
+                "hello-tool",
+                "clapfig"
+            ),
+            crates_io_requirement(&workspace_root().join("Cargo.toml"), "standout", "clapfig"),
+            "the generated project must pin clapfig at the requirement standout itself uses"
         );
     }
 
@@ -3009,6 +3108,16 @@ mod tests {
             cli.contains("#[dispatch(pure, default, inputs = crate::handlers::inspect_inputs)]")
         );
         assert!(main.contains(".commands(cli::Commands::dispatch_config())?"));
+        assert!(main.contains(".config(config::builder())"));
+        assert!(main.contains(".term_settings(|config: &config::Config| &config.term)"));
+        assert!(main.contains("fn term_output_in_the_config_file_selects_json()"));
+        assert!(main.contains(".fixture(\"inspect-tool.toml\", CONFIG_FILE)"));
+
+        let config = generated_source(&generated, "crates/inspect-tool/src/config.rs");
+        assert!(config.contains("#[derive(Debug, Clone, Serialize, Deserialize, clapfig::Schema)]"));
+        assert!(config.contains("pub(crate) term: TermSettings,"));
+        assert!(config.contains(".app_name(\"inspect-tool\")"));
+        assert!(config.contains(".persist_scope(\"global\", clapfig::SearchPath::Platform)"));
 
         assert!(handlers.contains("#[handler]"));
         assert!(handlers.contains("#[flag] verbose: bool"));
@@ -3450,7 +3559,7 @@ mod tests {
             for dependency in package["dependencies"].as_array().unwrap() {
                 let name = dependency["name"].as_str().unwrap();
                 let from_crates_io = dependency["source"].as_str() == Some(CRATES_IO_SOURCE);
-                if from_crates_io && name.starts_with("standout") {
+                if from_crates_io && (name.starts_with("standout") || name == "clapfig") {
                     names.insert(name.to_string());
                 }
             }
@@ -3460,21 +3569,43 @@ mod tests {
 
     fn workspace_crates_io_publishable() -> std::collections::BTreeMap<String, bool> {
         let metadata = cargo_metadata(&workspace_root().join("Cargo.toml"));
+        let mut publishable = std::collections::BTreeMap::new();
+        for package in metadata["packages"].as_array().unwrap() {
+            let registries = &package["publish"];
+            let allowed = match registries.as_array() {
+                None => true,
+                Some(registries) => registries
+                    .iter()
+                    .any(|registry| registry.as_str() == Some("crates-io")),
+            };
+            publishable.insert(package["name"].as_str().unwrap().to_string(), allowed);
+            for dependency in package["dependencies"].as_array().unwrap() {
+                if dependency["source"].as_str() == Some(CRATES_IO_SOURCE) {
+                    publishable
+                        .entry(dependency["name"].as_str().unwrap().to_string())
+                        .or_insert(true);
+                }
+            }
+        }
+        publishable
+    }
+
+    fn crates_io_requirement(manifest: &Path, package: &str, dependency: &str) -> String {
+        let metadata = cargo_metadata(manifest);
         metadata["packages"]
             .as_array()
             .unwrap()
             .iter()
-            .map(|package| {
-                let registries = &package["publish"];
-                let publishable = match registries.as_array() {
-                    None => true,
-                    Some(registries) => registries
-                        .iter()
-                        .any(|registry| registry.as_str() == Some("crates-io")),
-                };
-                (package["name"].as_str().unwrap().to_string(), publishable)
+            .find(|candidate| candidate["name"].as_str() == Some(package))
+            .and_then(|candidate| {
+                candidate["dependencies"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|d| d["name"].as_str() == Some(dependency))
             })
-            .collect()
+            .map(|d| d["req"].as_str().unwrap().to_string())
+            .unwrap_or_else(|| panic!("{package} depends on {dependency}"))
     }
 
     fn run_cargo<const N: usize>(cwd: &Path, args: [&str; N]) {

@@ -10,7 +10,7 @@ const CONVENTION_VARS: [&str; 4] = ["NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "T
 fn conventions(vars: &[(&str, &str)]) -> TestHarness {
     let mut harness = TestHarness::new()
         .fixture("todos.json", STORE)
-        .env("TODO_FILE", "todos.json");
+        .env("TDOO__STORE", "todos.json");
     for key in CONVENTION_VARS {
         harness = match vars.iter().find(|(name, _)| *name == key) {
             Some((_, value)) => harness.env(key, *value),

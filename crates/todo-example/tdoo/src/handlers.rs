@@ -1,3 +1,4 @@
+use crate::config::TdooConfig;
 use clap::ArgMatches;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
@@ -5,7 +6,7 @@ use standout::cli::{
     Artifact, CommandConfig, CommandContext, CommandContextInput, HookError, Output,
 };
 use standout::handler;
-use standout::input::{ArgSource, InputChain, StdinSource};
+use standout::input::{ArgSource, ConfigSource, FlagSource, InputChain, StdinSource};
 use todo_core::{ExportWarning, Todo, TodoFilter, TodoStore};
 
 /// The title a new todo carries: `--title`, else piped stdin.
@@ -48,6 +49,11 @@ pub(crate) fn audit_hook(
             })?;
     }
     Ok(value)
+}
+
+fn store(ctx: &CommandContext) -> Result<TodoStore, anyhow::Error> {
+    let config: &TdooConfig = ctx.config()?;
+    TodoStore::load(config.store_path())
 }
 
 #[derive(Debug, Serialize)]
@@ -109,15 +115,24 @@ impl From<&ExportWarning> for ExportWarningView {
 #[handler]
 pub(crate) fn list(
     #[flag] all: bool,
+    #[matches] matches: &ArgMatches,
     #[ctx] ctx: &CommandContext,
 ) -> Result<Output<TodoListView>, anyhow::Error> {
-    let store = ctx.app_state.get_required::<TodoStore>()?;
+    let config: &TdooConfig = ctx.config()?;
+    let reverse = InputChain::<bool>::new()
+        .try_source(FlagSource::new("reverse"))
+        .try_source(ConfigSource::new(Some(config.reverse)))
+        .resolve_from(matches, ctx.input_sources())?;
+    let store = TodoStore::load(config.store_path())?;
     let filter = if all {
         TodoFilter::All
     } else {
         TodoFilter::Pending
     };
-    let todos: Vec<_> = store.list(filter).into_iter().map(TodoView::from).collect();
+    let mut todos: Vec<_> = store.list(filter).into_iter().map(TodoView::from).collect();
+    if reverse {
+        todos.reverse();
+    }
     let total = todos.len();
     Ok(Output::Render(TodoListView { todos, total }))
 }
@@ -125,8 +140,7 @@ pub(crate) fn list(
 #[handler]
 pub(crate) fn add(#[ctx] ctx: &CommandContext) -> Result<Output<TodoActionView>, anyhow::Error> {
     let title: &String = ctx.input("title")?;
-    let store = ctx.app_state.get_required::<TodoStore>()?;
-    let todo = store.add(title.clone())?;
+    let todo = store(ctx)?.add(title.clone())?;
     Ok(Output::Render(TodoActionView {
         message: format!("Added #{}", todo.id),
         todo: todo.into(),
@@ -138,8 +152,7 @@ pub(crate) fn done(
     #[arg] id: u32,
     #[ctx] ctx: &CommandContext,
 ) -> Result<Output<TodoActionView>, anyhow::Error> {
-    let store = ctx.app_state.get_required::<TodoStore>()?;
-    let todo = store.mark_done(id)?;
+    let todo = store(ctx)?.mark_done(id)?;
     Ok(Output::Render(TodoActionView {
         message: format!("Marked #{} done", todo.id),
         todo: todo.into(),
@@ -152,7 +165,7 @@ pub(crate) fn export(
     #[flag] stdout: bool,
     #[ctx] ctx: &CommandContext,
 ) -> Result<Output<ExportReportView>, anyhow::Error> {
-    let store = ctx.app_state.get_required::<TodoStore>()?;
+    let store = store(ctx)?;
     let filter = if all {
         TodoFilter::All
     } else {
@@ -182,31 +195,47 @@ pub(crate) fn export(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use standout::{InputSources, TermSettings};
     use standout_dispatch::Extensions;
     use standout_input::{InputSourceKind, Inputs, ResolvedInput};
+    use std::path::PathBuf;
     use std::rc::Rc;
     use tempfile::TempDir;
 
-    fn context() -> (CommandContext, TempDir) {
+    fn context(reverse: bool) -> (CommandContext, TempDir, PathBuf) {
         let dir = TempDir::new().unwrap();
-        let store = TodoStore::load(dir.path().join("todos.json")).unwrap();
-        let mut state = Extensions::new();
-        state.insert(store);
-        (CommandContext::new(Vec::new(), Rc::new(state)), dir)
+        let path = dir.path().join("todos.json");
+        let mut ctx = CommandContext::new(Vec::new(), Rc::new(Extensions::new()));
+        ctx.extensions.insert(InputSources::from_process());
+        ctx.extensions.insert(TdooConfig {
+            store: Some(path.to_str().unwrap().to_string()),
+            reverse,
+            term: TermSettings::default(),
+        });
+        (ctx, dir, path)
+    }
+
+    fn list_matches(args: &[&str]) -> ArgMatches {
+        crate::cli::command()
+            .try_get_matches_from([&["tdoo", "list"], args].concat())
+            .unwrap()
+            .subcommand_matches("list")
+            .unwrap()
+            .clone()
     }
 
     #[test]
     fn list_maps_the_flag_to_the_core_filter() {
-        let (ctx, _dir) = context();
-        let store = ctx.app_state.get_required::<TodoStore>().unwrap();
+        let (ctx, _dir, path) = context(false);
+        let store = TodoStore::load(&path).unwrap();
         store.add("completed").unwrap();
         store.add("pending").unwrap();
         store.mark_done(1).unwrap();
 
-        let Output::Render(pending) = list(false, &ctx).unwrap() else {
+        let Output::Render(pending) = list(false, &list_matches(&[]), &ctx).unwrap() else {
             panic!("expected rendered data");
         };
-        let Output::Render(all) = list(true, &ctx).unwrap() else {
+        let Output::Render(all) = list(true, &list_matches(&[]), &ctx).unwrap() else {
             panic!("expected rendered data");
         };
 
@@ -216,8 +245,23 @@ mod tests {
     }
 
     #[test]
+    fn list_reads_the_ordering_from_the_resolved_config_in_the_context() {
+        let (ctx, _dir, path) = context(true);
+        let store = TodoStore::load(&path).unwrap();
+        store.add("first").unwrap();
+        store.add("second").unwrap();
+
+        let Output::Render(view) = list(false, &list_matches(&[]), &ctx).unwrap() else {
+            panic!("expected rendered data");
+        };
+
+        assert_eq!(view.todos[0].title, "second");
+        assert_eq!(view.todos[1].title, "first");
+    }
+
+    #[test]
     fn add_maps_resolved_input_to_an_action_view() {
-        let (mut ctx, _dir) = context();
+        let (mut ctx, _dir, _path) = context(false);
         let mut inputs = Inputs::new();
         inputs.insert(
             "title",
@@ -238,8 +282,8 @@ mod tests {
 
     #[test]
     fn export_suggests_a_destination_but_writes_nothing() {
-        let (ctx, dir) = context();
-        let store = ctx.app_state.get_required::<TodoStore>().unwrap();
+        let (ctx, dir, path) = context(false);
+        let store = TodoStore::load(&path).unwrap();
         store.add("buy milk").unwrap();
         store.add("ship it").unwrap();
         store.mark_done(2).unwrap();
@@ -267,12 +311,8 @@ mod tests {
 
     #[test]
     fn export_to_stdout_offers_no_destination_suggestion() {
-        let (ctx, _dir) = context();
-        ctx.app_state
-            .get_required::<TodoStore>()
-            .unwrap()
-            .add("buy milk")
-            .unwrap();
+        let (ctx, _dir, path) = context(false);
+        TodoStore::load(&path).unwrap().add("buy milk").unwrap();
 
         let Output::Artifact(artifact) = export(true, true, &ctx).unwrap() else {
             panic!("expected an artifact");
@@ -285,12 +325,8 @@ mod tests {
 
     #[test]
     fn done_maps_the_core_transition_to_an_action_view() {
-        let (ctx, _dir) = context();
-        ctx.app_state
-            .get_required::<TodoStore>()
-            .unwrap()
-            .add("ship it")
-            .unwrap();
+        let (ctx, _dir, path) = context(false);
+        TodoStore::load(&path).unwrap().add("ship it").unwrap();
 
         let Output::Render(view) = done(1, &ctx).unwrap() else {
             panic!("expected rendered data");

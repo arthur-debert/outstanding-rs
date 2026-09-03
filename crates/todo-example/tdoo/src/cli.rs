@@ -1,7 +1,5 @@
 use clap::{CommandFactory, Parser, Subcommand};
 use standout::cli::Dispatch;
-use std::ffi::OsString;
-use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "tdoo", about = "A tiny todo list - the Standout sample app")]
@@ -28,6 +26,9 @@ pub(crate) enum Commands {
     List {
         #[arg(short, long)]
         all: bool,
+        /// Newest first; the `reverse` config key sets the default.
+        #[arg(short, long)]
+        reverse: bool,
     },
     /// Mark a todo done.
     #[dispatch(pure, post_dispatch = crate::handlers::audit_hook)]
@@ -46,67 +47,4 @@ pub(crate) enum Commands {
 
 pub(crate) fn command() -> clap::Command {
     Cli::command()
-}
-
-pub(crate) fn resolve_store_path() -> PathBuf {
-    store_path_from_env(
-        std::env::var_os("TODO_FILE"),
-        std::env::var_os("HOME"),
-        std::env::var_os("USERPROFILE"),
-    )
-}
-
-fn store_path_from_env(
-    todo_file: Option<OsString>,
-    home: Option<OsString>,
-    user_profile: Option<OsString>,
-) -> PathBuf {
-    if let Some(path) = todo_file {
-        return PathBuf::from(path);
-    }
-    home.or(user_profile)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".todos.json")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn explicit_todo_file_takes_precedence() {
-        let path = store_path_from_env(
-            Some("custom.json".into()),
-            Some("/home/alice".into()),
-            Some("C:\\Users\\Alice".into()),
-        );
-
-        assert_eq!(path, PathBuf::from("custom.json"));
-    }
-
-    #[test]
-    fn home_precedes_windows_user_profile() {
-        let path = store_path_from_env(
-            None,
-            Some("/home/alice".into()),
-            Some("C:\\Users\\Alice".into()),
-        );
-
-        assert_eq!(path, PathBuf::from("/home/alice").join(".todos.json"));
-    }
-
-    #[test]
-    fn windows_user_profile_is_a_portable_fallback() {
-        let path = store_path_from_env(None, None, Some("C:\\Users\\Alice".into()));
-
-        assert_eq!(path, PathBuf::from("C:\\Users\\Alice").join(".todos.json"));
-    }
-
-    #[test]
-    fn missing_home_variables_fall_back_to_current_directory() {
-        let path = store_path_from_env(None, None, None);
-
-        assert_eq!(path, PathBuf::from(".").join(".todos.json"));
-    }
 }
