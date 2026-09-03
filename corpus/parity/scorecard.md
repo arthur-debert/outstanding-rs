@@ -1,15 +1,10 @@
 # The parity baseline — gitlike, cargolike and validity against 10.0.0
 
-The 10.0.0 baseline the parity epics (PAR01 onward) measure against.
 `gitlike` and `cargolike` are one `corpus-runner batch` invocation's blind
 runs; `validity` is the same blind run's binary, its acceptance report
-re-evaluated against the corrected `--output term` color-off cases (the two
-cases asserted the opposite of the framework's documented contract — see
-`docs/topics/output-modes.md` and `docs/spec/parity-terminal-citizenship.md`,
-D18 — so the fix is a suite correction, not a capability change, and
-`corpus-runner reevaluate` replays the preserved workspace rather than
-re-running blind). No archetype here has an earlier row under this label, so
-every row's `Comparable` column reads `single run`.
+re-evaluated against the corrected `--output term` color-off cases. No
+archetype here has an earlier row under this label, so every row's
+`Comparable` column reads `single run`.
 
 The objective figures are generated from the committed reports; the reading
 under them is authored, and says which of the two it is.

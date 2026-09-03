@@ -1,7 +1,6 @@
 # PAR04: The Corpus Runner as a Pipeline
 
-> **Implemented** by PAR04 (#478): WS01 #492, WS02 #493, WS03 #494 (ADR-0024
-> amended), WS04 #495, convergence #496. As built, where the text below
+> As built, where the text below
 > differs:
 >
 > - D25's post-run file assertions read a single inventory of the whole
@@ -22,15 +21,13 @@
 >   rate no framework failure produced.
 > - `validity`'s two `--output term`, `NO_COLOR`-set cases asserted no ANSI;
 >   the framework's contract is the opposite (`docs/topics/output-modes.md`:
->   an explicit `term` request is unconditional). Corrected in the
->   convergence stage and re-evaluated against the preserved WS04 workspace
->   rather than re-run blind, since the produced app did not change.
+>   an explicit `term` request is unconditional).
 > - `reevaluate` carries a schema-4-or-later source's own `blindness` block
 >   forward unchanged, rather than always substituting the historical-partial
 >   narrative: that narrative is accurate for a pre-instrumentation source
 >   (which never recorded its own agent-phase isolation) and false for one
 >   that did.
-> - ghlike and dockerlike's suite edits (#460) replay through `reevaluate`
+> - ghlike and dockerlike's suite edits replay through `reevaluate`
 >   in the `standout-corpus` repository, not here; this repository has no
 >   ghlike or dockerlike implementation to reevaluate against (the roster's
 >   structural test forbids one).
