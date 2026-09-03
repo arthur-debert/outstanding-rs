@@ -185,7 +185,7 @@ handler, and any structured encoding beyond the supported set.
 
 The handler contract for an incremental command — the types and signatures, who owns
 `Results<E>`, the order events and the summary reach a consumer in, what a failure after
-an emitted event means, and how hooks and the test harness read the values — is
+an emitted event means, and how hooks and the test harness read the values — is defined by
 [ADR 0041 — Hand the handler a typed results sink](../adr/0041-hand-the-handler-a-typed-results-sink.md),
 written by TERM01-WS01 after prototyping a sink, a returned iterator and a channel
 against the existing handler boundary.

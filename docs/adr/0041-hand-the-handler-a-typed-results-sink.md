@@ -30,15 +30,25 @@ impl<E: Serialize> Results<E> {
     pub fn emit(&mut self, event: E) -> Result<(), EmitError>;
 }
 
+#[derive(Debug, thiserror::Error)]
 pub enum EmitError {
-    Serialize(serde_json::Error),
-    Write(std::io::Error),
+    #[error("event does not serialize: {0}")]
+    Serialize(#[from] serde_json::Error),
+    #[error("event could not be written: {0}")]
+    Write(#[from] std::io::Error),
 }
 
 /// The event type of a command that emits none: uninhabited, so `emit` has no argument
 /// that can be constructed.
+#[derive(Serialize)]
 pub enum NoEvents {}
 ```
+
+`NoEvents` derives `Serialize` because `Handler::Event` is bound by it; serde derives an
+impl for an uninhabited enum, and nothing can construct a value to reach it. `EmitError`
+derives `thiserror::Error` — the same shape as the `StreamError` it replaces — because
+`HandlerResult`'s error is `anyhow::Error`, which converts only from a
+`std::error::Error`, and `?` on an `emit` is how a handler propagates.
 
 `Handler::Output` keeps its name and its meaning: the summary an incremental command
 returns is the same `Output<S>` a batch command returns. `Handler::Event` is new. A batch
