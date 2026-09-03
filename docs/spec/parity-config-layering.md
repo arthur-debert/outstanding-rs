@@ -115,6 +115,9 @@ json` the same failure is a diagnostic document with the position filled in.
 output = "json"     # the output mode when --output is absent; never applies to --help or usage errors
 ```
 
+[Typed Command Output](./typed-command-output.md) adds `color` and `pager` to the same
+section and defines their values and precedence.
+
 ### The app author
 
 ```rust

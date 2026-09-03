@@ -68,11 +68,13 @@ fails a final write.
 templated human text. `--output` names a structured encoding, `json`, `yaml`, `csv` or
 `ndjson`; with no `--output` the representation is the human template, which has no
 `--output` name. A separate `--color` setting, `auto`, `always` or `never`, decides whether
-that human text carries escape sequences; `auto` is the default and resolves as a terminal
-setting does, flag, then environment, then configuration, then detection: an explicit
-`--color`, then the environment (an application-named variable, then `NO_COLOR`), then the
-application's color key under [Config Layering](./parity-config-layering.md), then
-terminal detection; configuration never overrides `NO_COLOR`. `term`, `text`, `auto` and
+that human text carries escape sequences; `auto` is the default. The application's own
+setting is the `color` key, with the same three values, in the `[term]` section that
+[Config Layering](./parity-config-layering.md) gives a home; it comes from a file or from
+the key's environment spelling (`MYAPP__TERM__COLOR`), and the framework receives the
+resolved key, not its source. Resolution is the terminal-setting order: an explicit
+`--color`, then `NO_COLOR`, then the resolved `[term] color`, then terminal detection, so
+configuration never overrides `NO_COLOR`. `term`, `text`, `auto` and
 `term-debug` are not peer data formats: the first three are the human representation under
 a presentation setting and are retired; `term-debug` stays as `--output term-debug`, a
 diagnostic view of the template's style tags outside the stability contract, as today. A
@@ -81,11 +83,13 @@ structured encoding never carries ANSI, whatever `--color` says.
 **Rendering is separate from delivery.** Rendering produces bytes; delivery places them on
 stdout, in a file the user names, or, for complete human output on a terminal, in an
 external pager. The application author declares which commands may page; the CLI user
-declines paging per run with `--no-pager`. That declaration only makes a command eligible;
-the pager command is a terminal setting resolved like color: `--no-pager`, then the
-environment (an application-named variable, then `PAGER`), then the application's pager
-key in configuration; with none set, nothing pages. A named output file wins over paging. A pager that cannot start delivers to stdout unpaged without changing
-the run's status; a pager that stops reading ends delivery without failing the run.
+declines paging per run with `--no-pager`, which disables paging outright. That
+declaration only makes a command eligible; which command runs is a terminal setting
+resolved in the same order: `PAGER`, then the `[term] pager` key, a command string from a
+file or `MYAPP__TERM__PAGER`, unset by default. With neither set, or the winning value
+empty, nothing pages. A named output file wins over paging. A pager that cannot start
+delivers to stdout unpaged without changing the run's status; a pager that stops reading
+ends delivery without failing the run.
 Structured encodings, incremental human output and a stdout that is not a terminal never
 page. Progress rendering, when the human representation derives it, goes to stderr and is
 absent when stderr is not a terminal or the representation is structured.
