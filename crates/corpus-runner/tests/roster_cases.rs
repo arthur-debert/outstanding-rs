@@ -24,11 +24,6 @@ fn run_suite(toml: &str, binary_body: &str) -> Vec<CaseResult> {
     run_suite_with_evidence(toml, binary_body, &BTreeMap::new(), Ok(""))
 }
 
-// Parses with `CaseSuite::parse` directly, not `Archetype::load`: these are
-// low-level `run_cases` tests of the outcome/evidence contract, driven by
-// whatever `gaps` map the test passes to `run_cases` itself, decoupled from
-// `Archetype::load`'s own manifest-membership check (`archetype.rs`'s
-// full-load tests cover that contract).
 fn run_suite_with_evidence(
     toml: &str,
     binary_body: &str,
@@ -912,9 +907,6 @@ exit_code = 0
         r#"mkdir -p elsewhere; echo elsewhere > elsewhere/config_default; ln -s elsewhere conf"#,
     );
     assert_eq!(results[0].outcome, CaseOutcome::Fail);
-    // The inventory records the symlinked `conf` itself and never descends
-    // into it, so nothing under it is ever recorded: the same "does not
-    // exist" a produced app that simply never wrote the file would get.
     assert!(
         results[0]
             .detail
@@ -987,10 +979,6 @@ files_absent = ["conf/config_default"]
 
 #[test]
 fn files_absent_ignores_content_behind_a_symlinked_directory() {
-    // A naive symlink-following walk would find `conf/secret.txt` (via
-    // `elsewhere/secret.txt`) and fail this files_absent; the inventory
-    // records the symlinked `conf` as `Other` and never descends into it,
-    // so the case passes.
     let results = run_suite(
         r#"
 [[case]]
@@ -1072,16 +1060,10 @@ exit_code = 0
 
 #[test]
 fn a_backgrounded_descendant_is_killed_before_assertions_run() {
-    // Inlined rather than run_suite: the sandbox (`dir`) must survive past
-    // the run to prove the write never lands even after the descendant's
-    // sleep would have elapsed, not just that the assertion beat it there.
     let dir = tempfile::tempdir().unwrap();
     let binary = script(
         dir.path(),
         "fake",
-        // Redirected away from the captured pipes: inherited, they would
-        // stay open until the backgrounded job exits on its own, which
-        // would delay case completion until well past its write.
         r#"(sleep 0.3; echo written > race.txt) >/dev/null 2>&1 &
 exit 0"#,
     );
@@ -1128,8 +1110,6 @@ files_absent = ["race.txt"]
         report.cases[0].detail
     );
 
-    // Prove the descendant was actually killed, not just outrun by a fast
-    // assertion: wait past its sleep and confirm the write never lands.
     std::thread::sleep(std::time::Duration::from_millis(600));
     assert!(
         !dir.path().join("cases/background-writer/race.txt").exists(),
@@ -1179,9 +1159,6 @@ stdout = "hello\n"
     );
     assert_eq!(with_crate[0].outcome, CaseOutcome::UnexpectedPass);
 
-    // Unreadable, not merely absent: the evidence claim could not be
-    // checked at all, so this must not read as either a framework win
-    // (unexpected-pass) or a hand-rolled one — it's a case error.
     let unreadable_cargo_toml =
         run_suite_with_evidence(toml, "echo hello", &gaps, Err("permission denied"));
     assert_eq!(unreadable_cargo_toml[0].outcome, CaseOutcome::Fail);
@@ -1201,11 +1178,6 @@ stdout = "hello\n"
 
 #[test]
 fn evidence_check_still_runs_once_a_gap_case_flips_to_expected_pass() {
-    // Once an epic closes a gap, the suite's case moves from `expected =
-    // "fail"` to `expected = "pass"` and keeps its `gap` marker (D17 covers
-    // both). The evidence check must still run on it — a pass with the
-    // evidence crate absent is a hand-rolled pass either way, not an
-    // invisible ordinary pass.
     let mut gaps = BTreeMap::new();
     gaps.insert(
         "PAR01".to_string(),
@@ -1262,8 +1234,6 @@ fn config_layering_gaps_declare_the_clapfig_evidence() {
             "{archetype_name}'s {gap} gap must declare uses-crate:clapfig evidence"
         );
 
-        // The evidence check itself: a passing gap case in a workspace
-        // without clapfig reports hand-rolled-pass, not unexpected-pass.
         let mut gaps = BTreeMap::new();
         gaps.insert(
             gap.to_string(),
