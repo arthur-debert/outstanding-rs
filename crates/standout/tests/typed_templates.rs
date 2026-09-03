@@ -1,8 +1,8 @@
 use clap::Command;
 use serde_json::json;
 use serial_test::serial;
-use standout::cli::FnHandler;
-use standout::cli::{App, AppBuilder, DispatchResult, Output};
+use standout::cli::{App, AppBuilder, DispatchResult, EventsFnHandler, HandlerResult, Output};
+use standout::cli::{FnHandler, Results};
 use standout::ColorPolicy;
 use standout::EmbeddedTemplates;
 use standout::{EmbeddedSource, Representation, TemplateResource};
@@ -12,6 +12,31 @@ const TEMPLATES: &[(&str, &str)] = &[("show", "report.txt"), ("show-4", "docs/ou
 
 static ORDERED_TEMPLATES: &[(&str, &str)] = &[("show.jinja", "Hello {{ name }}")];
 static BAD_TEMPLATES: &[(&str, &str)] = &[("show.jinja", "{% if")];
+static EVENT_ONLY_TEMPLATES: &[(&str, &str)] = &[("show.event", "starting {{ event.name }}")];
+static SUMMARY_ONLY_TEMPLATES: &[(&str, &str)] = &[("show", "{{ done }} done")];
+
+#[derive(serde::Serialize)]
+struct Started {
+    name: &'static str,
+}
+
+/// One incremental command named `show`, so a test varies only which of its
+/// two templates the registry holds.
+fn incremental_show_app(templates: &'static [(&'static str, &'static str)]) -> AppBuilder {
+    App::builder()
+        .templates(EmbeddedTemplates::new(templates, ""))
+        .command_with(
+            "show",
+            EventsFnHandler::new(
+                |_m, _ctx, results: &mut Results<Started>| -> HandlerResult<serde_json::Value> {
+                    results.emit(Started { name: "web" })?;
+                    Ok(Output::Render(json!({"done": 1})))
+                },
+            ),
+            |cfg| cfg,
+        )
+        .unwrap()
+}
 
 fn command() -> Command {
     Command::new("app").subcommand(Command::new("show"))
@@ -894,4 +919,40 @@ fn structured_only_omitted_output_serializes_json_through_run_to_string() {
     result.assert_success();
     let value: serde_json::Value = serde_json::from_str(result.stdout()).unwrap();
     assert_eq!(value["name"], "Ada");
+}
+
+#[test]
+fn build_fails_for_a_batch_command_with_only_an_event_template() {
+    let error = build_error(
+        App::builder()
+            .templates(EmbeddedTemplates::new(EVENT_ONLY_TEMPLATES, ""))
+            .command_with(
+                "show",
+                FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
+                |cfg| cfg,
+            )
+            .unwrap(),
+    );
+
+    assert!(
+        error.contains("command `show` references template `show`"),
+        "{error}"
+    );
+}
+
+#[test]
+fn build_fails_for_an_incremental_command_with_only_a_summary_template() {
+    let error = build_error(incremental_show_app(SUMMARY_ONLY_TEMPLATES));
+
+    assert!(
+        error.contains("renders each event from template `show.event`"),
+        "{error}"
+    );
+}
+
+/// A handler that returns `Output::Silent` renders no summary, so the event
+/// template alone is the whole presentation.
+#[test]
+fn an_incremental_command_builds_with_only_an_event_template() {
+    incremental_show_app(EVENT_ONLY_TEMPLATES).build().unwrap();
 }

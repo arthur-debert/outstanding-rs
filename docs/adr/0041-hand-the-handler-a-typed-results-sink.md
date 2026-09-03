@@ -11,7 +11,7 @@ the workstream that implements it does.
 
 ```rust
 pub trait Handler {
-    type Event: Serialize;
+    type Event: Serialize + 'static;
     type Output: Serialize;
 
     fn handle(
@@ -34,6 +34,8 @@ impl<E: Serialize> Results<E> {
 pub enum EmitError {
     #[error("event does not serialize: {0}")]
     Serialize(#[from] serde_json::Error),
+    #[error("{0}")]
+    Render(String),
     #[error("event could not be written: {0}")]
     Write(#[from] std::io::Error),
 }
@@ -53,7 +55,9 @@ derives `thiserror::Error` â€” the same shape as the `StreamError` it replaces â
 `Handler::Output` keeps its name and its meaning: the summary an incremental command
 returns is the same `Output<S>` a batch command returns. `Handler::Event` is new. A batch
 command sets it to `NoEvents` and ignores the parameter, so there is one trait rather
-than a batch trait and an incremental one. Function handlers keep their current
+than a batch trait and an incremental one, and whether a command is incremental is read
+from that type rather than declared beside it. It is `'static` because an associated type
+carries no lifetime from `handle`'s parameters. Function handlers keep their current
 signatures: the adapter behind a two-argument closure sets `Event = NoEvents`, and a
 three-argument closure taking `&mut Results<E>` is the incremental adapter. `#[handler]`
 picks the adapter from whether the function declares a `Results` parameter.
@@ -81,8 +85,9 @@ dispatch closure. As a separate `&mut` it is disjoint from `&ArgMatches` and
 `&CommandContext`, so a handler may hold borrows taken out of `matches` across every
 `emit` and use them afterwards.
 
-`E: Serialize` is the whole bound. No `Send`, no `Clone`, no `Deserialize`, so an event may
-hold an `Rc` or any other data that does not cross threads.
+`Results<E>` itself requires only `E: Serialize`; as `Handler::Event` the type must also be
+`'static`. No `Send`, no `Clone`, no `Deserialize`, so an event may hold an `Rc` or any
+other data that does not cross threads.
 
 ## Ordering and retention
 
@@ -106,7 +111,7 @@ command that declares events are a render error decided before anything is writt
 
 ## Failure after emitted events
 
-`emit` fails only when the event does not serialize or the bytes cannot be written. The
+`emit` fails when the event does not serialize, does not render, or cannot be written. The
 handler propagates with `?` and the run fails under the machine contract. Values already
 written stand: nothing is retried and nothing is withdrawn.
 

@@ -1,7 +1,7 @@
 #![allow(non_snake_case)] // Generated handler names use __handler suffix
 
 use clap::ArgMatches;
-use standout::cli::handler::{CommandContext, Output};
+use standout::cli::handler::{CommandContext, Handler, NoEvents, Output, Results, RunRecorder};
 use standout_macros::handler;
 
 #[handler]
@@ -410,4 +410,73 @@ fn test_verification_error_message_is_helpful() {
 
     assert!(msg.contains("Fix:"));
     assert!(msg.contains("ArgAction::SetTrue"));
+}
+
+#[derive(serde::Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum Step {
+    Started { name: String },
+}
+
+#[handler]
+fn incremental(
+    #[flag] verbose: bool,
+    results: &mut Results<Step>,
+) -> Result<Output<bool>, anyhow::Error> {
+    results.emit(Step::Started {
+        name: "one".to_string(),
+    })?;
+    Ok(Output::Render(verbose))
+}
+
+fn verbose_matches(args: &[&str]) -> ArgMatches {
+    clap::Command::new("test")
+        .arg(
+            clap::Arg::new("verbose")
+                .short('v')
+                .action(clap::ArgAction::SetTrue),
+        )
+        .get_matches_from(args)
+}
+
+#[test]
+fn a_results_parameter_makes_the_generated_handler_carry_the_event_type() {
+    let matches = verbose_matches(&["test", "-v"]);
+    let ctx = CommandContext::default();
+    let recorder = RunRecorder::new();
+    let mut results = Results::<Step>::recording(recorder.clone());
+
+    let output = incremental__handler(&matches, &ctx, &mut results).unwrap();
+
+    assert!(matches!(output, Output::Render(true)));
+    assert_eq!(
+        recorder.records(),
+        vec![serde_json::json!({ "type": "started", "name": "one" })]
+    );
+}
+
+#[test]
+fn the_generated_struct_handler_emits_through_the_channel_it_is_given() {
+    let matches = verbose_matches(&["test"]);
+    let ctx = CommandContext::default();
+    let recorder = RunRecorder::new();
+    let mut results = Results::recording(recorder.clone());
+
+    let output = incremental_Handler
+        .handle(&matches, &ctx, &mut results)
+        .unwrap();
+
+    assert!(matches!(output, Output::Render(false)));
+    assert_eq!(recorder.records().len(), 1);
+}
+
+#[handler]
+fn batch(#[flag] verbose: bool) -> Result<bool, anyhow::Error> {
+    Ok(verbose)
+}
+
+#[test]
+fn a_handler_without_a_results_parameter_declares_no_events() {
+    fn assert_no_events<H: Handler<Event = NoEvents>>(_: &H) {}
+    assert_no_events(&batch_Handler);
 }

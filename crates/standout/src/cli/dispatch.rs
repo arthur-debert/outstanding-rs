@@ -7,7 +7,7 @@ use crate::cli::builder::{SharedTemplateEngine, TemplateAbsence, TemplateRef};
 use crate::cli::handler::Output as HandlerOutput;
 use crate::cli::handler::{
     AppFailure, CommandContext, Diagnostic, ExitStatus, ExternalFailure, RunError, RunErrorKind,
-    RunRecorder,
+    RunRecorder, StreamSink,
 };
 use crate::cli::hooks::{ArtifactOutput, HookError, Hooks};
 use crate::context::ContextRegistry;
@@ -73,6 +73,69 @@ pub(crate) fn payload_without_a_stream(output: &str) -> RunError {
         ),
         RunErrorKind::Render,
     )
+}
+
+/// A command that produces its result while it runs writes it to the
+/// destination as it goes, so a payload cannot follow: it would be a second
+/// document sharing one file or one stdout. `emits_events` comes from the
+/// command's `Handler::Event` type, so the refusal is the same on an
+/// invocation that emitted nothing and a caller finds it in its first test
+/// rather than on the run that finally emits.
+pub(crate) fn reject_payload_from_an_emitting_command(
+    emits_events: bool,
+    is_binary: bool,
+    is_artifact: bool,
+) -> Result<(), RunError> {
+    if !emits_events {
+        return Ok(());
+    }
+    let payload = if is_binary {
+        "binary"
+    } else if is_artifact {
+        "artifact"
+    } else {
+        return Ok(());
+    };
+    Err(RunError::new(
+        format!(
+            "{payload} output was produced by a command that emits events; a command \
+             producing events carries Output::Render and Output::Silent only"
+        ),
+        RunErrorKind::Render,
+    ))
+}
+
+/// The encodings that carry a command's results as one document have no
+/// incremental form yet, so an incremental command under one is refused with
+/// this, ahead of the handler, so a mutating run never happens for a reason
+/// known before it started.
+pub(crate) fn events_under_a_document_encoding(
+    command_path: &str,
+    output_mode: crate::Representation,
+) -> RunError {
+    let encoding = crate::cli::builder::output_mode_flag_spelling(output_mode)
+        .map(|flag| format!("--output {flag}"))
+        .unwrap_or_else(|| format!("{output_mode:?}"));
+    RunError::new(
+        format!(
+            "command `{command_path}` emits events under {encoding}; that encoding carries a \
+             command's events as one document and standout does not build one yet"
+        ),
+        RunErrorKind::Render,
+    )
+}
+
+/// The refusal above, taken before the handler runs, so no byte is written
+/// first.
+pub(crate) fn reject_events_under_a_document_encoding(
+    emits_events: bool,
+    command_path: &str,
+    output_mode: crate::Representation,
+) -> Result<(), RunError> {
+    if !emits_events || output_mode.is_human() || output_mode.is_stream() {
+        return Ok(());
+    }
+    Err(events_under_a_document_encoding(command_path, output_mode))
 }
 
 pub(crate) fn reject_payload_under_stream(
@@ -377,15 +440,16 @@ pub(crate) fn hook_run_error(mut error: HookError, phase: crate::cli::HookPhase)
         .with_source(error)
 }
 
-/// The recorder is a parameter rather than a `CommandContext` member: it is the
-/// framework's, and a handler that could reach it could record values the typed
-/// `Results` channel never saw.
+/// The recorder and the sink are parameters rather than `CommandContext`
+/// members: they are the framework's, and a handler that could reach them could
+/// record or write values the typed `Results` channel never saw.
 pub type DispatchFn = Rc<
     RefCell<
         dyn FnMut(
             &ArgMatches,
             &CommandContext,
             &RunRecorder,
+            &StreamSink,
             Option<&Hooks>,
             crate::Representation,
             ColorPolicy,
@@ -401,6 +465,7 @@ pub fn dispatch(
     matches: &ArgMatches,
     ctx: &CommandContext,
     recorder: &RunRecorder,
+    sink: &StreamSink,
     hooks: Option<&Hooks>,
     output_mode: crate::Representation,
     color_policy: ColorPolicy,
@@ -411,6 +476,7 @@ pub fn dispatch(
         matches,
         ctx,
         recorder,
+        sink,
         hooks,
         output_mode,
         color_policy,

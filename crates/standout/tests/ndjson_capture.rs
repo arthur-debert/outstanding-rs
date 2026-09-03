@@ -1,7 +1,8 @@
 use clap::{Arg, Command};
 use serde_json::json;
 use standout::cli::{
-    App, DispatchResult, FnHandler, HandlerResult, Output, StreamCapture, StreamSink,
+    App, DispatchResult, EventsFnHandler, FnHandler, HandlerResult, Output, Results, StreamCapture,
+    StreamSink,
 };
 use standout::ColorPolicy;
 use standout::{
@@ -9,7 +10,10 @@ use standout::{
     TargetProperties, TemplateRef,
 };
 
-const TEMPLATES: &[(&str, &str)] = &[("stream", "{{ applied }} applied")];
+const TEMPLATES: &[(&str, &str)] = &[
+    ("stream", "{{ applied }} applied"),
+    ("stream.event", "{{ event.type }} {{ event.resource }}"),
+];
 
 fn command() -> Command {
     Command::new("app").subcommand(Command::new("stream"))
@@ -27,19 +31,18 @@ fn command_with_output_flag() -> Command {
 
 fn stream_handler(
     _: &clap::ArgMatches,
-    ctx: &standout::cli::CommandContext,
+    _ctx: &standout::cli::CommandContext,
+    results: &mut Results<serde_json::Value>,
 ) -> HandlerResult<serde_json::Value> {
-    ctx.stream()
-        .emit(&json!({ "type": "apply_start", "resource": "web" }))?;
-    ctx.stream()
-        .emit(&json!({ "type": "apply_complete", "resource": "web" }))?;
+    results.emit(json!({ "type": "apply_start", "resource": "web" }))?;
+    results.emit(json!({ "type": "apply_complete", "resource": "web" }))?;
     Ok(Output::Render(json!({ "applied": 1 })))
 }
 
 fn app() -> App {
     App::builder()
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
-        .command_with("stream", FnHandler::new(stream_handler), |cfg| cfg)
+        .command_with("stream", EventsFnHandler::new(stream_handler), |cfg| cfg)
         .unwrap()
         .build()
         .unwrap()
@@ -82,7 +85,10 @@ fn run_with_captures_the_entries_beside_the_result() {
         InputSources::from_process(),
     );
     assert_eq!(json.entries(), "");
-    assert!(matches!(json.outcome(), DispatchResult::Handled(_)));
+    assert!(
+        matches!(json.outcome(), DispatchResult::Error(_)),
+        "an encoding that buffers a command's events carries none yet"
+    );
 }
 
 #[test]
@@ -97,7 +103,7 @@ fn dispatch_captures_the_entries_beside_the_result() {
 }
 
 #[test]
-fn run_command_streams_to_the_sink_it_is_given_under_ndjson_only() {
+fn run_command_writes_the_events_to_the_sink_it_is_given() {
     let matches = command_with_output_flag()
         .try_get_matches_from(["app", "--output=ndjson", "stream"])
         .unwrap();
@@ -107,8 +113,8 @@ fn run_command_streams_to_the_sink_it_is_given_under_ndjson_only() {
         .run_command(
             "stream",
             sub,
-            stream_handler,
-            TemplateRef::Inline("{{ applied }} applied".to_string()),
+            EventsFnHandler::new(stream_handler),
+            TemplateRef::Named("stream".to_string()),
             ColorPolicy::Auto,
             StreamSink::new(capture.clone()),
         )
@@ -124,17 +130,17 @@ fn run_command_streams_to_the_sink_it_is_given_under_ndjson_only() {
         .unwrap();
     let sub = matches.subcommand_matches("stream").unwrap();
     let capture = StreamCapture::default();
-    app()
+    let error = app()
         .run_command(
             "stream",
             sub,
-            stream_handler,
-            TemplateRef::Inline("{{ applied }} applied".to_string()),
+            EventsFnHandler::new(stream_handler),
+            TemplateRef::Named("stream".to_string()),
             ColorPolicy::Auto,
             StreamSink::new(capture.clone()),
         )
-        .unwrap();
-    assert!(capture.take().is_empty());
+        .unwrap_err();
+    assert!(capture.take().is_empty(), "{error}");
 }
 
 #[test]
@@ -144,15 +150,15 @@ fn run_command_rejects_binary_output_under_ndjson() {
         .unwrap();
     let sub = matches.subcommand_matches("stream").unwrap();
     let error = app()
-        .run_command::<_, ()>(
+        .run_command(
             "stream",
             sub,
-            |_, _| {
+            FnHandler::new(|_, _| -> HandlerResult<()> {
                 Ok(Output::Binary {
                     data: vec![0, 1, 2],
                     filename: "out.bin".into(),
                 })
-            },
+            }),
             TemplateRef::Absent,
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),

@@ -125,7 +125,7 @@ fn run_command_and_dispatch_agree_on_csv_projection() {
         .run_command(
             "summary",
             sub,
-            |_matches, _ctx| Ok(Output::Render(response())),
+            FnHandler::new(|_matches, _ctx| Ok(Output::Render(response()))),
             standout::TemplateRef::Inline(
                 ("{{ totals.files }} files / {{ totals.code }} lines").to_string(),
             ),

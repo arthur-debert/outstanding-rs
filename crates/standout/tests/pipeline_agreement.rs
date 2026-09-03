@@ -66,7 +66,7 @@ fn run_command_greet_with(
     app.run_command(
         "greet",
         sub,
-        |_m, _ctx| Ok(Output::Render(json!({"name": "Ada", "label": "hi"}))),
+        FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada", "label": "hi"})))),
         standout::TemplateRef::Inline((COMPOSITION_TEMPLATE).to_string()),
         color,
         standout::cli::StreamSink::new(Vec::new()),

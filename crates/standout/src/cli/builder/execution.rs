@@ -21,8 +21,8 @@ use crate::cli::dispatch::{
 use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
 use crate::cli::handler::{
     ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, Delivery, DispatchResult,
-    EntryStream, ExitStatus, OutputKind, RunError, RunErrorKind, RunOutput, RunRecorder,
-    StreamCapture, StreamSink, SuccessKind,
+    ExitStatus, OutputKind, RunError, RunErrorKind, RunOutput, RunRecorder, StreamCapture,
+    StreamSink, SuccessKind,
 };
 use crate::cli::hooks::{ArtifactOutput, Hooks, RenderedOutput, TextOutput};
 use crate::cli::questionnaire::{
@@ -35,6 +35,44 @@ use crate::SetupError;
 use std::io::Write;
 
 const CONFIG_OVERRIDE_ARG: &str = "_config_override";
+
+/// True for the representations whose bytes accrue while the command runs, so
+/// the sink is the one destination the whole run writes through.
+fn writes_through_the_sink(output_mode: Representation) -> bool {
+    output_mode.is_stream() || output_mode.is_human()
+}
+
+/// The strict-mode failure for whatever the render window has left unresolved
+/// so far, or `None` when it has left nothing. Callers apply it before writing
+/// the bytes it describes; `warnings` drops the superseded degrade warning.
+/// Every caller has already decided that strict mode is on.
+pub(crate) fn unresolved_style_tags_error(warnings: Option<&WarningBuffer>) -> Option<RunError> {
+    let unresolved = standout_render::diagnostics::unresolved_in_current_window();
+    if unresolved.is_empty() {
+        return None;
+    }
+    if let Some(warnings) = warnings {
+        warnings.retain(|warning| {
+            !warning.starts_with(standout_render::diagnostics::UNRESOLVED_DEGRADATION_PREFIX)
+        });
+    }
+    let (noun, pronoun, object) = if unresolved.len() == 1 {
+        ("style tag", "It is", "it")
+    } else {
+        ("style tags", "They are", "them")
+    };
+    Some(RunError::new(
+        format!(
+            "strict_style_tags is enabled and the render left {count} {noun} unresolved: \
+             {tags}. {pronoun} not defined in the active theme (a typo, or a tag the theme \
+             does not style). Define {object} in the theme, correct the tag name, or disable \
+             strict_style_tags to degrade to unstyled text instead.",
+            count = unresolved.len(),
+            tags = unresolved.join(", "),
+        ),
+        RunErrorKind::Render,
+    ))
+}
 
 struct ContextInputs {
     sources: InputSources,
@@ -218,6 +256,7 @@ impl App {
             sub_matches,
             &ctx,
             &recorder,
+            &sink,
             hooks,
             output_mode,
             color_policy,
@@ -346,9 +385,14 @@ impl App {
             Some(path) => Delivery::File(path.to_path_buf()),
             None => Delivery::Stdout,
         });
-        // The file override takes the entries too, so the sink is retargeted first.
-        let stream = if output_mode.is_stream() {
-            if let Some(path) = override_path {
+        // The file override takes the events too, so the sink is retargeted
+        // before the handler runs and the summary follows them into it. Line
+        // framing creates the file up front, the way it did before events
+        // existed; the human representation waits for a first byte, so a run
+        // that ends without one — an artifact, a binary payload — leaves the
+        // file uncreated and reports its own failure.
+        if let Some(path) = override_path.filter(|_| writes_through_the_sink(output_mode)) {
+            if output_mode.is_stream() {
                 let file = open_output_file(path).map_err(|e| {
                     RunError::new(
                         format!("Error writing output: {}", e),
@@ -356,12 +400,12 @@ impl App {
                     )
                 })?;
                 sink.redirect(file);
+            } else {
+                let path = path.to_path_buf();
+                sink.redirect_on_first_write(move || open_output_file(&path));
             }
-            EntryStream::writing_to(sink.clone())
-        } else {
-            EntryStream::discarding()
-        };
-        let mut ctx = CommandContext::new(path, self.app_state.clone()).with_stream(stream);
+        }
+        let mut ctx = CommandContext::new(path, self.app_state.clone());
         ctx.extensions.insert(warnings.clone());
         Ok(ctx)
     }
@@ -413,6 +457,13 @@ impl App {
             output
         };
 
+        // A binary payload and an artifact own the file the user named, and a
+        // silent outcome writes nothing, so none of them takes the destination
+        // the run's rendered text was pointed at.
+        if !matches!(final_output, RenderedOutput::Text(_)) {
+            sink.cancel_pending_redirect();
+        }
+
         if let Err(error) = super::super::dispatch::reject_payload_under_stream(
             output_mode,
             final_output.is_binary(),
@@ -439,9 +490,17 @@ impl App {
             let dest = OutputDestination::File(path);
 
             match &final_output {
-                RenderedOutput::Text(t) if output_mode.is_stream() => {
+                // The events are already in the file, so the summary joins them
+                // there: newline-terminated under line framing, and as the
+                // unterminated document a batch run writes otherwise.
+                RenderedOutput::Text(t) if writes_through_the_sink(output_mode) => {
                     let written = sink.with_writer(|file| {
-                        writeln!(file, "{}", t.raw).and_then(|()| file.flush())
+                        if output_mode.is_stream() {
+                            writeln!(file, "{}", t.raw)
+                        } else {
+                            write!(file, "{}", t.raw)
+                        }
+                        .and_then(|()| file.flush())
                     });
                     if let Err(e) = written {
                         return DispatchResult::Error(RunError::new(
@@ -712,8 +771,17 @@ impl App {
         target.ambiguous_width = self.ambiguous_width;
         let sources = InputSources::from_process();
         let sink = StreamSink::process_stdout();
-        let result =
-            self.run_with_sink(cmd, args, target, ColorPolicy::Auto, sources, sink.clone());
+        // Nothing reads this run's values back, so its events are written and
+        // dropped rather than retained for the length of the command.
+        let result = self.run_recording(
+            cmd,
+            args,
+            target,
+            ColorPolicy::Auto,
+            sources,
+            sink.clone(),
+            RunRecorder::summary_only(),
+        );
         let primary_status = result.exit_status();
         let warnings = result.warnings().to_vec();
         let output_mode = result.output_mode();
@@ -817,29 +885,7 @@ impl App {
         if !self.strict_style_tags {
             return None;
         }
-        let unresolved = standout_render::diagnostics::unresolved_in_current_window();
-        if unresolved.is_empty() {
-            return None;
-        }
-        warnings.retain(|warning| {
-            !warning.starts_with(standout_render::diagnostics::UNRESOLVED_DEGRADATION_PREFIX)
-        });
-        let (noun, pronoun, object) = if unresolved.len() == 1 {
-            ("style tag", "It is", "it")
-        } else {
-            ("style tags", "They are", "them")
-        };
-        Some(RunError::new(
-            format!(
-                "strict_style_tags is enabled and the render left {count} {noun} unresolved: \
-                 {tags}. {pronoun} not defined in the active theme (a typo, or a tag the theme \
-                 does not style). Define {object} in the theme, correct the tag name, or disable \
-                 strict_style_tags to degrade to unstyled text instead.",
-                count = unresolved.len(),
-                tags = unresolved.join(", "),
-            ),
-            RunErrorKind::Render,
-        ))
+        unresolved_style_tags_error(Some(warnings))
     }
 
     /// Dispatch without writing either process stream; an output file override still writes.
@@ -882,8 +928,9 @@ impl App {
         run.with_entries(String::from_utf8_lossy(&capture.take()).into_owned())
     }
 
-    /// `run_with` with the run's color policy and the destination of
-    /// `ctx.stream()` entries; entries are written only under `ndjson`.
+    /// `run_with` with the run's color policy and the destination the whole
+    /// run writes through: a handler's events as it emits them, then whatever
+    /// the caller writes after it.
     #[allow(clippy::too_many_arguments)]
     pub fn run_with_sink<I, T>(
         &self,
@@ -898,7 +945,34 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        let recorder = RunRecorder::new();
+        self.run_recording(
+            cmd,
+            args,
+            target,
+            color_policy,
+            sources,
+            sink,
+            RunRecorder::new(),
+        )
+    }
+
+    /// `run_with_sink` with the run's recorder named, so an entry point that
+    /// never reads the values back can install one that keeps no events.
+    #[allow(clippy::too_many_arguments)]
+    fn run_recording<I, T>(
+        &self,
+        cmd: Command,
+        args: I,
+        target: TargetProperties,
+        color_policy: ColorPolicy,
+        sources: InputSources,
+        sink: StreamSink,
+        recorder: RunRecorder,
+    ) -> crate::cli::CompletedRun
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
         self.collect_run_warnings(color_policy, &recorder, |warnings| {
             self.dispatch_from_with_target(
                 cmd,
@@ -1272,8 +1346,11 @@ mod tests {
         ("list-15", "db={{ db }}, user={{ user }}"),
         ("fetch", "{{ url }}"),
         ("test-3", "[perm]{{ val }}[/perm]"),
+        ("apply", "{{ done }} done"),
+        ("apply.event", "starting {{ event.resource }}"),
     ];
 
+    use crate::cli::handler::EventsFnHandler;
     use crate::cli::handler::FnHandler;
     use crate::cli::handler::HandlerResult;
     use crate::cli::handler::Output as HandlerOutput;
@@ -2032,7 +2109,7 @@ mod tests {
         let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| Ok(HandlerOutput::Render(Data { value: 42 })),
+            FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(Data { value: 42 }))),
             crate::TemplateRef::Inline(("{{ value }}").to_string()),
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
@@ -2058,12 +2135,12 @@ mod tests {
         let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
         let sub_matches = matches.subcommand_matches("test").unwrap();
 
-        let result = standout.run_command::<_, ()>(
+        let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| -> HandlerResult<()> {
                 panic!("Handler should not be called");
-            },
+            }),
             crate::TemplateRef::Absent,
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
@@ -2094,11 +2171,11 @@ mod tests {
         let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| {
                 Ok(HandlerOutput::Render(Data {
                     msg: "hello".into(),
                 }))
-            },
+            }),
             crate::TemplateRef::Inline(("{{ msg }}").to_string()),
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
@@ -2119,10 +2196,10 @@ mod tests {
         let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
         let sub_matches = matches.subcommand_matches("test").unwrap();
 
-        let result = standout.run_command::<_, ()>(
+        let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| Ok(HandlerOutput::Silent),
+            FnHandler::new(|_m, _ctx| -> HandlerResult<()> { Ok(HandlerOutput::Silent) }),
             crate::TemplateRef::Absent,
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
@@ -2150,15 +2227,15 @@ mod tests {
         let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
         let sub_matches = matches.subcommand_matches("export").unwrap();
 
-        let result = standout.run_command::<_, ()>(
+        let result = standout.run_command(
             "export",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| -> HandlerResult<()> {
                 Ok(HandlerOutput::Binary {
                     data: vec![0xDE, 0xAD],
                     filename: "data.bin".into(),
                 })
-            },
+            }),
             crate::TemplateRef::Absent,
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
@@ -2188,16 +2265,16 @@ mod tests {
         let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
         let sub_matches = matches.subcommand_matches("export").unwrap();
 
-        let result = standout.run_command::<_, ()>(
+        let result = standout.run_command(
             "export",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| -> HandlerResult<()> {
                 Ok(HandlerOutput::Binary {
                     data: vec![0xDE, 0xAD],
                     filename: "data.bin".into(),
                 }
                 .with_exit_status(ExitStatus::from(2)))
-            },
+            }),
             crate::TemplateRef::Absent,
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
@@ -2221,16 +2298,16 @@ mod tests {
         let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
         let sub_matches = matches.subcommand_matches("export").unwrap();
 
-        let result = standout.run_command::<_, ()>(
+        let result = standout.run_command(
             "export",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| -> HandlerResult<()> {
                 Ok(HandlerOutput::Binary {
                     data: vec![0xDE, 0xAD],
                     filename: "data.bin".into(),
                 }
                 .with_exit_status(ExitStatus::SUCCESS))
-            },
+            }),
             crate::TemplateRef::Absent,
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
@@ -2254,15 +2331,15 @@ mod tests {
         let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
         let sub_matches = matches.subcommand_matches("export").unwrap();
 
-        let result = standout.run_command::<_, ()>(
+        let result = standout.run_command(
             "export",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| -> HandlerResult<()> {
                 Ok(HandlerOutput::Artifact(
                     crate::cli::Artifact::new(vec![1u8]).suggest_destination("out.bin"),
                 )
                 .with_exit_status(ExitStatus::SUCCESS))
-            },
+            }),
             crate::TemplateRef::Absent,
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
@@ -2286,15 +2363,15 @@ mod tests {
         let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
         let sub_matches = matches.subcommand_matches("export").unwrap();
 
-        let result = standout.run_command::<_, ()>(
+        let result = standout.run_command(
             "export",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| -> HandlerResult<()> {
                 Ok(HandlerOutput::Artifact(
                     crate::cli::Artifact::new(vec![1u8]).suggest_destination("out.bin"),
                 )
                 .with_exit_status(ExitStatus::from(2)))
-            },
+            }),
             crate::TemplateRef::Absent,
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
@@ -2331,10 +2408,10 @@ mod tests {
         let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| {
                 Ok(HandlerOutput::Render(serde_json::json!({"value": 1}))
                     .with_exit_status(ExitStatus::from(2)))
-            },
+            }),
             crate::TemplateRef::Inline("{{ value }}".to_string()),
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
@@ -2361,10 +2438,10 @@ mod tests {
         let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| {
                 Ok(HandlerOutput::Render(serde_json::json!({"value": 1}))
                     .with_exit_status(ExitStatus::from(2)))
-            },
+            }),
             crate::TemplateRef::Inline("{{ value }}".to_string()),
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
@@ -2572,7 +2649,7 @@ mod tests {
         let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| Ok(HandlerOutput::Render(Data { value: 42 })),
+            FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(Data { value: 42 }))),
             crate::TemplateRef::Inline(
                 ("value={{ value }}, added={{ added_by_hook }}").to_string(),
             ),
@@ -2616,7 +2693,7 @@ mod tests {
         let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| Ok(HandlerOutput::Render(Data { valid: false })),
+            FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(Data { valid: false }))),
             crate::TemplateRef::Inline(("{{ valid }}").to_string()),
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
@@ -3568,5 +3645,52 @@ header:
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("https://api.example.com"));
+    }
+
+    /// The process edge installs the summary-only recorder, so a long run's
+    /// events are written and dropped rather than held until it ends.
+    #[test]
+    fn a_summary_only_recorder_writes_every_event_and_returns_only_the_summary() {
+        #[derive(serde::Serialize)]
+        struct Started {
+            resource: String,
+        }
+
+        let app = App::builder()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
+                "apply",
+                EventsFnHandler::new(
+                    |_m, _ctx, results: &mut crate::cli::handler::Results<Started>| {
+                        for n in 0..64 {
+                            results.emit(Started {
+                                resource: format!("r{n}"),
+                            })?;
+                        }
+                        Ok::<_, anyhow::Error>(HandlerOutput::Render(
+                            serde_json::json!({"done": 64}),
+                        ))
+                    },
+                ),
+                |cfg| cfg,
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let capture = StreamCapture::default();
+        let run = app.run_recording(
+            Command::new("app").subcommand(Command::new("apply")),
+            ["app", "apply"],
+            TargetProperties::detect(),
+            ColorPolicy::Never,
+            InputSources::from_process(),
+            StreamSink::new(capture.clone()),
+            RunRecorder::summary_only(),
+        );
+
+        let written = String::from_utf8(capture.take()).unwrap();
+        assert_eq!(written.lines().count(), 64, "{written}");
+        assert_eq!(run.results(), [serde_json::json!({"done": 64})]);
     }
 }

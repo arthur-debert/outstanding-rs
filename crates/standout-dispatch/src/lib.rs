@@ -7,7 +7,8 @@
 //! serializable data, so application logic stays reusable outside a CLI. The
 //! third parameter of [`Handler::handle`] is the typed results channel of
 //! [`results`]; a batch command sets `Handler::Event` to [`NoEvents`] and
-//! ignores it.
+//! ignores it, and a command that produces its result while it runs takes the
+//! channel as a third closure parameter through [`EventsFnHandler`].
 //!
 //! [`CommandContext`] carries two kinds of injected state: `app_state` is
 //! immutable and app-lifetime (database, config, API clients), built once
@@ -31,13 +32,14 @@ pub use dispatch::{
     path_to_string, string_to_path,
 };
 pub use handler::{
-    AppFailure, CommandContext, DispatchResult, ExitStatus, Extensions, ExternalFailure, FnHandler,
-    Handler, HandlerResult, IntoHandlerResult, InvalidAppStatus, InvalidExternalStatus, Output,
-    OutputKind, RunError, RunErrorKind, RunOutput, SimpleFnHandler, SuccessKind,
+    AppFailure, CommandContext, DispatchResult, EventsFnHandler, ExitStatus, Extensions,
+    ExternalFailure, FnHandler, Handler, HandlerResult, IntoHandlerResult, InvalidAppStatus,
+    InvalidExternalStatus, Output, OutputKind, RunError, RunErrorKind, RunOutput, SimpleFnHandler,
+    SuccessKind,
 };
 pub use hooks::{
     ArtifactOutput, HookError, HookPhase, Hooks, PostDispatchFn, PostOutputFn, PreDispatchFn,
     RenderedOutput, TextOutput,
 };
-pub use results::{Delivery, EmitError, NoEvents, Results, RunRecorder};
-pub use stream::{EntryStream, StreamCapture, StreamError, StreamSink};
+pub use results::{emits_events, Delivery, EmitError, EventSink, NoEvents, Results, RunRecorder};
+pub use stream::{StreamCapture, StreamSink};

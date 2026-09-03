@@ -292,19 +292,121 @@ therefore all observe the same projected CSV.
 See [Introduction to Tabular](../crates/render/guides/intro-to-tabular.md) for
 tabular specifications and layout.
 
+## Incremental Commands
+
+A command whose result accrues while it runs — a plan, an apply, a long listing
+— produces a sequence of typed events and then a summary. It declares an event
+type and takes the run's results channel as a third handler parameter:
+
+```rust
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum Event {
+    ApplyStart { resource: String },
+    ApplyComplete { resource: String },
+}
+
+fn apply(
+    _matches: &ArgMatches,
+    _ctx: &CommandContext,
+    results: &mut Results<Event>,
+) -> HandlerResult<Summary> {
+    for change in plan()? {
+        results.emit(Event::ApplyStart { resource: change.name.clone() })?;
+        change.apply()?;                  // a failure here follows the events
+        results.emit(Event::ApplyComplete { resource: change.name.clone() })?;
+    }
+    Ok(Output::Render(summary))           // the summary, after the last event
+}
+```
+
+Register it with `EventsFnHandler::new(apply)`, or write the same three
+parameters under `#[handler]`, which reads the `Results` parameter and derives
+the command's event type from it. `emit` takes the value by value, returns once
+it has been rendered or written, and fails when the value does not serialize,
+does not render, or cannot be written; propagate with `?` and the run fails
+with it. The event type is `'static`, so an event owns what it carries rather
+than borrowing from the invocation. Standout reports that failure as a render error whether or not the
+handler propagates it. The framework never inspects an event: its shape, including
+whether it carries a `type` key, is the application's contract with its
+consumers.
+
+`Results` exposes `emit` and nothing else. A handler cannot ask which
+representation is running or where the bytes go, and emits the same events
+under every representation.
+
+### The human representation
+
+Standout renders each event from the command's template name with an `.event`
+suffix — `apply.event` beside `apply` — resolved through the same directories
+and theme. The template receives the event as `event` and branches on the
+application's own discriminator, so one template covers every kind:
+
+```jinja
+{% if event.type == "apply_start" %}starting {{ event.resource }}…
+{% elif event.type == "apply_complete" %}{{ "✔" | style("ok") }} {{ event.resource }}
+{% endif %}
+```
+
+Each rendered event is one flushed write, on a terminal and in a pipe alike;
+the summary follows from the command's own template. `.build()` requires the
+`.event` template of every command that declares an event type, so a missing one
+is a setup error rather than a failure on the first event. A command whose
+events are its whole result returns `Output::Silent` as its summary and needs
+only the `.event` template: the summary template is the one `.build()` lets it
+skip, because which `Output` variant a handler returns is not something the
+build can read.
+
+```text
+$ myapp apply
+starting web…
+✔ web
+starting db…
+✔ db
+2 added, 0 removed
+```
+
+### Under a structured encoding
+
+`--output ndjson` is the JSON record encoding plus line framing: each event is
+written as the handler produced it, compact, on its own line and flushed, and
+the summary is the `result` record the machine contract gives a batch value.
+Standout adds no header, so a `version` line an application writes first is an
+event like any other.
+
+```text
+$ myapp apply --output ndjson
+{"type":"version","format_version":1}
+{"type":"apply_start","resource":"web"}
+{"type":"apply_complete","resource":"web"}
+{"type":"result","data":{"applied":1}}
+```
+
+`json`, `yaml` and `csv` have no line framing, so they carry a command's events
+as one document written when the command ends. Standout does not build that
+document yet: an emitting command under those encodings is a render error,
+decided from the handler's event type before the handler runs.
+
+A failure after emitted events keeps them — the human representation has
+rendered them, line framing has written them — and the diagnostic follows in
+the shape [Execution Outcomes](./execution-outcomes.md#failures-under-a-structured-mode)
+gives it. A reader that goes away is not one of those failures: when stdout
+stops reading (`myapp apply --output ndjson | head -1`), Standout discards what
+follows, lets the handler run to completion, and reports the command's own
+status.
+
+Binary and artifact output cannot follow events. A command whose event type is
+not `NoEvents` carries `Output::Render` and `Output::Silent` only, so either
+payload is a render error under every representation — on the run that emitted
+nothing too, since the refusal follows the type rather than the count. Under
+`ndjson` a payload is a render error whether or not the command's event type is
+`NoEvents`: a stream of JSON lines has no room for one.
+
 ## NDJSON Mode
 
 `--output ndjson` makes stdout a stream: every line is one JSON object, and the
 run may write several. Nothing else changes — the same handler, the same
-serializable data, the same exit statuses. This is the mode for a command whose
-result accrues while it runs (a plan, an apply, a long listing) and for a
-consumer that wants to react to entries before the process ends.
-
-A stream is exactly line-per-value: each entry is written compact, one line,
-and flushed when it is emitted. There is no buffering, no backpressure and no
-async behind it.
-
-### What a run writes
+serializable data, the same exit statuses.
 
 `Output::Render(data)` becomes one `result` entry where the other structured
 encodings write their document:
@@ -318,56 +420,8 @@ failed, after whatever the handler already emitted, and a warning is a
 `severity: warning` diagnostic entry of kind `framework` after the result or
 the failure; the document itself and what each stream carries are in
 [Execution Outcomes](./execution-outcomes.md#failures-under-a-structured-mode).
-`Output::Silent` writes nothing, so a handler whose entries are its whole
-result leaves only those. Binary and artifact output are render errors under
-`ndjson`, decided before anything is written: a stream of JSON lines has no
-room for a payload.
-
-### Handler-emitted entries
-
-`ctx.stream()` returns the run's `EntryStream`. `emit(&value)` writes the
-value as one line under `ndjson` and does nothing under any other
-representation:
-
-```rust
-#[derive(Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum Entry<'a> {
-    Version { format_version: u32 },
-    ApplyStart { resource: &'a str },
-    ApplyComplete { resource: &'a str },
-}
-
-fn apply(_matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Summary> {
-    let stream = ctx.stream();
-    stream.emit(&Entry::Version { format_version: 1 })?;
-    for change in plan()? {
-        stream.emit(&Entry::ApplyStart { resource: &change.name })?;
-        change.apply()?;                       // a failure here is a diagnostic entry
-        stream.emit(&Entry::ApplyComplete { resource: &change.name })?;
-    }
-    Ok(Output::Render(summary))                // one more line: the result entry
-}
-```
-
-```text
-$ myapp apply --output ndjson
-{"type":"version","format_version":1}
-{"type":"apply_start","resource":"web"}
-{"type":"apply_complete","resource":"web"}
-{"type":"result","data":{"applied":1}}
-```
-
-The framework does not inspect an entry: its shape, including whether it
-carries a `type` key, is the application's contract with its consumers.
-`emit` fails with a `StreamError` when the value does not serialize or the
-line cannot be written; propagate it with `?` and the run fails with it.
-
-A handler whose entries *are* its result can skip the `result` line by
-returning `Output::Silent` when the stream is live — `ctx.stream().is_live()`
-is true only under `ndjson` — and `Output::Render` otherwise, so the human
-representation still renders its page. That is the one presentation branch a
-handler is meant to take.
+`Output::Silent` writes nothing, so a handler whose events are its whole result
+leaves only those.
 
 ## File Output
 
@@ -383,9 +437,9 @@ Behavior:
 - Text output: written to file, nothing printed to stdout
 - Binary output: written to the requested file instead of stdout
 - Silent output: no-op
-- `ndjson`: the file is the stream. It is opened before the handler runs and
-  receives the handler's entries as they are emitted, then the `result` or
-  `diagnostic` entry, then the warning entries; stdout carries nothing.
+- An incremental command: the file is the whole run. It receives each event as
+  it is emitted, then the summary or the diagnostic, then the warning entries
+  under `ndjson`; stdout carries nothing.
 
 After writing to file, stdout output is suppressed to prevent double-printing.
 
@@ -415,9 +469,8 @@ caller took the human page or a structured encoding. If a command's behavior
 genuinely differs, model that as an explicit command or argument rather than an
 implicit presentation branch.
 
-The one representation-aware member of the context is `ctx.stream()`, live only
-under `ndjson`; the single branch a handler takes on it is in
-[Handler-emitted entries](#handler-emitted-entries).
+A handler has nothing to branch on: the results channel exposes `emit` alone,
+and an incremental command emits the same events under every representation.
 
 ## Rendering Without CLI
 

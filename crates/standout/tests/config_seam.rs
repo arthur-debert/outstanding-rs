@@ -479,10 +479,10 @@ fn run_command_resolves_the_config_like_dispatch() {
         app.run_command(
             "show",
             sub,
-            |_matches, ctx| {
+            FnHandler::new(|_matches, ctx| {
                 let config: &FixtureConfig = ctx.config()?;
                 Ok(Output::Render(json!({ "index_dir": config.index_dir })))
-            },
+            }),
             TemplateRef::Inline("index at {{ index_dir }}".to_string()),
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),

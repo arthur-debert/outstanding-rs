@@ -2,7 +2,6 @@ use crate::artifact::{Artifact, ArtifactRun};
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::hooks::HookPhase;
 use crate::results::{NoEvents, Results};
-use crate::stream::EntryStream;
 use crate::verify::ExpectedArg;
 use clap::ArgMatches;
 use serde::Serialize;
@@ -86,7 +85,6 @@ pub struct CommandContext {
     pub command_path: Vec<String>,
     pub app_state: Rc<Extensions>,
     pub extensions: Extensions,
-    pub stream: EntryStream,
 }
 impl CommandContext {
     pub fn new(command_path: Vec<String>, app_state: Rc<Extensions>) -> Self {
@@ -94,16 +92,7 @@ impl CommandContext {
             command_path,
             app_state,
             extensions: Extensions::new(),
-            stream: EntryStream::discarding(),
         }
-    }
-    pub fn with_stream(mut self, stream: EntryStream) -> Self {
-        self.stream = stream;
-        self
-    }
-    /// Live under `ndjson`, discarding in every other mode.
-    pub fn stream(&self) -> &EntryStream {
-        &self.stream
     }
 }
 impl Default for CommandContext {
@@ -112,7 +101,6 @@ impl Default for CommandContext {
             command_path: Vec::new(),
             app_state: Rc::new(Extensions::new()),
             extensions: Extensions::new(),
-            stream: EntryStream::discarding(),
         }
     }
 }
@@ -650,7 +638,12 @@ impl DispatchResult {
     }
 }
 pub trait Handler {
-    type Event: Serialize;
+    /// The type of the values the command produces while it runs.
+    /// [`NoEvents`] for a command that produces none, which is what
+    /// [`emits_events`](crate::emits_events) reads to decide whether this is
+    /// an incremental command. `'static` because an associated type carries no
+    /// lifetime from `handle`'s parameters.
+    type Event: Serialize + 'static;
     type Output: Serialize;
     fn handle(
         &mut self,
@@ -697,6 +690,51 @@ where
         _results: &mut Results<NoEvents>,
     ) -> HandlerResult<T> {
         (self.f)(matches, ctx).into_handler_result()
+    }
+}
+/// The adapter behind a three-argument closure: the third parameter is the
+/// command's typed results channel, so `Event` is the closure's own event type
+/// rather than [`NoEvents`].
+pub struct EventsFnHandler<F, E, T, R = HandlerResult<T>>
+where
+    E: Serialize + 'static,
+    T: Serialize,
+{
+    f: F,
+    _event: std::marker::PhantomData<fn(E)>,
+    _phantom: std::marker::PhantomData<fn() -> (T, R)>,
+}
+impl<F, E, T, R> EventsFnHandler<F, E, T, R>
+where
+    F: FnMut(&ArgMatches, &CommandContext, &mut Results<E>) -> R,
+    R: IntoHandlerResult<T>,
+    E: Serialize + 'static,
+    T: Serialize,
+{
+    pub fn new(f: F) -> Self {
+        Self {
+            f,
+            _event: std::marker::PhantomData,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+impl<F, E, T, R> Handler for EventsFnHandler<F, E, T, R>
+where
+    F: FnMut(&ArgMatches, &CommandContext, &mut Results<E>) -> R,
+    R: IntoHandlerResult<T>,
+    E: Serialize + 'static,
+    T: Serialize,
+{
+    type Event = E;
+    type Output = T;
+    fn handle(
+        &mut self,
+        matches: &ArgMatches,
+        ctx: &CommandContext,
+        results: &mut Results<E>,
+    ) -> HandlerResult<T> {
+        (self.f)(matches, ctx, results).into_handler_result()
     }
 }
 pub struct SimpleFnHandler<F, T, R = HandlerResult<T>>
@@ -747,7 +785,6 @@ mod tests {
             command_path: vec!["config".into(), "get".into()],
             app_state: Rc::new(Extensions::new()),
             extensions: Extensions::new(),
-            stream: EntryStream::discarding(),
         };
         assert_eq!(ctx.command_path, vec!["config", "get"]);
     }
@@ -850,7 +887,6 @@ mod tests {
             command_path: vec!["list".into()],
             app_state: app_state.clone(),
             extensions: Extensions::new(),
-            stream: EntryStream::discarding(),
         };
         let db = ctx.app_state.get::<Database>().unwrap();
         assert_eq!(db.url, "postgres://localhost");
@@ -867,7 +903,6 @@ mod tests {
             command_path: vec![],
             app_state: Rc::new(app_state),
             extensions: Extensions::new(),
-            stream: EntryStream::discarding(),
         };
         assert!(ctx.app_state.get_required::<Present>().is_ok());
         #[derive(Debug)]
