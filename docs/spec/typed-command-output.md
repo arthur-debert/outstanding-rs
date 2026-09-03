@@ -57,8 +57,8 @@ complete array of records, written when the command ends.
 
 A command that fails after emitting events has still produced those events: the human
 representation has rendered them, line framing has written them, and the failure
-diagnostic follows them in the shape the machine contract
-(`docs/topics/execution-outcomes.md`) already gives it. An encoding without line framing
+diagnostic follows them in the shape
+[the machine contract](../topics/execution-outcomes.md) already gives it. An encoding without line framing
 writes nothing before the command ends, so a run that fails first delivers the diagnostic
 in place of the array, as it does today for a batch value. An event that cannot be
 serialized, or bytes that cannot be delivered, fail the run the way the machine contract
@@ -68,9 +68,11 @@ fails a final write.
 templated human text. `--output` names a structured encoding, `json`, `yaml`, `csv` or
 `ndjson`; with no `--output` the representation is the human template, which has no
 `--output` name. A separate `--color` setting, `auto`, `always` or `never`, decides whether
-that human text carries escape sequences; `auto` is the default and resolves as an explicit
-`--color`, then the application's own color setting (its config key or variable, per Config
-Layering), then `NO_COLOR`, then terminal detection. `term`, `text`, `auto` and
+that human text carries escape sequences; `auto` is the default and resolves as a terminal
+setting does, flag, then environment, then configuration, then detection: an explicit
+`--color`, then the environment (an application-named variable, then `NO_COLOR`), then the
+application's color key under [Config Layering](./parity-config-layering.md), then
+terminal detection; configuration never overrides `NO_COLOR`. `term`, `text`, `auto` and
 `term-debug` are not peer data formats: the first three are the human representation under
 a presentation setting and are retired; `term-debug` stays as `--output term-debug`, a
 diagnostic view of the template's style tags outside the stability contract, as today. A
@@ -79,9 +81,10 @@ structured encoding never carries ANSI, whatever `--color` says.
 **Rendering is separate from delivery.** Rendering produces bytes; delivery places them on
 stdout, in a file the user names, or, for complete human output on a terminal, in an
 external pager. The application author declares which commands may page; the CLI user
-declines paging per run with `--no-pager`. The pager command is the application's own pager
-setting when it declares one, else `PAGER`; with neither set, nothing pages. A named output
-file wins over paging. A pager that cannot start delivers to stdout unpaged without changing
+declines paging per run with `--no-pager`. That declaration only makes a command eligible;
+the pager command is a terminal setting resolved like color: `--no-pager`, then the
+environment (an application-named variable, then `PAGER`), then the application's pager
+key in configuration; with none set, nothing pages. A named output file wins over paging. A pager that cannot start delivers to stdout unpaged without changing
 the run's status; a pager that stops reading ends delivery without failing the run.
 Structured encodings, incremental human output and a stdout that is not a terminal never
 page. Progress rendering, when the human representation derives it, goes to stderr and is
