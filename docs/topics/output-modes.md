@@ -301,9 +301,9 @@ type and takes the run's results channel as a third handler parameter:
 ```rust
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-enum Event<'a> {
-    ApplyStart { resource: &'a str },
-    ApplyComplete { resource: &'a str },
+enum Event {
+    ApplyStart { resource: String },
+    ApplyComplete { resource: String },
 }
 
 fn apply(
@@ -312,9 +312,9 @@ fn apply(
     results: &mut Results<Event>,
 ) -> HandlerResult<Summary> {
     for change in plan()? {
-        results.emit(Event::ApplyStart { resource: &change.name })?;
+        results.emit(Event::ApplyStart { resource: change.name.clone() })?;
         change.apply()?;                  // a failure here follows the events
-        results.emit(Event::ApplyComplete { resource: &change.name })?;
+        results.emit(Event::ApplyComplete { resource: change.name.clone() })?;
     }
     Ok(Output::Render(summary))           // the summary, after the last event
 }
@@ -325,7 +325,8 @@ parameters under `#[handler]`, which reads the `Results` parameter and derives
 the command's event type from it. `emit` takes the value by value, returns once
 it has been rendered or written, and fails when the value does not serialize,
 does not render, or cannot be written; propagate with `?` and the run fails
-with it. Standout reports that failure as a render error whether or not the
+with it. The event type is `'static`, so an event owns what it carries rather
+than borrowing from the invocation. Standout reports that failure as a render error whether or not the
 handler propagates it. The framework never inspects an event: its shape, including
 whether it carries a `type` key, is the application's contract with its
 consumers.
