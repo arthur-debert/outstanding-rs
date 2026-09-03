@@ -8,24 +8,22 @@
 //!   with the value bound to `event`, and writes one flushed line per event,
 //!   on a terminal and into a pipe alike;
 //! - line framing writes the value as the handler produced it, compact JSON on
-//!   its own line, with the discriminator the application gave it;
-//! - the encodings that produce one document have no incremental form yet, so
-//!   an emitting command under them fails the run.
+//!   its own line, with the discriminator the application gave it.
 //!
-//! A failure that belongs to the framework rather than to the bytes — a missing
-//! event template, an unresolved style tag under strict mode, an encoding that
-//! cannot carry events — is retained here rather than returned, because `emit`
-//! reports only serialization and write failures. The dispatch closure takes it
-//! with [`EventDestination::take_failure`] once the handler returns, so the run
-//! reports a render error with its own message whether or not the handler
-//! propagated the `emit`.
+//! Every reason an event does not reach the destination — a missing event
+//! template, a render failure, an unresolved style tag under strict mode, a
+//! framing failure, a write that fails — is returned from `deliver`, so the
+//! handler stops at the `emit` that failed. The destination also remembers the
+//! first of them; the dispatch closure takes it with
+//! [`EventDestination::take_failure`] once the handler returns and reports a
+//! render error whether or not the handler propagated the `emit`.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::cli::builder::{output_mode_flag_spelling, SharedTemplateEngine, TemplateRef};
-use crate::cli::handler::{EventSink, RunError, RunErrorKind, StreamSink};
+use crate::cli::builder::{SharedTemplateEngine, TemplateRef};
+use crate::cli::handler::{EmitError, EventSink, RunError, RunErrorKind, StreamSink};
 use crate::context::ContextRegistry;
 use crate::{ColorPolicy, RenderRequest, Representation, TargetProperties, Theme};
 
@@ -68,27 +66,47 @@ pub(crate) struct EventContext {
 
 pub(crate) struct EventDestination {
     sink: StreamSink,
-    context: EventContext,
+    command_path: String,
+    representation: Representation,
+    strict_style_tags: bool,
+    warnings: Option<standout_render::warnings::WarningBuffer>,
+    /// The whole render but its `data`: the theme, registries, engine, target
+    /// and policy are the run's, so they are built once here and each event
+    /// varies only the value bound to `event`.
+    request: Option<RefCell<RenderRequest>>,
     failure: RefCell<Option<RunError>>,
-    emitted: Cell<usize>,
 }
 
 impl EventDestination {
     pub(crate) fn new(sink: StreamSink, context: EventContext) -> Self {
+        let request = context
+            .template
+            .filter(|_| context.representation.is_human())
+            .map(|template| {
+                RefCell::new(RenderRequest {
+                    data: serde_json::Value::Null,
+                    template,
+                    theme: context.theme,
+                    format: context.representation,
+                    color_policy: context.color_policy,
+                    target: context.target,
+                    engine: context.template_engine,
+                    registry: context.template_registry,
+                    context_registry: Some(context.context_registry),
+                    csv_projection: None,
+                    extras: HashMap::new(),
+                    warnings: context.warnings.clone(),
+                })
+            });
         Self {
             sink,
-            context,
+            command_path: context.command_path,
+            representation: context.representation,
+            strict_style_tags: context.strict_style_tags,
+            warnings: context.warnings,
+            request,
             failure: RefCell::new(None),
-            emitted: Cell::new(0),
         }
-    }
-
-    /// How many events the command produced. The declaration on `Handler` is
-    /// what decides whether an outcome may follow events; this is the backstop
-    /// for a hand-written handler whose declaration does not match its
-    /// event type.
-    pub(crate) fn emitted(&self) -> usize {
-        self.emitted.get()
     }
 
     /// The framework's own reason the run cannot stand, if an event met one.
@@ -96,97 +114,64 @@ impl EventDestination {
         self.failure.borrow_mut().take()
     }
 
-    fn fail(&self, error: RunError) {
-        let mut failure = self.failure.borrow_mut();
-        if failure.is_none() {
-            *failure = Some(error);
-        }
-    }
-
     /// Strict mode's no-output-on-failure rule reaches each event: the render
     /// window is read before the line is written, so a `.event` template with
     /// an unresolved style tag fails the run with the destination untouched
     /// rather than after degraded bytes have gone out.
     fn strict_style_tags_error(&self) -> Option<RunError> {
-        if !self.context.strict_style_tags {
+        if !self.strict_style_tags {
             return None;
         }
-        crate::cli::builder::execution::unresolved_style_tags_error(self.context.warnings.as_ref())
+        crate::cli::builder::execution::unresolved_style_tags_error(self.warnings.as_ref())
     }
 
-    fn render(&self, event: &serde_json::Value) -> Result<String, RunError> {
-        let Some(template) = self.context.template.clone() else {
-            return Err(RunError::new(
-                format!(
-                    "command `{}` emitted an event but declares no template to render one; \
-                     an incremental command renders each event from `<name>.event` beside its \
-                     own template",
-                    self.context.command_path
-                ),
-                RunErrorKind::Render,
-            ));
+    fn render(&self, event: &serde_json::Value) -> Result<String, EmitError> {
+        let Some(request) = self.request.as_ref() else {
+            return Err(EmitError::Render(format!(
+                "command `{}` emitted an event but declares no template to render one; \
+                 an incremental command renders each event from `<name>.event` beside its \
+                 own template",
+                self.command_path
+            )));
         };
-        let request = RenderRequest {
-            data: serde_json::json!({ "event": event }),
-            template,
-            theme: self.context.theme.clone(),
-            format: self.context.representation,
-            color_policy: self.context.color_policy,
-            target: self.context.target,
-            engine: self.context.template_engine.clone(),
-            registry: self.context.template_registry.clone(),
-            context_registry: Some(self.context.context_registry.clone()),
-            csv_projection: None,
-            extras: HashMap::new(),
-            warnings: self.context.warnings.clone(),
-        };
-        standout_render::render_request_split(&request)
+        let mut request = request.borrow_mut();
+        request.data = serde_json::json!({ "event": event });
+        let text = standout_render::render_request_split(&request)
             .map(|rendered| rendered.formatted)
-            .map_err(|error| RunError::new(error.to_string(), RunErrorKind::Render))
+            .map_err(|error| EmitError::Render(error.to_string()))?;
+        match self.strict_style_tags_error() {
+            Some(error) => Err(EmitError::Render(error.to_string())),
+            None => Ok(text),
+        }
+    }
+
+    fn write(&self, event: &serde_json::Value) -> Result<(), EmitError> {
+        if self.representation.is_human() {
+            let text = self.render(event)?;
+            return Ok(self.sink.write_line(text.as_bytes())?);
+        }
+        let line = standout_render::serialize_document(event, self.representation)
+            .map_err(|error| EmitError::Render(error.to_string()))?;
+        Ok(self.sink.with_writer(|writer| {
+            writer.write_all(line.as_bytes())?;
+            writer.flush()
+        })?)
     }
 }
 
 impl EventSink for EventDestination {
-    fn deliver(&self, event: &serde_json::Value) -> Result<(), std::io::Error> {
-        self.emitted.set(self.emitted.get() + 1);
-        let representation = self.context.representation;
-        if representation.is_human() {
-            return match self
-                .render(event)
-                .and_then(|text| match self.strict_style_tags_error() {
-                    Some(error) => Err(error),
-                    None => Ok(text),
-                }) {
-                Ok(text) => self.sink.write_line(text.as_bytes()),
-                Err(error) => {
-                    self.fail(error);
-                    Ok(())
-                }
-            };
+    fn deliver(&self, event: &serde_json::Value) -> Result<(), EmitError> {
+        let Err(error) = self.write(event) else {
+            return Ok(());
+        };
+        let mut failure = self.failure.borrow_mut();
+        if failure.is_none() {
+            *failure = Some(RunError::new(error.to_string(), RunErrorKind::Render));
         }
-        if representation.is_stream() {
-            let line = standout_render::serialize_document(event, representation)
-                .map_err(std::io::Error::other)?;
-            return self.sink.with_writer(|writer| {
-                writer.write_all(line.as_bytes())?;
-                writer.flush()
-            });
-        }
-        let encoding = output_mode_flag_spelling(representation)
-            .map(|flag| format!("--output {flag}"))
-            .unwrap_or_else(|| format!("{representation:?}"));
-        self.fail(RunError::new(
-            format!(
-                "command `{}` emitted an event under {encoding}; that encoding carries a \
-                 command's events as one document and standout does not build one yet",
-                self.context.command_path,
-            ),
-            RunErrorKind::Render,
-        ));
-        Ok(())
+        Err(error)
     }
 
     fn is_open(&self) -> bool {
-        self.sink.is_open() && self.failure.borrow().is_none()
+        self.sink.is_open()
     }
 }

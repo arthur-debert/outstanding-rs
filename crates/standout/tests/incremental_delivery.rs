@@ -362,3 +362,87 @@ fn strict_mode_fails_an_event_with_an_unresolved_style_tag_before_it_is_written(
         "strict mode writes nothing it is about to reject"
     );
 }
+
+#[test]
+fn an_encoding_that_cannot_carry_events_refuses_before_the_handler_runs() {
+    for representation in ["json", "yaml", "csv"] {
+        let destination = Shared::default();
+        let ran = Rc::new(RefCell::new(false));
+        let handler_ran = ran.clone();
+        let app = App::builder()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
+                "apply",
+                EventsFnHandler::new(
+                    move |_,
+                          _ctx,
+                          results: &mut Results<Event>|
+                          -> HandlerResult<serde_json::Value> {
+                        *handler_ran.borrow_mut() = true;
+                        results.emit(Event::ApplyStart { resource: "web" })?;
+                        Ok(Output::Render(json!({ "add": 1 })))
+                    },
+                ),
+                |cfg| cfg,
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let outcome = app
+            .run_with_sink(
+                command(),
+                ["app", &format!("--output={representation}"), "apply"],
+                target(),
+                ColorPolicy::Never,
+                InputSources::from_process(),
+                StreamSink::new(destination.clone()),
+            )
+            .into_outcome();
+
+        assert!(
+            render_error(&outcome).contains("standout does not build one yet"),
+            "{representation}"
+        );
+        assert!(
+            !*ran.borrow(),
+            "{representation}: a command that cannot be carried never runs"
+        );
+        assert!(destination.0.borrow().is_empty(), "{representation}");
+    }
+}
+
+#[test]
+fn an_emit_failure_the_handler_swallows_still_fails_the_run() {
+    let destination = Shared::default();
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(UNRESOLVED_TAG_TEMPLATES, ""))
+        .strict_style_tags(true)
+        .command_with(
+            "apply",
+            EventsFnHandler::new(
+                |_, _ctx, results: &mut Results<Event>| -> HandlerResult<serde_json::Value> {
+                    let _ = results.emit(Event::ApplyStart { resource: "web" });
+                    Ok(Output::Render(json!({ "add": 1 })))
+                },
+            ),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let outcome = app
+        .run_with_sink(
+            command(),
+            ["app", "apply"],
+            target(),
+            ColorPolicy::Never,
+            InputSources::from_process(),
+            StreamSink::new(destination.clone()),
+        )
+        .into_outcome();
+
+    assert!(render_error(&outcome).contains("left 1 style tag unresolved: nope"));
+    assert!(destination.0.borrow().is_empty());
+}

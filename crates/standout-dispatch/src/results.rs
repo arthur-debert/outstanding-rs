@@ -40,6 +40,10 @@ pub enum NoEvents {}
 pub enum EmitError {
     #[error("event does not serialize: {0}")]
     Serialize(#[from] serde_json::Error),
+    /// The destination could not turn the value into bytes: a render failure
+    /// carrying the message the run reports.
+    #[error("{0}")]
+    Render(String),
     #[error("event could not be written: {0}")]
     Write(#[from] std::io::Error),
 }
@@ -64,9 +68,11 @@ impl Delivery {
 /// The representation's destination for one emitted event.
 ///
 /// `deliver` returns once the value has been rendered or framed and written,
-/// so the handler's next statement runs after the consumer could read it.
+/// so the handler's next statement runs after the consumer could read it. It
+/// returns `Err` for every reason the event did not reach the destination, so
+/// the handler's `?` stops at the emit that failed.
 pub trait EventSink {
-    fn deliver(&self, event: &serde_json::Value) -> Result<(), std::io::Error>;
+    fn deliver(&self, event: &serde_json::Value) -> Result<(), EmitError>;
 
     /// False once the destination has gone away; nothing further is written.
     fn is_open(&self) -> bool {
@@ -183,7 +189,7 @@ impl<E: Serialize> Results<E> {
     }
 
     /// Returns once the value has been retained and written; fails when it
-    /// does not serialize or the destination refuses the bytes.
+    /// does not serialize, does not render, or cannot be written.
     pub fn emit(&mut self, event: E) -> Result<(), EmitError> {
         let retaining = self
             .recorder
@@ -215,7 +221,7 @@ mod tests {
     }
 
     impl EventSink for Delivered {
-        fn deliver(&self, event: &serde_json::Value) -> Result<(), std::io::Error> {
+        fn deliver(&self, event: &serde_json::Value) -> Result<(), EmitError> {
             self.values.borrow_mut().push(event.clone());
             Ok(())
         }
@@ -327,8 +333,8 @@ mod tests {
     fn a_destination_that_refuses_the_bytes_is_an_emit_error() {
         struct Refuses;
         impl EventSink for Refuses {
-            fn deliver(&self, _: &serde_json::Value) -> Result<(), std::io::Error> {
-                Err(std::io::Error::other("no room"))
+            fn deliver(&self, _: &serde_json::Value) -> Result<(), EmitError> {
+                Err(EmitError::Write(std::io::Error::other("no room")))
             }
         }
         let mut results = Results::for_run(None, Rc::new(Refuses));

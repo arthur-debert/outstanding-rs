@@ -323,9 +323,10 @@ fn apply(
 Register it with `EventsFnHandler::new(apply)`, or write the same three
 parameters under `#[handler]`, which reads the `Results` parameter and derives
 the command's event type from it. `emit` takes the value by value, returns once
-it has been rendered or written, and fails only when the value does not
-serialize or the destination refuses the bytes; propagate with `?` and the run
-fails with it. The framework never inspects an event: its shape, including
+it has been rendered or written, and fails when the value does not serialize,
+does not render, or cannot be written; propagate with `?` and the run fails
+with it. Standout reports that failure as a render error whether or not the
+handler propagates it. The framework never inspects an event: its shape, including
 whether it carries a `type` key, is the application's contract with its
 consumers.
 
@@ -383,7 +384,7 @@ $ myapp apply --output ndjson
 `json`, `yaml` and `csv` have no line framing, so they carry a command's events
 as one document written when the command ends. Standout does not build that
 document yet: an emitting command under those encodings is a render error,
-decided before anything is written.
+decided from the handler's declaration before the handler runs.
 
 A failure after emitted events keeps them — the human representation has
 rendered them, line framing has written them — and the diagnostic follows in

@@ -34,6 +34,8 @@ impl<E: Serialize> Results<E> {
 pub enum EmitError {
     #[error("event does not serialize: {0}")]
     Serialize(#[from] serde_json::Error),
+    #[error("{0}")]
+    Render(String),
     #[error("event could not be written: {0}")]
     Write(#[from] std::io::Error),
 }
@@ -106,7 +108,7 @@ command that declares events are a render error decided before anything is writt
 
 ## Failure after emitted events
 
-`emit` fails only when the event does not serialize or the bytes cannot be written. The
+`emit` fails when the event does not serialize, does not render, or cannot be written. The
 handler propagates with `?` and the run fails under the machine contract. Values already
 written stand: nothing is retried and nothing is withdrawn.
 

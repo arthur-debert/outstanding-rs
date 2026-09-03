@@ -1480,6 +1480,13 @@ impl App {
             hooks.run_pre_dispatch(matches, &mut ctx)?;
         }
 
+        super::dispatch::reject_events_under_a_document_encoding(
+            H::EMITS_EVENTS,
+            path,
+            output_mode,
+        )
+        .map_err(|e| HookError::post_output("Render error").with_source(e))?;
+
         let mut target = TargetProperties::detect();
         target.ambiguous_width = self.ambiguous_width;
         let destination = std::rc::Rc::new(crate::cli::events::EventDestination::new(
@@ -1512,10 +1519,9 @@ impl App {
             super::dispatch::reject_status_without_a_carrier(status, is_binary, is_artifact)
                 .map_err(|e| HookError::post_output("Render error").with_source(e))
         };
-        let emits_events = H::EMITS_EVENTS || destination.emitted() > 0;
         let reject_payload_from_an_emitting_command = |is_binary: bool, is_artifact: bool| {
             super::dispatch::reject_payload_from_an_emitting_command(
-                emits_events,
+                H::EMITS_EVENTS,
                 is_binary,
                 is_artifact,
             )

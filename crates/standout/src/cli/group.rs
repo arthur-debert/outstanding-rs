@@ -91,10 +91,16 @@ where
               color_policy: crate::ColorPolicy,
               theme: &crate::Theme,
               target: crate::TargetProperties| {
+            let command_path = ctx.command_path.join(".");
+            super::dispatch::reject_events_under_a_document_encoding(
+                H::EMITS_EVENTS,
+                &command_path,
+                output_mode,
+            )?;
             let destination = Rc::new(EventDestination::new(
                 sink.clone(),
                 EventContext {
-                    command_path: ctx.command_path.join("."),
+                    command_path,
                     template: event_template(&template),
                     theme: theme.clone(),
                     context_registry: context_registry.clone(),
@@ -135,7 +141,7 @@ where
                 target,
             )?;
             super::dispatch::reject_payload_from_an_emitting_command(
-                H::EMITS_EVENTS || destination.emitted() > 0,
+                H::EMITS_EVENTS,
                 matches!(output, DispatchOutput::Binary(_, _)),
                 matches!(output, DispatchOutput::Artifact { .. }),
             )?;

@@ -105,6 +105,31 @@ pub(crate) fn reject_payload_from_an_emitting_command(
     ))
 }
 
+/// The encodings that carry a command's results as one document have no
+/// incremental form yet. An emitting command under one is refused at dispatch
+/// entry, from the handler's declaration and the representation, so a mutating
+/// run never happens for a reason known before it started and no byte is
+/// written first.
+pub(crate) fn reject_events_under_a_document_encoding(
+    emits_events: bool,
+    command_path: &str,
+    output_mode: crate::Representation,
+) -> Result<(), RunError> {
+    if !emits_events || output_mode.is_human() || output_mode.is_stream() {
+        return Ok(());
+    }
+    let encoding = crate::cli::builder::output_mode_flag_spelling(output_mode)
+        .map(|flag| format!("--output {flag}"))
+        .unwrap_or_else(|| format!("{output_mode:?}"));
+    Err(RunError::new(
+        format!(
+            "command `{command_path}` emits events under {encoding}; that encoding carries a \
+             command's events as one document and standout does not build one yet"
+        ),
+        RunErrorKind::Render,
+    ))
+}
+
 pub(crate) fn reject_payload_under_stream(
     output_mode: crate::Representation,
     is_binary: bool,

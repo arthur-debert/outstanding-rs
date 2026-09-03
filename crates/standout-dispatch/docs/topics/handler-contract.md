@@ -527,14 +527,17 @@ pub trait Handler {
 counting what one invocation emitted: it decides at build time that the command
 needs its `<name>.event` template, and it refuses `Output::Binary` and
 `Output::Artifact` from an incremental command on the run that emits nothing
-too. `EventsFnHandler` and `#[handler]` set it; a hand-written `Handler` with an
-inhabited `Event` sets it alongside the associated type.
+too, and it refuses an incremental command under an encoding that carries a
+command's results as one document before the handler runs. `EventsFnHandler`
+and `#[handler]` set it; a hand-written `Handler` with an inhabited `Event` sets
+it alongside the associated type.
 
 `Results::emit` takes the event by value, returns once the framework has
-retained it and written it, and fails only when the value does not serialize
-(`EmitError::Serialize`) or the destination refuses the bytes
-(`EmitError::Write`). `E: Serialize` is the whole bound: an event may hold an
-`Rc` or anything else that does not cross threads.
+retained it and written it, and fails when the value does not serialize
+(`EmitError::Serialize`), the destination cannot turn it into bytes
+(`EmitError::Render`) or cannot write them (`EmitError::Write`). `E: Serialize`
+is the whole bound: an event may hold an `Rc` or anything else that does not
+cross threads.
 
 `Results` is `&mut` and not `Clone`, so a handler cannot store it or keep
 emitting past its own run, and it exposes `emit` and nothing else: a handler
