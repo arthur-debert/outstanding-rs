@@ -64,6 +64,14 @@ pub fn batch(config: &BatchConfig) -> anyhow::Result<Vec<(String, ArchetypeOutco
 }
 
 fn run_one(config: &BatchConfig, scratch_root: &Path, archetype: &str) -> ArchetypeOutcome {
+    // Reserved before the run starts and threaded through as `RunConfig::run_id`, so the
+    // scratch directory, `report.run_id`, and this destination all name the same run: a
+    // same-second re-run of one archetype gets a distinct id here rather than one the
+    // scratch claim (cleaned up between runs) would happily hand out again.
+    let base = format!("{archetype}-{}", crate::unix_timestamp());
+    let (run_id, dest) =
+        crate::claim_run_dir(&config.out_dir, &base).map_err(|err| format!("{err:#}"))?;
+
     let run_config = RunConfig {
         archetype: archetype.to_string(),
         archetypes_dir: config.archetypes_dir.clone(),
@@ -73,22 +81,28 @@ fn run_one(config: &BatchConfig, scratch_root: &Path, archetype: &str) -> Archet
         broker: config.broker.clone(),
         framework_version: config.framework_version.clone(),
         timeouts: config.timeouts,
+        run_id: Some(run_id.clone()),
     };
-    let (report, run_dir) = run(&run_config).map_err(|err| format!("{err:#}"))?;
+    let (report, run_dir) = match run(&run_config) {
+        Ok(outcome) => outcome,
+        Err(err) => {
+            let _ = std::fs::remove_dir(&dest);
+            return Err(format!("{err:#}"));
+        }
+    };
     crate::print_summary(&report);
+    debug_assert_eq!(
+        report.run_id, run_id,
+        "run() must honor its run_id override"
+    );
 
-    // The scratch directory a run's id was claimed against is removed once sanitized
-    // (below), so a same-second re-run of the same archetype can claim that id again;
-    // reserve the final destination separately so two such runs never share one.
-    let (dest_id, dest) =
-        crate::claim_run_dir(&config.out_dir, &report.run_id).map_err(|err| format!("{err:#}"))?;
     sanitize_and_cleanup(
         &config.sanitize_script,
         &run_dir,
         &dest,
         config.account.as_deref(),
     )?;
-    Ok(dest_id)
+    Ok(run_id)
 }
 
 fn sanitize_and_cleanup(

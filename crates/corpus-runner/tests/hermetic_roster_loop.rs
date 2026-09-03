@@ -135,6 +135,7 @@ PARXX = "the fixture cannot do this on purpose"
         broker: None,
         framework_version: env!("CARGO_PKG_VERSION").to_string(),
         timeouts: Timeouts::default(),
+        run_id: None,
     };
 
     let (report, run_dir) = run(&config).unwrap();

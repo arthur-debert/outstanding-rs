@@ -62,6 +62,7 @@ fn smoke_archetype_completes_the_loop() {
         broker: None,
         framework_version: "8.1.1".to_string(),
         timeouts: Timeouts::default(),
+        run_id: None,
     };
 
     let (report, run_dir) = run(&config).unwrap();

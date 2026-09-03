@@ -47,6 +47,7 @@ fn a_build_script_spawned_by_the_agent_cannot_use_the_brokered_credential() {
             build: Duration::from_secs(120),
             check: Duration::from_secs(30),
         },
+        run_id: None,
     };
 
     let (report, run_dir) = run(&config).unwrap();

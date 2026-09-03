@@ -61,6 +61,7 @@ fn full_loop_completes_hermetically_with_a_fake_build() {
         broker: None,
         framework_version: env!("CARGO_PKG_VERSION").to_string(),
         timeouts: Timeouts::default(),
+        run_id: None,
     };
 
     let (report, run_dir) = run(&config).unwrap();

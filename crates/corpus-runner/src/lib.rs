@@ -38,6 +38,10 @@ pub struct RunConfig {
     pub broker: Option<broker::BrokerConfig>,
     pub framework_version: String,
     pub timeouts: Timeouts,
+    /// A caller-claimed id the run must use verbatim, in place of its own `archetype-timestamp`.
+    /// `batch` reserves this against its output directory before the run starts, so scratch,
+    /// `report.run_id`, and the sanitized destination all name the same run.
+    pub run_id: Option<String>,
 }
 
 pub struct ReevaluationConfig {
@@ -85,8 +89,19 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
         "--runs-dir",
     )?;
     let source_root = checkout_root(&config.docs_dir)?;
-    let base = format!("{}-{}", archetype.name, unix_timestamp());
+    let base = config
+        .run_id
+        .clone()
+        .unwrap_or_else(|| format!("{}-{}", archetype.name, unix_timestamp()));
     let (run_id, run_dir) = claim_run_dir(&config.runs_dir, &base)?;
+    if let Some(wanted) = &config.run_id {
+        anyhow::ensure!(
+            &run_id == wanted,
+            "run id {wanted:?} was already claimed in {}; a stale scratch directory needs \
+             cleanup before this run can start",
+            config.runs_dir.display()
+        );
+    }
 
     eprintln!(
         "[corpus] provisioning blind workspace in {}",
@@ -542,7 +557,7 @@ pub(crate) fn require_outside_checkout(
     Ok(canonical)
 }
 
-fn unix_timestamp() -> u64 {
+pub(crate) fn unix_timestamp() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())

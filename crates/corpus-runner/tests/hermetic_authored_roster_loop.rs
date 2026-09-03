@@ -54,6 +54,7 @@ fn authored_archetypes_complete_the_loop_against_a_failing_binary() {
             broker: None,
             framework_version: env!("CARGO_PKG_VERSION").to_string(),
             timeouts: Timeouts::default(),
+            run_id: None,
         };
 
         let (report, run_dir) = run(&config).unwrap();

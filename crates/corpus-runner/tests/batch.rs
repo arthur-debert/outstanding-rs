@@ -135,7 +135,7 @@ fn batch_smoke_writes_both_scorecards_and_sanitized_evidence() {
 }
 
 #[test]
-fn batch_two_runs_of_the_same_archetype_get_distinct_destinations() {
+fn batch_two_runs_of_the_same_archetype_get_distinct_ids_matching_their_reports() {
     // Same-second runs of one archetype can claim the same run id in scratch (removed
     // between runs), so the final destination reservation is what must keep them apart.
     let scratch = tempfile::tempdir().unwrap();
@@ -188,13 +188,16 @@ fn batch_two_runs_of_the_same_archetype_get_distinct_destinations() {
         .collect();
     assert_eq!(run_dirs.len(), 2, "{run_dirs:?}");
     for run_dir in &run_dirs {
-        assert!(run_dir
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .starts_with("smoke-"));
-        assert!(run_dir.join("report.json").is_file(), "{run_dir:?}");
+        let dir_name = run_dir.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(dir_name.starts_with("smoke-"), "{dir_name}");
         assert!(run_dir.join("transcript.jsonl").is_file(), "{run_dir:?}");
+
+        // The id this run was reserved under, before it ran, must be the same id its
+        // own report names: directory, scratch, and report agree by construction.
+        let report: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(run_dir.join("report.json")).unwrap())
+                .unwrap();
+        assert_eq!(report["run_id"], dir_name);
     }
     assert_ne!(run_dirs[0], run_dirs[1]);
 }

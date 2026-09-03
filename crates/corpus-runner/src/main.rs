@@ -205,6 +205,7 @@ fn main() -> ExitCode {
                 broker,
                 framework_version,
                 timeouts,
+                run_id: None,
             };
             match run(&config) {
                 Ok((report, _run_dir)) => {
