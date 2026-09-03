@@ -13,10 +13,6 @@ fn repo() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-// Synthetic stand-ins for `corpus/pilot/runs`: same acceptance, invariant
-// and questionnaire data as the committed pilot reports, so the figures
-// below still reproduce what the pilot scorecard published, without this
-// test depending on committed run evidence.
 const PILOT_RUNS: &str = "crates/corpus-runner/tests/fixtures/pilot/runs";
 
 fn scorecard(sets: &[&str]) -> String {
@@ -76,10 +72,6 @@ fn archetype_row<'a>(table: &'a str, archetype: &str) -> &'a str {
         .unwrap_or_else(|| panic!("no row for {archetype} in:\n{table}"))
 }
 
-// A gap case that closed its epic flips to `expected = "pass"` but keeps its
-// `gap` marker so the evidence check keeps running (corpus/README.md). It has
-// to count toward the required denominator from then on, and a hand-rolled
-// pass has to be visible even though it now lives in that bucket.
 #[test]
 fn a_case_flipped_to_expected_pass_still_carrying_gap_counts_as_required() {
     let temp = tempfile::tempdir().unwrap();
@@ -230,11 +222,6 @@ fn a_report_without_a_provenance_block_names_its_agent_from_the_run_record() {
     }
 }
 
-// Not the fixtures: the real committed pilot reports, whose transcripts are
-// deleted. Their `recovered_provenance` block has to carry what a
-// transcript read would have, or this documented command
-// (`pilot=corpus/pilot/runs`) degrades silently to "version unstated, model
-// unstated" the moment the fixtures stop standing in for it.
 #[test]
 fn the_real_committed_pilot_reports_stay_self_sufficient_without_their_deleted_transcripts() {
     let real_pilot_runs = repo().join("corpus/pilot/runs");

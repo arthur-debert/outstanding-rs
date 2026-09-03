@@ -29,8 +29,6 @@ fn the_stored_digest_names_the_sanitized_transcript_not_the_raw_one() {
         "{{\"type\":\"system\",\"subtype\":\"init\",\"cwd\":{:?},\"session_id\":\"12345678-ABCD-1234-ABCD-123456789ABC\"}}\n",
         workspace.to_string_lossy(),
     );
-    // A stale-shaped hash: what the runner hashed before sanitizing,
-    // deliberately wrong so the test fails if the sanitizer leaves it alone.
     fs::write(
         run.join("report.json"),
         format!(
@@ -57,8 +55,6 @@ fn the_stored_digest_names_the_sanitized_transcript_not_the_raw_one() {
     );
 
     let sanitized_transcript = fs::read(dest.join("transcript.jsonl")).unwrap();
-    // The sanitizer actually changed the bytes, or this test would not tell
-    // a recomputed hash apart from the stale one it started with.
     assert_ne!(sanitized_transcript, raw_transcript.as_bytes());
     let expected = sha256_hex(&sanitized_transcript);
 
