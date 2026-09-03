@@ -697,7 +697,7 @@ where
 /// rather than [`NoEvents`].
 pub struct EventsFnHandler<F, E, T, R = HandlerResult<T>>
 where
-    E: Serialize,
+    E: Serialize + 'static,
     T: Serialize,
 {
     f: F,
@@ -708,7 +708,7 @@ impl<F, E, T, R> EventsFnHandler<F, E, T, R>
 where
     F: FnMut(&ArgMatches, &CommandContext, &mut Results<E>) -> R,
     R: IntoHandlerResult<T>,
-    E: Serialize,
+    E: Serialize + 'static,
     T: Serialize,
 {
     pub fn new(f: F) -> Self {

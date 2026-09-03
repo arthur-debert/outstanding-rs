@@ -85,8 +85,9 @@ dispatch closure. As a separate `&mut` it is disjoint from `&ArgMatches` and
 `&CommandContext`, so a handler may hold borrows taken out of `matches` across every
 `emit` and use them afterwards.
 
-`E: Serialize` is the whole bound. No `Send`, no `Clone`, no `Deserialize`, so an event may
-hold an `Rc` or any other data that does not cross threads.
+`Results<E>` itself requires only `E: Serialize`; as `Handler::Event` the type must also be
+`'static`. No `Send`, no `Clone`, no `Deserialize`, so an event may hold an `Rc` or any
+other data that does not cross threads.
 
 ## Ordering and retention
 

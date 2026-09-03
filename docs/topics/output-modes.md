@@ -394,12 +394,12 @@ stops reading (`myapp apply --output ndjson | head -1`), Standout discards what
 follows, lets the handler run to completion, and reports the command's own
 status.
 
-Binary and artifact output cannot follow events. A command with an event type
-carries `Output::Render` and `Output::Silent` only, so either payload is a
-render error under every representation — on the run that emitted nothing too,
-since the refusal follows the type rather than the count. Under
-`ndjson` a payload is a render error whether or not the command declares
-events: a stream of JSON lines has no room for one.
+Binary and artifact output cannot follow events. A command whose event type is
+not `NoEvents` carries `Output::Render` and `Output::Silent` only, so either
+payload is a render error under every representation — on the run that emitted
+nothing too, since the refusal follows the type rather than the count. Under
+`ndjson` a payload is a render error whether or not the command's event type is
+`NoEvents`: a stream of JSON lines has no room for one.
 
 ## NDJSON Mode
 
