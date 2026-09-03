@@ -23,10 +23,10 @@ test net
     │                                  │          escape-hatch findings, parallel to ROB05)
     └── parity: config layering        │
         ├── parity: machine contract ◄─┤         (gated by tflike's diagnostic milestone)
-        │   └── parity: terminal citizenship
+        │   └── parity: typed command output
         └──────────────────────────────┘         (gated by tflike's full suite; also
                                                   depends on machine contract for the
-                                                  event model its progress seam emits)
+                                                  event model its incremental results ride)
 ```
 
 The corpus is deliberately split. Its **pilot** runs early (immediately after the test net,
@@ -40,8 +40,9 @@ roster implemented on the blessed idioms, the CI gate, real downstreams joined �
 after the blessed surface, since corpus apps pin idioms that epic deliberately breaks;
 only its validity run and its spec-only archetype authoring, which produce no app, may
 start before the release.
-Terminal citizenship depends on machine contract, not merely on config layering: its
-progress seam emits machine events into the model that epic defines. Ordering is by
+Typed command output (`docs/spec/typed-command-output.md`) depends on machine contract,
+not merely on config layering: its incremental result events ride the model that epic
+defines. Ordering is by
 dependency, not calendar: siblings under one parent may run concurrently.
 
 ## Context

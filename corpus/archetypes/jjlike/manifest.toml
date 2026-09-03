@@ -60,4 +60,4 @@ description = "A template that exceeds --render-budget-ms must terminate promptl
 cases = ["render-budget-exceeded-fails-promptly"]
 
 [gaps]
-runtime-templates = "User-supplied runtime templates — parsing, typed functions as a stable surface, untrusted-input hardening (name+offset diagnostics, configured tag degradation, render budget). Owning parity epic not yet minted: the three existing parity Specs are PAR01/PAR02/PAR03, none covers this, and codes are human-assigned, so the owner is recorded in prose; assigning the code is flagged for that epic's grill."
+runtime-templates = "User-supplied runtime templates — parsing, typed functions as a stable surface, untrusted-input hardening (name+offset diagnostics, configured tag degradation, render budget). Owning parity epic not yet minted: the existing parity Specs are PAR01, PAR02 and typed command output, none covers this, and codes are human-assigned, so the owner is recorded in prose; assigning the code is flagged for that epic's grill."

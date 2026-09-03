@@ -26,8 +26,8 @@ What exists on `main` at 7cb4152:
   three known-edge families the pilot did not independently rediscover (mistyped
   template names, registration order, incomplete app theme × framework help).
 - **The gap suites** (`corpus/gap-suites/`): 18 `expect_gap` tripwires across
-  `tflike/diagnostic` (PAR02), `tflike/progress` (PAR03) and `jjlike/runtime-templates`
-  (no epic minted), pinned by `gaps.toml` and a ledger test under plain `pixi run test`.
+  `tflike/diagnostic` (PAR02), `tflike/progress` (typed command output) and
+  `jjlike/runtime-templates` (no epic minted), pinned by `gaps.toml` and a ledger test under plain `pixi run test`.
 - **The pilot evidence** (`corpus/pilot/`): four sanitized runs against 8.1.1 and the
   scorecard. Twelve framework findings (#349–#360) and a docs errata list (#361).
 
@@ -113,8 +113,8 @@ the archetypes are sharp enough to find *known* defects has never run.
   most bugs (#292–#303), is ported to the ROB05 release and added to the corpus build.
   Its port is itself the migration-cost measurement ROB05 promised. The other three
   downstreams are out of scope; their ports are their own repos' work.
-- **The gap suites keep their tripwires**; when PAR02/PAR03 close them, the ledger flip
-  and suite promotion happen in the parity epic, not here.
+- **The gap suites keep their tripwires**; when the owning parity epics close them, the
+  ledger flip and suite promotion happen in the parity epic, not here.
 
 ## Non-Goals
 

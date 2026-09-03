@@ -7,7 +7,7 @@ use std::path::Path;
 
 use corpus_gap_suites::{expect_gap, parse_ndjson, reject_ansi, run, Output};
 
-const GATE: &str = "tflike/progress -> PAR03 (terminal citizenship)";
+const GATE: &str = "tflike/progress -> typed command output";
 const BIN: &str = "CORPUS_TFLIKE_BIN";
 
 /// `state` is written at the default `main.tfl.state` path; the tempdir is returned to inspect.
@@ -94,7 +94,7 @@ fn expected_fail_apply_lifecycle_events_ride_the_stream_and_state_is_rewritten()
     expect_gap(
         GATE,
         BIN,
-        "no progress seam emits lifecycle events",
+        "no typed incremental result carries the lifecycle events",
         |binary| {
             let (dir, out) = apply_two_changes(binary)?;
             if out.code != Some(0) {
@@ -126,7 +126,7 @@ fn expected_fail_apply_deletion_emits_lifecycle_and_rewrites_state() {
     expect_gap(
         GATE,
         BIN,
-        "no progress seam emits lifecycle events",
+        "no typed incremental result carries the lifecycle events",
         |binary| {
             let (dir, out) = apply_in_tempdir(binary, "resource web absent\n", Some("web\n"))?;
             if out.code != Some(0) {
@@ -154,7 +154,7 @@ fn expected_fail_progress_is_suppressed_under_structured_mode() {
     expect_gap(
         GATE,
         BIN,
-        "no mode-aware progress suppression exists",
+        "no representation-aware suppression of progress rendering exists",
         |binary| {
             let (_dir, out) = apply_two_changes(binary)?;
             if out.code != Some(0) {

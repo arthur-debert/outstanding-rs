@@ -12,25 +12,24 @@ here touches them.
 The weak argument for removal is that the seam was dead: no production code in
 the workspace ever called `detect_is_tty`, so the override could not change
 what any run did. That argument alone would not justify the break, because the
-seam had a named future consumer. The terminal-citizenship Spec
-(`docs/spec/parity-terminal-citizenship.md`) wants a pager that is TTY-gated
-always, a progress display that spins on a terminal and prints plain steps
-when piped, a backend selected from resolved mode and TTY facts, and — line
-127 — progress that is assertable in `TestHarness`, which is exactly a TTY
-detector with a test override. Deleting a seam that an approved Spec plans to
-use is churn unless something stronger is true.
+seam had a named future consumer. The typed command output Spec
+(`docs/spec/typed-command-output.md`) delivers complete human output to a pager
+only when stdout is a terminal, and renders transient progress on stderr only
+when stderr is one, which is exactly a TTY detector with a test override.
+Deleting a seam that an approved Spec plans to use is churn unless something
+stronger is true.
 
 Two things are. First, the shape is wrong for that consumer: `detect_is_tty`
-answered for stdout alone (`Term::stdout().is_term()`), while terminal
-citizenship needs stdout and stderr terminal facts independently — the pager
-gates on one, progress writes to the other — and a single global cannot
+answered for stdout alone (`Term::stdout().is_term()`), while that Spec
+needs stdout and stderr terminal facts independently — the pager decision
+reads one, progress rendering writes to the other — and a single global cannot
 answer both. Second, the seam already failed its first real customer in this
 repo: `standout-render`'s warning renderer needed a stream-specific terminal
 fact and called `console::Term::stderr().features()` directly, going around
 the detector. Production code with precisely this need looked at the seam and
-declined it. So terminal citizenship should design a stream-aware seam knowing
-what it needs, rather than inherit a stdout-only global that has already been
-refused once. The future consumer was known and weighed; this is not an
+declined it. So the typed command output work should design a stream-aware
+seam knowing what it needs, rather than inherit a stdout-only global that has
+already been refused once. The future consumer was known and weighed; this is not an
 oversight to re-litigate, and re-adding a global `is_tty()` would reintroduce
 the shape that failed.
 

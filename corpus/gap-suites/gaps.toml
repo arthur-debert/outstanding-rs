@@ -27,7 +27,7 @@ armed = 0
 
 [[gate]]
 name = "tflike/progress"
-epic = "PAR03 (terminal citizenship)"
+epic = "not yet minted (docs/spec/typed-command-output.md; codes are human-assigned)"
 env = "CORPUS_TFLIKE_BIN"
 tests = "tests/tflike_progress.rs"
 status = "open"

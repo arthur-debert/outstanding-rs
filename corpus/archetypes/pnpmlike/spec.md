@@ -11,9 +11,10 @@ through a level. The two stderr channels are silenced by two different switches.
 
 The survey's original sketch for C11 is lost with the 2026-08-16 session record. This
 spec is reconstructed from the survey's capability matrix, where C11 `pnpmlike` is the
-roster's **reporter/quiet matrix** (`docs/spec/parity-terminal-citizenship.md`, goals and
-"Further Notes"), and it is written to stress five interactions rather than to reproduce
-pnpm:
+roster's **reporter/quiet matrix** (the reporter is transient progress rendering and the
+level is operational verbosity, two concerns `docs/spec/typed-command-output.md`
+separates from command results), and it is written to stress five interactions rather
+than to reproduce pnpm:
 
 1. **Reporter selection against stream attendance.** The reporter writes to stderr, so
    it degrades on *stderr's* attendance — not stdout's. `pnpmlike install > out.txt` in

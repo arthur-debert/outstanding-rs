@@ -105,7 +105,7 @@ fn a_case_flipped_to_expected_pass_still_carrying_gap_counts_as_required() {
                     "name": "closed-for-real",
                     "expected": "fail",
                     "outcome": "unexpected-pass",
-                    "gap": "PAR03",
+                    "gap": "runtime-templates",
                 },
             ],
         },

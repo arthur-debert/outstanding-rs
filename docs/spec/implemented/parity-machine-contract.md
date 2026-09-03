@@ -29,8 +29,9 @@
 >   D1's list, `framework`, the kind of a warning entry.
 
 First epic of the capability-parity program to execute. The program's order is PAR02,
-then PAR01 (config layering) and PAR04 (corpus runner) side by side, then PAR03
-(terminal citizenship), then PAR05 (named configuration sets). PAR02 depends on nothing
+then PAR01 (config layering) and PAR04 (corpus runner) side by side, then the
+terminal-behavior epic that `docs/spec/typed-command-output.md` has since replaced, then
+PAR05 (named configuration sets). PAR02 depends on nothing
 unfinished: the composition-contracts work (ADRs 0025 to 0035) already put every
 failure through one function, `emit_run_result` in
 `crates/standout/src/cli/builder/execution.rs`, and already scans raw argv for
@@ -313,6 +314,7 @@ WS02, WS03 and WS04 start after WS01 merges and can run in parallel.
 
 ## Out of scope
 
-Human-mode error wording, verbosity and the warning channel's levels (PAR03), a
-progress event vocabulary (PAR03), schema migration tooling, YAML or JSON streaming
+Human-mode error wording, operational verbosity and the warning channel's levels (a
+separate future feature), incremental result events (`docs/spec/typed-command-output.md`),
+schema migration tooling, YAML or JSON streaming
 beyond one value per line, a machine-readable form for `term` or `text`.

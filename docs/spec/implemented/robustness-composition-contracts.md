@@ -423,5 +423,6 @@ No ADR: recipe/config dispatch closures collapse to one helper. There is no publ
 `GroupBuilder` change and no discarded alternative worth recording.
 
 The parity Specs (`parity-machine-contract.md`, implemented beside this one;
-`docs/spec/parity-terminal-citizenship.md`, `docs/spec/parity-config-layering.md`) name
-the sockets they expect this epic to leave. Read them with this Spec before the grill.
+`docs/spec/parity-config-layering.md`; and a third, since replaced by
+`docs/spec/typed-command-output.md`) name the sockets they expect this epic to leave.
+Read them with this Spec before the grill.

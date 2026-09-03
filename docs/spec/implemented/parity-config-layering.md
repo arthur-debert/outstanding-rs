@@ -115,7 +115,9 @@ json` the same failure is a diagnostic document with the position filled in.
 output = "json"     # the output mode when --output is absent; never applies to --help or usage errors
 ```
 
-PAR03 adds `color`, `pager` and `verbosity` to the same section.
+[Typed Command Output](./typed-command-output.md) adds `color` to the same section and
+defines its values and precedence; the pager command is read from the environment only,
+never from a file.
 
 ### The app author
 
@@ -319,11 +321,13 @@ workstreams merge, on the epic branch, together with any module-level rustdoc.
 
 - Epic #476. Downstream ports (padz, rustloc, lookma) are #480 and are not this
   epic's exit.
-- lookma's color detector call is PAR03's; PAR01 only gives `[term]` a home.
+- lookma's color detector call belongs to ANSI presentation
+  (`docs/spec/typed-command-output.md`); PAR01 only gives `[term]` a home.
 
 ## Out of scope
 
 Configuration machinery or a precedence suite in standout; per-key origin in `config
 list` (a clapfig follow-on); per-key layer or scope restrictions, including the
-project-file pager rule (PAR03 owns the pager and decides it there); named
+project-file pager rule (the pager is a delivery decision of
+`docs/spec/typed-command-output.md`); named
 configuration sets; theme selection from config; dodot's per-pack resolver; secrets.

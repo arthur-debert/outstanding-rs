@@ -240,4 +240,5 @@ Closes #450, #451, #454, #455, #461, #462, #465, #467. Finishes #460.
 
 A friction-theme judge (themes stay authored prose), a Langfuse exporter, running blind
 sessions in CI (ADR-0036 forbids the host credential there), a "first render" metric,
-and every framework-side fix the runs found (those belong to PAR02, PAR01 and PAR03).
+and every framework-side fix the runs found (those belong to PAR02, PAR01 and
+`docs/spec/typed-command-output.md`).
