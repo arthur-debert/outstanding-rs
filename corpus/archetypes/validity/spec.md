@@ -96,23 +96,25 @@ exists so framework help has a leaf three levels down.
 
 ## Help
 
-Standout-rendered help is required. The `help` word, `--help`, and `-h`
-all work at the root and at `nest inner leaf`.
+Standout-rendered help is required. `-h` and `--help` are clap flags and
+render at any command depth, including `nest inner leaf`. The `help` word
+is installed at the root only (standout's design, not a gap here): it
+still reaches the leaf by naming its path, `validity help nest inner leaf`.
 
 - The `help` word honors `--output` (`validity help --output text` is
   text; `validity help --output term` is term).
-- `-h` and `--help` are clap flags; they still render the same themed
-  help page.
 - Every help invocation exits 0, writes help on stdout, and leaves
   stderr empty.
 - No unresolved style-tag marker reaches the page: none of
   `[about?]`, `[header?]`, `[usage?]`, `[item?]`, `[metavar?]`,
   `[desc?]`, `[default?]`, `[values?]`, `[example?]`.
-- Clap facts are present: a `Usage` line; root help names `show`,
+- Clap facts are present: a usage line; root help names `show`,
   `early`, `late`, and `nest`; leaf help names the leaf.
-- `--output term` with color forced on still carries ANSI (the
+- An explicit `--output term` is unconditional: it still carries ANSI
+  even with `NO_COLOR` set (an explicit flag beats every env var; the
   framework help theme must survive the incomplete app theme). Text
-  mode and color-off carry no ANSI.
+  mode, and `auto` output suppressed by the environment's color-off
+  convention, carry no ANSI.
 
 ## Exit codes
 

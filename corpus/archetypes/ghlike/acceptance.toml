@@ -93,7 +93,7 @@ argv = ["pr", "checks", "list", "--help"]
 timeout_seconds = 10
 [case.expect]
 exit_code = 0
-stdout_contains = ["Usage"]
+stdout_contains = ["list", "--json"]
 
 # --- human output ------------------------------------------------------------
 

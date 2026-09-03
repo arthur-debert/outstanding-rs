@@ -1,9 +1,9 @@
-// The implementation session: runs the agent command in the blind workspace,
-// scrubbed, instrumented, and deadlined. The agent is a seam — any shell
-// command works — with a hardened non-interactive Claude Code session as
-// the default. A session brokering a credential gives that seam up: the
-// broker answers one pid, so the runner spawns the agent itself rather than
-// a shell that spawns it.
+//! The implementation session: runs the agent command in the blind workspace,
+//! scrubbed, instrumented, and deadlined. The agent is a seam — any shell
+//! command works — with a hardened non-interactive Claude Code session as
+//! the default. A session brokering a credential gives that seam up: the
+//! broker answers one pid, so the runner spawns the agent itself rather than
+//! a shell that spawns it.
 
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context};
 
 use crate::broker::Broker;
+use crate::digest;
 use crate::exec;
 use crate::report::SessionReport;
 use crate::workspace;
@@ -78,6 +79,8 @@ pub fn run_agent(
     let wall_seconds = started.elapsed().as_secs_f64();
 
     let stats = stream_json_stats(&read_tail(transcript_path, TRANSCRIPT_TAIL_BYTES));
+    let transcript_sha256 = hash_transcript(transcript_path)
+        .with_context(|| format!("hashing transcript {}", transcript_path.display()))?;
 
     Ok(SessionReport {
         agent_cmd: agent_cmd.to_string(),
@@ -88,7 +91,19 @@ pub fn run_agent(
         input_tokens: stats.input_tokens,
         output_tokens: stats.output_tokens,
         transcript: TRANSCRIPT_FILENAME.to_string(),
+        transcript_sha256: Some(transcript_sha256),
     })
+}
+
+// Streamed rather than read whole: a transcript can run to tens of megabytes.
+fn hash_transcript(path: &Path) -> anyhow::Result<String> {
+    use sha2::{Digest, Sha256};
+    let file = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut reader, &mut hasher)
+        .with_context(|| format!("reading {}", path.display()))?;
+    Ok(digest::hex(hasher.finalize()))
 }
 
 // A bare name is searched on the runner's own PATH, as the shell it replaces would.
@@ -114,8 +129,6 @@ fn is_executable(path: &Path) -> bool {
 // The runner spawns one program and hands that pid to the broker; it cannot do what a shell would.
 const SHELL_STRUCTURE: &[char] = &['|', '&', ';', '<', '>', '(', ')', '\n'];
 
-// Unquoted, these would reach the agent as literals and mean something different
-// from the same command run through a shell, so they are refused rather than passed.
 const SHELL_GLOB: &[char] = &['*', '?', '[', ']'];
 
 /// Honors quotes and backslash escapes, expands nothing, and refuses a command that needs a shell.
@@ -270,7 +283,6 @@ mod tests {
             argv.contains(&"--strict-mcp-config".to_string()),
             "{argv:?}"
         );
-        // `--setting-sources ''` is an argument, and it is empty.
         let sources = argv
             .iter()
             .position(|arg| arg == "--setting-sources")

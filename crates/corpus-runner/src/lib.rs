@@ -3,10 +3,12 @@
 
 pub mod acceptance;
 pub mod archetype;
+pub mod batch;
 pub mod broker;
 pub mod cases;
 mod digest;
 pub mod exec;
+pub mod manifest;
 pub mod peer;
 pub mod provenance;
 pub mod questionnaire;
@@ -36,6 +38,10 @@ pub struct RunConfig {
     pub broker: Option<broker::BrokerConfig>,
     pub framework_version: String,
     pub timeouts: Timeouts,
+    /// A caller-claimed id the run must use verbatim, in place of its own `archetype-timestamp`.
+    /// `batch` reserves this against its output directory before the run starts, so scratch,
+    /// `report.run_id`, and the sanitized destination all name the same run.
+    pub run_id: Option<String>,
 }
 
 pub struct ReevaluationConfig {
@@ -49,6 +55,7 @@ pub struct ReevaluationConfig {
     pub timeouts: Timeouts,
 }
 
+#[derive(Clone, Copy)]
 pub struct Timeouts {
     pub agent: Duration,
     pub build: Duration,
@@ -75,26 +82,23 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
 
     std::fs::create_dir_all(&config.runs_dir)
         .with_context(|| format!("creating runs directory {}", config.runs_dir.display()))?;
-    let source_root = config
-        .docs_dir
-        .canonicalize()
-        .with_context(|| format!("resolving docs directory {}", config.docs_dir.display()))?
-        .parent()
-        .map(Path::to_path_buf)
-        .context("docs directory has no repository parent")?;
-    let canonical_runs = config
-        .runs_dir
-        .canonicalize()
-        .with_context(|| format!("resolving runs directory {}", config.runs_dir.display()))?;
-    if canonical_runs.starts_with(&source_root) {
-        anyhow::bail!(
-            "runs directory {} is inside source checkout {}; choose an external --runs-dir",
-            canonical_runs.display(),
-            source_root.display()
-        );
-    }
-    let base = format!("{}-{}", archetype.name, unix_timestamp());
-    let (run_id, run_dir) = claim_run_dir(&config.runs_dir, &base)?;
+    require_outside_checkout(
+        &config.runs_dir,
+        &config.docs_dir,
+        "runs directory",
+        "--runs-dir",
+    )?;
+    let source_root = checkout_root(&config.docs_dir)?;
+    let (run_id, run_dir) = match &config.run_id {
+        Some(wanted) => (
+            wanted.clone(),
+            claim_exact_run_dir(&config.runs_dir, wanted)?,
+        ),
+        None => {
+            let base = format!("{}-{}", archetype.name, unix_timestamp());
+            claim_run_dir(&config.runs_dir, &base)?
+        }
+    };
 
     eprintln!(
         "[corpus] provisioning blind workspace in {}",
@@ -173,6 +177,7 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
         &run_dir.join("cases"),
         config.timeouts.check,
         &workspace.isolation,
+        &workspace.app_dir,
     );
 
     let report = RunReport {
@@ -184,8 +189,9 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
         },
         pins: Pins {
             framework_version: config.framework_version.clone(),
-            docs_commit: workspace::docs_commit(&config.docs_dir),
+            docs_commit: workspace.docs_commit.clone(),
             docs_sha256: workspace.docs_sha256.clone(),
+            docs_source: workspace.docs_source,
             acceptance_sha256: archetype.acceptance_sha256().to_string(),
             questionnaire_fingerprint: questionnaire::definition().fingerprint().to_string(),
         },
@@ -208,6 +214,7 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
         },
         session: session_report,
         provenance: provenance::describe(&config.agent_cmd, &transcript_path),
+        recovered_provenance: None,
         acceptance: evaluation.acceptance,
         invariants: evaluation.invariants,
         questionnaire: questionnaire_report,
@@ -290,31 +297,35 @@ pub fn reevaluate(config: &ReevaluationConfig) -> anyhow::Result<RunReport> {
         &config.workspace_root.join(".reevaluation-cases"),
         config.timeouts.check,
         &isolation,
+        &config.workspace_root.join("app"),
     );
 
-    // Before schema 4 the recorded command is all that can be said about the agent.
     let provenance = match source.provenance {
         Some(stated) => stated,
         None => provenance::recorded(&source.session.agent_cmd),
     };
 
-    let report = RunReport {
-        schema_version: SCHEMA_VERSION,
-        run_id: source.run_id,
-        archetype: ArchetypeStamp {
-            name: archetype.name.clone(),
-            spec_sha256: archetype.spec_sha256(),
+    let blindness = match (
+        source.blindness.policy,
+        source.blindness.framework_source_excluded,
+        source.blindness.isolation,
+        source.blindness.credential_exceptions,
+    ) {
+        (
+            Some(policy),
+            Some(framework_source_excluded),
+            Some(agent_isolation),
+            Some(credential_exceptions),
+        ) => Blindness {
+            policy,
+            env_allowlist: source.blindness.env_allowlist,
+            framework_source_excluded,
+            isolation: agent_isolation,
+            credential_exceptions,
+            agent_reported_docs: source.blindness.agent_reported_docs,
+            agent_reported_external_sources: source.blindness.agent_reported_external_sources,
         },
-        pins: Pins {
-            acceptance_sha256: archetype.acceptance_sha256().to_string(),
-            ..source.pins
-        },
-        evaluation: EvaluationStamp {
-            origin: "isolated-re-evaluation".to_string(),
-            isolation: isolation.evaluation_capability(),
-            binary_sha256: evaluation.binary_sha256,
-        },
-        blindness: Blindness {
+        _ => Blindness {
             policy: HISTORICAL_BLINDNESS_POLICY.to_string(),
             env_allowlist: source.blindness.env_allowlist,
             framework_source_excluded: false,
@@ -333,8 +344,28 @@ pub fn reevaluate(config: &ReevaluationConfig) -> anyhow::Result<RunReport> {
             agent_reported_docs: source.blindness.agent_reported_docs,
             agent_reported_external_sources: source.blindness.agent_reported_external_sources,
         },
+    };
+
+    let report = RunReport {
+        schema_version: SCHEMA_VERSION,
+        run_id: source.run_id,
+        archetype: ArchetypeStamp {
+            name: archetype.name.clone(),
+            spec_sha256: archetype.spec_sha256(),
+        },
+        pins: Pins {
+            acceptance_sha256: archetype.acceptance_sha256().to_string(),
+            ..source.pins
+        },
+        evaluation: EvaluationStamp {
+            origin: "isolated-re-evaluation".to_string(),
+            isolation: isolation.evaluation_capability(),
+            binary_sha256: evaluation.binary_sha256,
+        },
+        blindness,
         session: source.session,
         provenance,
+        recovered_provenance: source.recovered_provenance,
         acceptance: evaluation.acceptance,
         invariants: evaluation.invariants,
         questionnaire: source.questionnaire,
@@ -384,19 +415,34 @@ fn evaluate_binary(
     cases_dir: &Path,
     check_timeout: Duration,
     isolation: &workspace::Isolation,
+    app_dir: &Path,
 ) -> Evaluation {
     match binary {
-        Ok(binary) => Evaluation {
-            acceptance: cases::run_cases(&binary, &archetype.suite.cases, cases_dir, isolation),
-            invariants: acceptance::run_invariants(
-                &binary,
-                archetype.invariants(),
-                check_timeout,
-                isolation,
-                &cases_dir.join("_invariants"),
-            ),
-            binary_sha256: std::fs::read(&binary).map(digest::sha256_hex).ok(),
-        },
+        Ok(binary) => {
+            let app_cargo_toml = cases::read_regular_file_no_follow(
+                &app_dir.join("Cargo.toml"),
+                cases::MAX_INVENTORIED_BYTES,
+            )
+            .and_then(|bytes| String::from_utf8(bytes).map_err(|err| err.to_string()));
+            Evaluation {
+                acceptance: cases::run_cases(
+                    &binary,
+                    &archetype.suite.cases,
+                    cases_dir,
+                    isolation,
+                    &archetype.gaps,
+                    app_cargo_toml.as_deref().map_err(String::as_str),
+                ),
+                invariants: acceptance::run_invariants(
+                    &binary,
+                    archetype.invariants(),
+                    check_timeout,
+                    isolation,
+                    &cases_dir.join("_invariants"),
+                ),
+                binary_sha256: std::fs::read(&binary).map(digest::sha256_hex).ok(),
+            }
+        }
         Err(detail) => Evaluation {
             acceptance: AcceptanceReport::build_failed(detail.clone()),
             invariants: acceptance::not_run_invariants(archetype.invariants(), &detail),
@@ -435,6 +481,13 @@ pub fn print_summary(report: &RunReport) {
     );
     for case in &report.acceptance.cases {
         match case.outcome {
+            CaseOutcome::Error => {
+                eprintln!(
+                    "[corpus]   ERROR case: {} ({})",
+                    case.name,
+                    case.detail.as_deref().unwrap_or("?")
+                );
+            }
             CaseOutcome::Fail => eprintln!("[corpus]   FAIL case: {}", case.name),
             CaseOutcome::ExpectedFail => {
                 eprintln!(
@@ -446,6 +499,13 @@ pub fn print_summary(report: &RunReport) {
             CaseOutcome::UnexpectedPass => {
                 eprintln!(
                     "[corpus]   UNEXPECTED PASS case: {} (gap {} may be closed)",
+                    case.name,
+                    case.gap.as_deref().unwrap_or("?")
+                );
+            }
+            CaseOutcome::HandRolledPass => {
+                eprintln!(
+                    "[corpus]   hand-rolled pass case: {} (gap {} — evidence crate absent)",
                     case.name,
                     case.gap.as_deref().unwrap_or("?")
                 );
@@ -465,7 +525,36 @@ pub fn print_summary(report: &RunReport) {
     }
 }
 
-fn unix_timestamp() -> u64 {
+fn checkout_root(docs_dir: &Path) -> anyhow::Result<PathBuf> {
+    docs_dir
+        .canonicalize()
+        .with_context(|| format!("resolving docs directory {}", docs_dir.display()))?
+        .parent()
+        .map(Path::to_path_buf)
+        .context("docs directory has no repository parent")
+}
+
+pub(crate) fn require_outside_checkout(
+    path: &Path,
+    docs_dir: &Path,
+    what: &str,
+    flag: &str,
+) -> anyhow::Result<PathBuf> {
+    let source_root = checkout_root(docs_dir)?;
+    let canonical = path
+        .canonicalize()
+        .with_context(|| format!("resolving {what} {}", path.display()))?;
+    if canonical.starts_with(&source_root) {
+        anyhow::bail!(
+            "{what} {} is inside source checkout {}; choose an external {flag}",
+            canonical.display(),
+            source_root.display()
+        );
+    }
+    Ok(canonical)
+}
+
+pub(crate) fn unix_timestamp() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -473,7 +562,7 @@ fn unix_timestamp() -> u64 {
 }
 
 // `create_dir`, never `create_dir_all`: adopting an existing directory would share a run.
-fn claim_run_dir(runs_dir: &Path, base: &str) -> anyhow::Result<(String, PathBuf)> {
+pub(crate) fn claim_run_dir(runs_dir: &Path, base: &str) -> anyhow::Result<(String, PathBuf)> {
     for attempt in 0..1000u32 {
         let run_id = if attempt == 0 {
             base.to_string()
@@ -491,6 +580,25 @@ fn claim_run_dir(runs_dir: &Path, base: &str) -> anyhow::Result<(String, PathBuf
         }
     }
     anyhow::bail!("could not claim a run directory for {base} after 1000 attempts");
+}
+
+pub(crate) fn claim_exact_run_dir(runs_dir: &Path, run_id: &str) -> anyhow::Result<PathBuf> {
+    let run_dir = runs_dir.join(run_id);
+    match std::fs::create_dir(&run_dir) {
+        Ok(()) => Ok(run_dir),
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(err).with_context(|| {
+                format!(
+                    "run id {run_id:?} was already claimed in {}; a stale scratch directory \
+                     needs cleanup before this run can start",
+                    runs_dir.display()
+                )
+            })
+        }
+        Err(err) => {
+            Err(err).with_context(|| format!("creating run directory {}", run_dir.display()))
+        }
+    }
 }
 
 pub fn absolute(path: &Path) -> PathBuf {
@@ -516,5 +624,20 @@ mod tests {
         assert_eq!(second, "smoke-42-1");
         assert_ne!(first_dir, second_dir);
         assert!(first_dir.is_dir() && second_dir.is_dir());
+    }
+
+    #[test]
+    fn exact_claim_on_collision_errors_and_creates_nothing() {
+        let runs = tempfile::tempdir().unwrap();
+        std::fs::create_dir(runs.path().join("smoke-42")).unwrap();
+
+        let err = claim_exact_run_dir(runs.path(), "smoke-42").unwrap_err();
+        assert!(err.to_string().contains("already claimed"));
+
+        let entries: Vec<_> = std::fs::read_dir(runs.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(entries, vec![std::ffi::OsString::from("smoke-42")]);
     }
 }

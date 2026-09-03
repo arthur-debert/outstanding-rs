@@ -13,6 +13,8 @@ fn repo() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+const PILOT_RUNS: &str = "crates/corpus-runner/tests/fixtures/pilot/runs";
+
 fn scorecard(sets: &[&str]) -> String {
     let output = Command::new("python3")
         .arg(repo().join("corpus/scorecard.py"))
@@ -50,7 +52,10 @@ fn write_report(
             "transcript": "t.jsonl",
             "agent_cmd": agent_cmd,
         },
-        "acceptance": {"built": true, "cases": [{"name": "only", "outcome": "pass"}]},
+        "acceptance": {
+            "built": true,
+            "cases": [{"name": "only", "expected": "pass", "outcome": "pass"}],
+        },
         "invariants": [],
         "questionnaire": {"answers": {"workarounds": "", "friction": ""}},
     });
@@ -65,6 +70,56 @@ fn archetype_row<'a>(table: &'a str, archetype: &str) -> &'a str {
         .lines()
         .find(|line| line.starts_with(&format!("| {archetype} |")))
         .unwrap_or_else(|| panic!("no row for {archetype} in:\n{table}"))
+}
+
+#[test]
+fn a_case_flipped_to_expected_pass_still_carrying_gap_counts_as_required() {
+    let temp = tempfile::tempdir().unwrap();
+    let run = temp.path().join("flippedlike-1");
+    std::fs::create_dir_all(&run).unwrap();
+    let report = json!({
+        "schema_version": 4,
+        "run_id": "flippedlike-1",
+        "archetype": {"name": "flippedlike"},
+        "pins": {"framework_version": "9.0.0"},
+        "session": {"wall_seconds": 1.0, "output_tokens": 2, "transcript": "t.jsonl"},
+        "provenance": {"backend": "claude", "executable_version": "1", "model_observed": "m"},
+        "acceptance": {
+            "built": true,
+            "cases": [
+                {"name": "ordinary", "expected": "pass", "outcome": "pass"},
+                {"name": "regressed", "expected": "pass", "outcome": "fail"},
+                {
+                    "name": "closed-hand-rolled",
+                    "expected": "pass",
+                    "outcome": "hand-rolled-pass",
+                    "gap": "PAR01",
+                },
+                {
+                    "name": "still-open",
+                    "expected": "fail",
+                    "outcome": "expected-fail",
+                    "gap": "PAR02",
+                },
+                {
+                    "name": "closed-for-real",
+                    "expected": "fail",
+                    "outcome": "unexpected-pass",
+                    "gap": "PAR03",
+                },
+            ],
+        },
+        "invariants": [],
+        "questionnaire": {"answers": {"workarounds": "", "friction": ""}},
+    });
+    std::fs::write(run.join("report.json"), report.to_string()).unwrap();
+
+    let table = scorecard(&[&format!("t={}", temp.path().display())]);
+    let row = archetype_row(&table, "flippedlike");
+    assert!(
+        row.contains("1/3 (33.3%) (1 hand-rolled); 1 fail required · 2 gap (1 expected-fail, 1 unexpected-pass)"),
+        "{row}"
+    );
 }
 
 // Commands the runner's splitter and the scorecard's have to agree on, refusals included.
@@ -130,7 +185,7 @@ const PILOT_FIGURES: &[(&str, &str, &str, &str)] = &[
     ),
     (
         "gitlike",
-        "15/19 (78.9%); 4 unexpected-pass",
+        "15/15 (100.0%) required · 4 gap (4 unexpected-pass)",
         "48/48 (100.0%) applicable; 120 planned: 48 pass, 72 N/A",
         "| 5 |",
     ),
@@ -144,7 +199,7 @@ const PILOT_FIGURES: &[(&str, &str, &str, &str)] = &[
 
 #[test]
 fn the_script_reproduces_the_pilot_scorecards_published_figures() {
-    let table = scorecard(&["pilot=corpus/pilot/runs"]);
+    let table = scorecard(&[&format!("pilot={PILOT_RUNS}")]);
     for (archetype, acceptance, invariants, workarounds) in PILOT_FIGURES {
         let row = table
             .lines()
@@ -158,7 +213,7 @@ fn the_script_reproduces_the_pilot_scorecards_published_figures() {
 
 #[test]
 fn a_report_without_a_provenance_block_names_its_agent_from_the_run_record() {
-    let table = scorecard(&["pilot=corpus/pilot/runs"]);
+    let table = scorecard(&[&format!("pilot={PILOT_RUNS}")]);
     for line in table.lines().filter(|line| line.starts_with("| gitlike |")) {
         assert!(
             line.contains("claude 2.1.234, claude-opus-5[1m] (recovered)"),
@@ -168,9 +223,31 @@ fn a_report_without_a_provenance_block_names_its_agent_from_the_run_record() {
 }
 
 #[test]
+fn the_real_committed_pilot_reports_stay_self_sufficient_without_their_deleted_transcripts() {
+    let real_pilot_runs = repo().join("corpus/pilot/runs");
+    let table = scorecard(&[&format!("pilot={}", real_pilot_runs.display())]);
+    for archetype in ["formlike", "ghlike", "gitlike", "systemdlike"] {
+        let row = archetype_row(&table, archetype);
+        assert!(
+            row.contains("claude 2.1.234, claude-opus-5[1m] (recovered)"),
+            "{archetype}: {row}"
+        );
+        assert!(
+            row.contains("| single run |"),
+            "{archetype} unexpected comparable column: {row}"
+        );
+    }
+    let row = archetype_row(&table, "validity");
+    assert!(
+        row.contains("claude 2.1.252, claude-opus-5[1m] (recovered)"),
+        "{row}"
+    );
+}
+
+#[test]
 fn recovery_reads_the_prompt_and_settings_from_the_recorded_command() {
     let rows: serde_json::Value =
-        serde_json::from_str(&scorecard(&["pilot=corpus/pilot/runs", "--json"])).unwrap();
+        serde_json::from_str(&scorecard(&[&format!("pilot={PILOT_RUNS}"), "--json"])).unwrap();
     let row = rows
         .as_array()
         .unwrap()
@@ -363,6 +440,8 @@ fn listed_items_are_counted_in_every_form_an_agent_has_used() {
     let answer = "1. numbered\n\
                   2) parenthesized\n\
                   a) lettered\n\
+                  (3) paren-numbered\n\
+                  (d) paren-lettered\n\
                   - dashed\n\
                   * starred\n\
                   **bold lead-in.** and its sentence\n\
@@ -386,12 +465,15 @@ fn listed_items_are_counted_in_every_form_an_agent_has_used() {
         .lines()
         .find(|line| line.starts_with("| listlike |"))
         .unwrap_or_else(|| panic!("{table}"));
-    assert!(row.contains("| 6 | 6 |"), "{row}");
+    assert!(row.contains("| 8 | 8 |"), "{row}");
 }
 
 #[test]
 fn runs_from_two_sets_sit_beside_each_other_under_their_archetype() {
-    let table = scorecard(&["pilot=corpus/pilot/runs", "again=corpus/pilot/runs"]);
+    let table = scorecard(&[
+        &format!("pilot={PILOT_RUNS}"),
+        &format!("again={PILOT_RUNS}"),
+    ]);
     let rows: Vec<&str> = table
         .lines()
         .filter(|line| line.starts_with("| gitlike |"))

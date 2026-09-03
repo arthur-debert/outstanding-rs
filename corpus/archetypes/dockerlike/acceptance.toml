@@ -224,7 +224,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout_contains = ["--filter", "--quiet", "--no-trunc"]
-stdout_row_contains = [["Usage", "ps"]]
+stdout_row_contains = [["dockerlike", "ps"]]
 stderr = ""
 
 [[case]]
@@ -238,7 +238,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout_contains = ["--filter", "--quiet", "--no-trunc"]
-stdout_row_contains = [["Usage", "container", "ls"]]
+stdout_row_contains = [["dockerlike", "container", "ls"]]
 stderr = ""
 
 # --- quiet as a data-shape choice --------------------------------------------

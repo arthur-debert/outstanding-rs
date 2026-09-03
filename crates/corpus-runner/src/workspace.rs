@@ -1,9 +1,9 @@
-// Blind-workspace provisioning: everything the agent sees, and nothing
-// more — spec, instructions, questionnaire, a published-docs snapshot, and
-// a cargo scaffold pinned to exact-version crates.io dependencies.
+//! Blind-workspace provisioning: everything the agent sees, and nothing
+//! more — spec, instructions, questionnaire, a published-docs snapshot, and
+//! a cargo scaffold pinned to exact-version crates.io dependencies.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use anyhow::{bail, Context};
 use sha2::{Digest, Sha256};
@@ -11,10 +11,12 @@ use sha2::{Digest, Sha256};
 use crate::archetype::Archetype;
 use crate::digest;
 use crate::questionnaire;
-use crate::report::IsolationRecord;
+use crate::report::{DocsSource, IsolationRecord};
 use crate::sandbox::{self, Policy};
 
 const PUBLISHED_DOCS: &[&str] = &["index.md", "intro.md", "guides", "topics", "crates"];
+
+const RUNNER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // CLAUDE_CODE_TMPDIR is added for the agent phase alone, by `Isolation::apply_agent`.
 pub const ENV_ALLOWLIST: &[&str] = &[
@@ -112,8 +114,6 @@ impl Isolation {
 
     pub fn apply_agent(&self, command: &mut Command) -> Result<(), String> {
         apply_phase_env(command, &self.agent_home);
-        // Claude Code keeps its shell scratch under /tmp, not TMPDIR; denied it, the
-        // session loses its shell. Redirected into the disposable home, not admitted.
         command.env("CLAUDE_CODE_TMPDIR", self.agent_home.join("tmp"));
         sandbox::apply(
             command,
@@ -152,8 +152,6 @@ impl Isolation {
         let probe_log = self.workspace_root.join(".boundary-probe.log");
         let _ = std::fs::remove_file(&probe_log);
         let mut command = Command::new("sh");
-        // Real opens, not `test -r`: Landlock leaves access(2) unrestricted. `true`,
-        // not `:`, so dash does not abort the script on the redirection error.
         command
             .args([
                 "-c",
@@ -200,6 +198,8 @@ pub struct Workspace {
     pub root: PathBuf,
     pub app_dir: PathBuf,
     pub docs_sha256: String,
+    pub docs_commit: String,
+    pub docs_source: DocsSource,
     pub isolation: Isolation,
 }
 
@@ -227,12 +227,41 @@ pub fn provision(
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_default();
+
+    let mut _tag_archive_guard = None;
+    let (docs_source_dir, docs_filter_root, docs_source, resolved_docs_commit) =
+        if framework_version == RUNNER_VERSION {
+            (
+                docs_dir.to_path_buf(),
+                repo_root.clone(),
+                DocsSource::Checkout,
+                docs_commit(docs_dir),
+            )
+        } else {
+            let tag = format!("v{framework_version}");
+            let commit = resolve_tag_commit(&repo_root, &tag)?;
+            let archive_dir = create_docs_archive_scratch_dir(&tag)?;
+            extract_tag_docs(&repo_root, &tag, archive_dir.path())?;
+            let archive_root = archive_dir.path().canonicalize().with_context(|| {
+                format!(
+                    "resolving docs archive scratch directory {}",
+                    archive_dir.path().display()
+                )
+            })?;
+            _tag_archive_guard = Some(archive_dir);
+            (
+                archive_root.join("docs"),
+                archive_root,
+                DocsSource::Tag,
+                commit,
+            )
+        };
     for entry in PUBLISHED_DOCS {
-        let src = docs_dir.join(entry);
+        let src = docs_source_dir.join(entry);
         if !src.exists() {
             continue;
         }
-        copy_recursive(&src, &docs_dest.join(entry), &repo_root)
+        copy_recursive(&src, &docs_dest.join(entry), &docs_filter_root)
             .with_context(|| format!("snapshotting docs entry {}", src.display()))?;
     }
     let docs_sha256 = docs_digest(&docs_dest)?;
@@ -253,8 +282,123 @@ pub fn provision(
         root,
         app_dir,
         docs_sha256,
+        docs_commit: resolved_docs_commit,
+        docs_source,
         isolation,
     })
+}
+
+fn resolve_tag_commit(repo_root: &Path, tag: &str) -> anyhow::Result<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["rev-parse", "--verify", &format!("{tag}^{{commit}}")])
+        .output()
+        .with_context(|| format!("resolving tag {tag} in {}", repo_root.display()))?;
+    if !output.status.success() {
+        bail!(
+            "framework version pin {tag} has no matching tag in the checkout's repository \
+             {} (docs cannot be sourced for it)",
+            repo_root.display()
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn create_docs_archive_scratch_dir(tag: &str) -> anyhow::Result<tempfile::TempDir> {
+    tempfile::Builder::new()
+        .prefix(".corpus-docs-tag-archive-")
+        .tempdir()
+        .with_context(|| format!("creating docs archive scratch directory for tag {tag}"))
+}
+
+fn extract_tag_docs(repo_root: &Path, tag: &str, extract_root: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(extract_root).with_context(|| {
+        format!(
+            "creating docs archive scratch directory {}",
+            extract_root.display()
+        )
+    })?;
+    let crate_doc_paths = resolve_crate_doc_symlink_targets(repo_root, tag)?;
+    let mut archive = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["archive", "--format=tar", tag, "docs"])
+        .args(&crate_doc_paths)
+        .stdout(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("spawning git archive for tag {tag}"))?;
+    let stdout = archive.stdout.take().expect("piped stdout");
+    let tar_result = Command::new("tar")
+        .arg("-x")
+        .arg("-C")
+        .arg(extract_root)
+        .stdin(stdout)
+        .status();
+    let archive_status = archive
+        .wait()
+        .with_context(|| format!("waiting for git archive of tag {tag}"))?;
+    let tar_status = tar_result.with_context(|| format!("extracting archive for tag {tag}"))?;
+    if !archive_status.success() {
+        bail!("git archive {tag} exited with {archive_status}");
+    }
+    if !tar_status.success() {
+        bail!("extracting tag {tag} archive exited with {tar_status}");
+    }
+    Ok(())
+}
+
+fn resolve_crate_doc_symlink_targets(repo_root: &Path, tag: &str) -> anyhow::Result<Vec<String>> {
+    let listing = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["ls-tree", tag, "docs/crates/"])
+        .output()
+        .with_context(|| format!("listing docs/crates/ at tag {tag}"))?;
+    if !listing.status.success() {
+        return Ok(Vec::new());
+    }
+    let mut targets = Vec::new();
+    for line in String::from_utf8_lossy(&listing.stdout).lines() {
+        // `<mode> <type> <sha>\t<path>`
+        let Some((meta, path)) = line.split_once('\t') else {
+            continue;
+        };
+        if !meta.starts_with("120000") {
+            continue; // not a symlink entry
+        }
+        let Some(sha) = meta.split_whitespace().nth(2) else {
+            continue;
+        };
+        let target = Command::new("git")
+            .arg("-C")
+            .arg(repo_root)
+            .args(["cat-file", "-p", sha])
+            .output()
+            .with_context(|| format!("reading symlink target for {path} at tag {tag}"))?;
+        if !target.status.success() {
+            bail!("reading symlink target for {path} at tag {tag} failed");
+        }
+        let target_text = String::from_utf8_lossy(&target.stdout).trim().to_string();
+        let parent = Path::new(path).parent().unwrap_or_else(|| Path::new(""));
+        let resolved = normalize_relative_path(&parent.join(&target_text));
+        targets.push(resolved.to_string_lossy().into_owned());
+    }
+    Ok(targets)
+}
+
+fn normalize_relative_path(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 pub fn docs_digest(docs_root: &Path) -> anyhow::Result<String> {
@@ -403,5 +547,47 @@ fn is_published_docs_target(target: &Path, repo_root: &Path) -> bool {
             components.next().as_deref() == Some("docs")
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn docs_archive_scratch_dir_is_created() {
+        let scratch = create_docs_archive_scratch_dir("v1.2.3").unwrap();
+        assert!(scratch.path().is_dir());
+    }
+
+    fn git(repo: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .status()
+            .unwrap_or_else(|e| panic!("running git {args:?}: {e}"));
+        assert!(status.success(), "git {args:?} failed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn crate_doc_symlink_targets_are_resolved_from_the_tag() {
+        let repo = tempfile::tempdir().unwrap();
+        let root = repo.path();
+        std::fs::create_dir_all(root.join("docs/crates")).unwrap();
+        std::fs::create_dir_all(root.join("crates/widget/docs")).unwrap();
+        std::fs::write(root.join("crates/widget/docs/index.md"), "widget docs\n").unwrap();
+        std::os::unix::fs::symlink("../../crates/widget/docs", root.join("docs/crates/widget"))
+            .unwrap();
+        git(root, &["init", "-q"]);
+        git(root, &["config", "user.email", "corpus@example.test"]);
+        git(root, &["config", "user.name", "corpus"]);
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-q", "-m", "tagged docs"]);
+        git(root, &["tag", "v1.2.3"]);
+
+        let targets = resolve_crate_doc_symlink_targets(root, "v1.2.3").unwrap();
+        assert_eq!(targets, vec!["crates/widget/docs".to_string()]);
     }
 }

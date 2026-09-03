@@ -1,54 +1,13 @@
 // Structural validation of the archetype roster (`corpus/archetypes/`,
-// schema in `corpus/README.md`).
+// schema in `corpus/README.md`). The manifest schema itself
+// (`corpus_runner::manifest`) is the one owner of its shape; this file only
+// cross-references a manifest against its acceptance suite.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use corpus_runner::archetype::CaseSuite;
-use serde::Deserialize;
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ManifestDoc {
-    archetype: ManifestArchetype,
-    features: Features,
-    interactions: Vec<Interaction>,
-    gaps: Option<BTreeMap<String, String>>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ManifestArchetype {
-    name: String,
-    #[allow(dead_code)]
-    survey: String,
-    #[allow(dead_code)]
-    summary: String,
-    status: Status,
-}
-
-#[derive(Deserialize, Clone, Copy, PartialEq)]
-enum Status {
-    #[serde(rename = "in-capability")]
-    InCapability,
-    #[serde(rename = "partially-past-capability")]
-    PartiallyPastCapability,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Features {
-    used: Vec<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Interaction {
-    id: String,
-    stresses: Vec<String>,
-    description: String,
-    cases: Vec<String>,
-}
+use corpus_runner::manifest::{Manifest, Status};
 
 fn archetypes_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/archetypes")
@@ -68,17 +27,6 @@ fn archetype_dirs() -> Vec<PathBuf> {
 
 fn dir_name(dir: &Path) -> &str {
     dir.file_name().unwrap().to_str().unwrap()
-}
-
-fn parse<T: serde::de::DeserializeOwned>(path: &Path) -> T {
-    let text = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("{} must be readable: {e}", path.display()));
-    toml::from_str(&text).unwrap_or_else(|e| {
-        panic!(
-            "{} does not match the schema in corpus/README.md: {e}",
-            path.display()
-        )
-    })
 }
 
 fn load_acceptance(dir: &Path) -> CaseSuite {
@@ -117,7 +65,8 @@ fn acceptance_suites_are_wellformed() {
 fn manifests_are_wellformed_and_cross_references_resolve() {
     for dir in archetype_dirs() {
         let name = dir_name(&dir);
-        let manifest: ManifestDoc = parse(&dir.join("manifest.toml"));
+        let manifest = Manifest::load(&archetypes_dir(), name)
+            .unwrap_or_else(|e| panic!("{name}: manifest.toml is invalid: {e:#}"));
         let acceptance = load_acceptance(&dir);
         let names = case_names(&acceptance);
 
@@ -151,7 +100,7 @@ fn manifests_are_wellformed_and_cross_references_resolve() {
             }
         }
 
-        let gaps = manifest.gaps.unwrap_or_default();
+        let gaps = &manifest.gaps;
         match manifest.archetype.status {
             Status::PartiallyPastCapability => {
                 assert!(

@@ -8,27 +8,46 @@ One row per run, grouped by archetype so a re-run sits beside the run it is
 compared with. The counting rules are the ones the pilot scorecard published,
 so a set of pilot reports reproduces the pilot's figures:
 
-- acceptance: cases whose outcome is `pass`, over every case in the suite;
-  the other outcomes are spelled out rather than folded in, because
-  `unexpected-pass` is news about a gap and not a passing case.
+- acceptance: required cases (`expected = "pass"`) and gap cases (`expected
+  = "fail"`, always naming a manifest `[gaps]` entry) are two denominators,
+  never one — a case suite mixes cases the framework must satisfy today with
+  cases specced past it on purpose, and a single ratio of the two reads as a
+  framework score no framework failure produced. A case that names a `gap`
+  but has flipped to `expected = "pass"` counts as required — the gap marker
+  only keeps its evidence check running, it no longer excuses the case from
+  the framework's score — so a `hand-rolled-pass` outcome can land in either
+  bucket. The required cell is `passed/total (%)`, `pass` popped from its
+  outcome tally, with `hand-rolled-pass` broken out as `(N hand-rolled)`
+  when nonzero; the gap cell, shown only when the suite has gap cases, is
+  `count gap` with its own outcome tally alongside — `hand-rolled` in place
+  of `hand-rolled-pass`, everything else (`pass`, `expected-fail`,
+  `unexpected-pass`, `fail`) spelled out, because `unexpected-pass` is news
+  about a gap closing and not an ordinary pass.
+- hand_rolled_passes: gap cases whose outcome is `hand-rolled-pass` — a
+  passing gap case whose manifest names evidence (`uses-crate:<name>`) the
+  produced app's `Cargo.toml` lacks, so the pass was rebuilt by hand rather
+  than closed by the framework. Counted separately from `acceptance`'s
+  `unexpected-pass` tally, which the evidence check does not otherwise
+  distinguish.
 - invariants: applicable identities (every planned identity that is not
   `not-applicable`) that passed, plus the full planned breakdown, so a
   ratio can never improve by shrinking its denominator.
 - workarounds: the items the exit questionnaire's `workarounds` answer
-  lists. Agents list in whichever form they like — `1.`, `a)`, `-`, or a
-  bold lead-in — so an item is any line that starts one, and only at the
-  left margin, where an indented continuation cannot be mistaken for a new
-  item. It counts what the agent listed; whether an item is a workaround or
-  a deliberate application decision is a reading, and readings belong in the
-  scorecard's prose beside the committed answer.
+  lists. Agents list in whichever form they like — `1.`, `a)`, `(1)`,
+  `(a)`, `-`, or a bold lead-in — so an item is any line that starts one,
+  and only at the left margin, where an indented continuation cannot be
+  mistaken for a new item. It counts what the agent listed; whether an item
+  is a workaround or a deliberate application decision is a reading, and
+  readings belong in the scorecard's prose beside the committed answer.
 - the agent: schema 4's `provenance` block. A report written before that
   block existed states none, so the same facts are recovered from the run's
   own two sources by the rule the runner uses — the command the report
   records, split without expansion, and the same bounded head of the
   transcript, whose init event announces the backend version and the session
-  model. A recovered agent is
-  marked `(recovered)`: it is evidence of what answered, not a
-  contemporaneous record of what was asked for. A field neither source
+  model. A report whose transcript was deleted before this script could read
+  it may carry that recovery already done, under `recovered_provenance`. A
+  recovered agent is marked `(recovered)`: it is evidence of what answered,
+  not a contemporaneous record of what was asked for. A field neither source
   states is reported unstated rather than filled in.
 - comparable: whether a row is measuring the same question as the first row
   its archetype has. Two runs are comparable evidence when the spec, the
@@ -49,7 +68,9 @@ import json
 import pathlib
 import re
 
-LISTED_ITEM = re.compile(r"(?m)^(?:\d+[.)]\s|[a-z][.)]\s|[-*+]\s|\*\*\S)")
+LISTED_ITEM = re.compile(
+    r"(?m)^(?:\d+[.)]\s|[a-z][.)]\s|\(\d+\)\s|\([a-z]\)\s|[-*+]\s|\*\*\S)"
+)
 
 # A hash-shaped value, which a note abbreviates rather than printing whole.
 HASH = re.compile(r"(?:sha256:)?[0-9a-f]{32,}")
@@ -103,11 +124,35 @@ def acceptance(report):
     # A report omits `cases` when the suite produced none rather than writing
     # an empty list, so a run that built and ran nothing still reads.
     cases = report["acceptance"].get("cases", [])
-    tally = counts(case["outcome"] for case in cases)
+    required = [case for case in cases if case["expected"] == "pass"]
+    gap = [case for case in cases if case["expected"] == "fail"]
+
+    tally = counts(case["outcome"] for case in required)
     passed = tally.pop("pass", 0)
-    cell = ratio(passed, len(cases))
+    required_hand_rolled = tally.pop("hand-rolled-pass", 0)
+    required_cell = ratio(passed, len(required))
+    if required_hand_rolled:
+        required_cell = f"{required_cell} ({required_hand_rolled} hand-rolled)"
     rest = ", ".join(f"{count} {outcome}" for outcome, count in sorted(tally.items()))
-    return f"{cell}; {rest}" if rest else cell
+    if rest:
+        required_cell = f"{required_cell}; {rest}"
+    if not gap:
+        return required_cell
+
+    gap_tally = counts(case["outcome"] for case in gap)
+    hand_rolled = gap_tally.pop("hand-rolled-pass", 0)
+    gap_parts = ([f"{hand_rolled} hand-rolled"] if hand_rolled else []) + [
+        f"{count} {outcome}" for outcome, count in sorted(gap_tally.items())
+    ]
+    gap_cell = f"{len(gap)} gap"
+    if gap_parts:
+        gap_cell = f"{gap_cell} ({', '.join(gap_parts)})"
+    return f"{required_cell} required · {gap_cell}"
+
+
+def hand_rolled_passes(report):
+    cases = report["acceptance"].get("cases", [])
+    return sum(1 for case in cases if case["outcome"] == "hand-rolled-pass")
 
 
 def invariants(report):
@@ -298,11 +343,17 @@ def provenance(report, run_dir: pathlib.Path) -> tuple[dict, bool]:
     """The agent block a report records, or one recovered from the run itself.
 
     The second value says which: a recovered block is evidence of what
-    answered, not a contemporaneous record of what was asked for.
+    answered, not a contemporaneous record of what was asked for. A report
+    with no committed transcript to recover from may carry that recovery
+    already done, under `recovered_provenance` — backfilled once, before its
+    transcript was deleted, so the report stays self-sufficient.
     """
     block = report.get("provenance")
     if block:
         return block, False
+    block = report.get("recovered_provenance")
+    if block:
+        return block, True
     block = recorded(report["session"].get("agent_cmd", ""))
     transcript = run_dir / report["session"].get("transcript", "transcript.jsonl")
     block.update(
@@ -410,6 +461,7 @@ def read_runs(label: str, runs_dir: pathlib.Path) -> list[dict]:
                 "schema_version": report["schema_version"],
                 "framework": report["pins"]["framework_version"],
                 "acceptance": acceptance(report),
+                "hand_rolled_passes": hand_rolled_passes(report),
                 "invariants": invariants(report),
                 "workarounds": workarounds(report),
                 "frictions": frictions(report),
@@ -428,6 +480,7 @@ COLUMNS = (
     ("set", "Run"),
     ("framework", "Standout"),
     ("acceptance", "Acceptance"),
+    ("hand_rolled_passes", "Hand-rolled passes"),
     ("invariants", "ROB01 invariants"),
     ("workarounds", "Workarounds listed"),
     ("frictions", "Frictions listed"),

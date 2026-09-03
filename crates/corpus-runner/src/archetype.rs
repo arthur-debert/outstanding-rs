@@ -1,6 +1,6 @@
-// Archetype loading: a directory under `corpus/archetypes/<name>/` holding
-// `spec.md` and `acceptance.toml`. See `corpus/README.md` for the roster
-// case schema (`schema = 1`, `[[case]]` tables).
+//! Archetype loading: a directory under `corpus/archetypes/<name>/` holding
+//! `spec.md` and `acceptance.toml`. See `corpus/README.md` for the roster
+//! case schema (`schema = 1`, `[[case]]` tables).
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
@@ -9,12 +9,14 @@ use anyhow::{bail, Context};
 use serde::Deserialize;
 
 use crate::digest;
+use crate::manifest::{GapEntry, Manifest};
 
 #[derive(Debug)]
 pub struct Archetype {
     pub name: String,
     pub spec: String,
     pub suite: CaseSuite,
+    pub gaps: BTreeMap<String, GapEntry>,
     acceptance_sha256: String,
 }
 
@@ -81,6 +83,7 @@ impl ColorState {
 pub enum InvariantContract {
     Rendered,
     OpaqueBytes,
+    Either,
 }
 
 #[derive(Debug, Deserialize)]
@@ -96,6 +99,12 @@ pub struct InvariantTheme {
 pub struct InvariantCommand {
     pub argv: Vec<String>,
     pub contract: InvariantContract,
+    #[serde(default = "default_true")]
+    pub equal_across_modes: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn all_modes() -> Vec<InvariantMode> {
@@ -193,6 +202,10 @@ pub struct CaseExpect {
     pub stderr_not_contains: Vec<String>,
     #[serde(default)]
     pub stdout_lines_end_with_once: Vec<String>,
+    #[serde(default)]
+    pub files: BTreeMap<String, String>,
+    #[serde(default)]
+    pub files_absent: Vec<String>,
 }
 
 impl CaseExpect {
@@ -209,6 +222,8 @@ impl CaseExpect {
             && self.stdout_not_contains.is_empty()
             && self.stderr_not_contains.is_empty()
             && self.stdout_lines_end_with_once.is_empty()
+            && self.files.is_empty()
+            && self.files_absent.is_empty()
     }
 }
 
@@ -222,12 +237,31 @@ impl Archetype {
         let acceptance_text = std::fs::read_to_string(&acceptance_path)
             .with_context(|| format!("reading {}", acceptance_path.display()))?;
         let suite = CaseSuite::parse(&acceptance_text, name, &acceptance_path)?;
+        let gaps = Manifest::load_optional(archetypes_dir, name)?
+            .map(|manifest| manifest.gaps)
+            .unwrap_or_default();
+        for case in &suite.cases {
+            if let Some(gap) = case.gap.as_deref() {
+                if !gaps.contains_key(gap) {
+                    bail!(
+                        "{}: case {:?} names gap {gap:?}, which is not a manifest [gaps] entry",
+                        acceptance_path.display(),
+                        case.name
+                    );
+                }
+            }
+        }
         Ok(Self {
             name: name.to_string(),
             spec,
             suite,
+            gaps,
             acceptance_sha256: digest::sha256_hex(&acceptance_text),
         })
+    }
+
+    pub fn gap_evidence(&self, gap: &str) -> Option<crate::manifest::Evidence<'_>> {
+        self.gaps.get(gap).and_then(GapEntry::evidence)
     }
 
     pub fn binary(&self) -> &str {
@@ -337,6 +371,7 @@ fn validate_case_suite(suite: &CaseSuite, name: &str, path: &Path) -> anyhow::Re
                 "stdout_lines_end_with_once",
                 &case.expect.stdout_lines_end_with_once,
             ),
+            ("files_absent", &case.expect.files_absent),
         ] {
             if entries.iter().any(|entry| entry.is_empty()) {
                 bail!(
@@ -345,6 +380,13 @@ fn validate_case_suite(suite: &CaseSuite, name: &str, path: &Path) -> anyhow::Re
                     case.name
                 );
             }
+        }
+        if case.expect.files.keys().any(|key| key.is_empty()) {
+            bail!(
+                "{}: case {:?} — files keys must be non-empty",
+                path.display(),
+                case.name
+            );
         }
         for (key, semantic) in [
             ("stdout_json", case.expect.stdout_json.is_some()),
@@ -376,9 +418,16 @@ fn validate_case_suite(suite: &CaseSuite, name: &str, path: &Path) -> anyhow::Re
         }
         match case.expected {
             Expected::Pass => {
-                if case.gap.is_some() || case.reason.is_some() {
+                if case.reason.is_some() {
                     bail!(
-                        "{}: case {:?} — `gap`/`reason` belong to expected-fail cases only",
+                        "{}: case {:?} — `reason` explains an expected failure; it does not belong on an expected = \"pass\" case",
+                        path.display(),
+                        case.name
+                    );
+                }
+                if case.gap.as_deref().is_some_and(str::is_empty) {
+                    bail!(
+                        "{}: case {:?} — `gap` must be non-empty when present",
                         path.display(),
                         case.name
                     );
@@ -536,6 +585,7 @@ exit_code = 0
             "stdout_not_contains",
             "stderr_not_contains",
             "stdout_lines_end_with_once",
+            "files_absent",
         ] {
             let err = parse(&suite(
                 &VALID_CASE.replace("exit_code = 0", &format!("{key} = [\"\"]")),
@@ -592,14 +642,55 @@ exit_code = 0
     }
 
     #[test]
-    fn gap_or_reason_on_expected_pass_is_rejected() {
-        let err = parse(&suite(&VALID_CASE.replace(
+    fn files_and_files_absent_count_as_assertions() {
+        let suite = parse(&suite(&VALID_CASE.replace(
+            "exit_code = 0",
+            "files_absent = [\"conf/staging\"]\n[case.expect.files]\n\"conf/default\" = \"a\\n\"",
+        )))
+        .unwrap();
+        assert_eq!(suite.cases.len(), 1);
+        let expect = &suite.cases[0].expect;
+        assert_eq!(expect.files.get("conf/default"), Some(&"a\n".to_string()));
+        assert_eq!(expect.files_absent, vec!["conf/staging".to_string()]);
+    }
+
+    #[test]
+    fn empty_files_key_is_rejected() {
+        let err = parse(&suite(
+            &VALID_CASE.replace("exit_code = 0", "[case.expect.files]\n\"\" = \"a\""),
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("files keys"), "{err:#}");
+    }
+
+    #[test]
+    fn gap_on_expected_pass_is_accepted() {
+        let suite = parse(&suite(&VALID_CASE.replace(
             "expected = \"pass\"",
             "expected = \"pass\"\ngap = \"PAR01\"",
         )))
+        .unwrap();
+        assert_eq!(suite.cases[0].gap.as_deref(), Some("PAR01"));
+    }
+
+    #[test]
+    fn empty_gap_on_expected_pass_is_rejected() {
+        let err = parse(&suite(
+            &VALID_CASE.replace("expected = \"pass\"", "expected = \"pass\"\ngap = \"\""),
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("must be non-empty"), "{err:#}");
+    }
+
+    #[test]
+    fn reason_on_expected_pass_is_rejected() {
+        let err = parse(&suite(&VALID_CASE.replace(
+            "expected = \"pass\"",
+            "expected = \"pass\"\ngap = \"PAR01\"\nreason = \"still tracked\"",
+        )))
         .unwrap_err();
         assert!(
-            err.to_string().contains("expected-fail cases only"),
+            err.to_string().contains("does not belong on an expected"),
             "{err:#}"
         );
     }
@@ -634,5 +725,84 @@ exit_code = 0
         assert_eq!(suite.invariants.colors.len(), 2);
         assert_eq!(suite.invariants.themes.len(), 1);
         assert_eq!(suite.invariants.commands.len(), 1);
+        assert!(suite.invariants.commands[0].equal_across_modes);
+    }
+
+    #[test]
+    fn contract_either_parses() {
+        let suite = parse(&suite(&format!(
+            "{VALID_CASE}\n[invariants]\n[[invariants.command]]\nargv = [\"build\"]\ncontract = \"either\"\n"
+        )))
+        .unwrap();
+        assert_eq!(
+            suite.invariants.commands[0].contract,
+            InvariantContract::Either
+        );
+    }
+
+    #[test]
+    fn equal_across_modes_false_parses() {
+        let suite = parse(&suite(&format!(
+            "{VALID_CASE}\n[invariants]\n[[invariants.command]]\nargv = [\"config\", \"list\"]\ncontract = \"rendered\"\nequal_across_modes = false\n"
+        )))
+        .unwrap();
+        assert!(!suite.invariants.commands[0].equal_across_modes);
+    }
+
+    fn load_with_manifest_gap(case_gap: &str, manifest_gaps: &str) -> anyhow::Result<Archetype> {
+        let dir = tempfile::tempdir().unwrap();
+        let archetype_dir = dir.path().join("fake");
+        std::fs::create_dir_all(&archetype_dir).unwrap();
+        std::fs::write(archetype_dir.join("spec.md"), "# fake\n").unwrap();
+        std::fs::write(
+            archetype_dir.join("acceptance.toml"),
+            suite(&VALID_CASE.replace(
+                "expected = \"pass\"",
+                &format!("expected = \"pass\"\ngap = \"{case_gap}\""),
+            )),
+        )
+        .unwrap();
+        std::fs::write(
+            archetype_dir.join("manifest.toml"),
+            format!(
+                "interactions = []\n\n\
+                 [archetype]\n\
+                 name = \"fake\"\n\
+                 survey = \"C1\"\n\
+                 summary = \"one line\"\n\
+                 status = \"partially-past-capability\"\n\n\
+                 [features]\n\
+                 used = []\n\n\
+                 {manifest_gaps}"
+            ),
+        )
+        .unwrap();
+        Archetype::load(dir.path(), "fake")
+    }
+
+    #[test]
+    fn a_case_naming_a_known_manifest_gap_loads() {
+        let archetype =
+            load_with_manifest_gap("PAR01", "[gaps]\nPAR01 = \"still tracked\"\n").unwrap();
+        assert_eq!(archetype.suite.cases[0].gap.as_deref(), Some("PAR01"));
+    }
+
+    #[test]
+    fn a_case_naming_a_gap_missing_from_the_manifest_is_rejected() {
+        let err =
+            load_with_manifest_gap("PAR99", "[gaps]\nPAR01 = \"still tracked\"\n").unwrap_err();
+        assert!(
+            err.to_string().contains("not a manifest [gaps] entry"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn a_case_naming_a_gap_with_no_manifest_gaps_table_is_rejected() {
+        let err = load_with_manifest_gap("PAR01", "").unwrap_err();
+        assert!(
+            err.to_string().contains("not a manifest [gaps] entry"),
+            "{err:#}"
+        );
     }
 }

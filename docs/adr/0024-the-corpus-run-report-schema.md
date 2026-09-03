@@ -66,3 +66,18 @@ reproduce the pilot's setup — a retired model, a changed backend — the
 scorecard comparison states the delta beside every affected figure and the
 result is reported as observational, not as evidence the framework
 improved.
+
+Amendment (PAR04-WS03): `schema_version: 5`. `pins` gains `docs_source`
+(`checkout` or `tag`): whether the docs snapshot came from the checkout
+directly or from `--framework-version`'s own git tag, when that pin names a
+published version other than the checkout's (`corpus-runner run
+--framework-version X` where `X` differs from `CARGO_PKG_VERSION`; a
+missing tag refuses the run before the agent starts). A report written
+before this field existed always snapshotted the checkout, so it reads as
+`checkout`. The same bump also covers `acceptance` gaining the
+`hand-rolled-pass` case outcome: a gap case that passes while the produced
+app's `Cargo.toml` lacks the crate its manifest names as evidence
+(`uses-crate:<name>`) is news the gap was rebuilt by hand, not closed by the
+framework. Committed schema-2 through schema-4 evidence still loads,
+unrewritten, through the typed historical-report path, and `report.rs`
+remains authoritative for the current shape.

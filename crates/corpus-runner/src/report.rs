@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RunReport {
@@ -16,6 +16,8 @@ pub struct RunReport {
     pub blindness: Blindness,
     pub session: SessionReport,
     pub provenance: AgentProvenance,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovered_provenance: Option<AgentProvenance>,
     pub acceptance: AcceptanceReport,
     pub invariants: Vec<InvariantCell>,
     pub questionnaire: QuestionnaireReport,
@@ -55,8 +57,21 @@ pub struct Pins {
     pub framework_version: String,
     pub docs_commit: String,
     pub docs_sha256: String,
+    #[serde(default = "default_docs_source")]
+    pub docs_source: DocsSource,
     pub acceptance_sha256: String,
     pub questionnaire_fingerprint: String,
+}
+
+fn default_docs_source() -> DocsSource {
+    DocsSource::Checkout
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DocsSource {
+    Checkout,
+    Tag,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -80,6 +95,8 @@ pub struct SessionReport {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub transcript: String,
+    #[serde(default)]
+    pub transcript_sha256: Option<String>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,7 +106,6 @@ pub struct AgentProvenance {
     pub model_requested: Option<String>,
     pub model_observed: Option<String>,
     pub prompt: Option<String>,
-    // Without the default, an absent list would refuse the whole report.
     #[serde(default)]
     pub settings: Vec<String>,
 }
@@ -135,6 +151,8 @@ pub enum CaseOutcome {
     Fail,
     ExpectedFail,
     UnexpectedPass,
+    HandRolledPass,
+    Error,
 }
 
 impl CaseOutcome {
@@ -196,6 +214,8 @@ pub struct HistoricalRun {
     pub session: SessionReport,
     #[serde(default)]
     pub provenance: Option<AgentProvenance>,
+    #[serde(default)]
+    pub recovered_provenance: Option<AgentProvenance>,
     pub questionnaire: QuestionnaireReport,
 }
 
@@ -211,4 +231,12 @@ pub struct HistoricalBlindness {
     pub agent_reported_docs: Option<String>,
     #[serde(default)]
     pub agent_reported_external_sources: Option<String>,
+    #[serde(default)]
+    pub policy: Option<String>,
+    #[serde(default)]
+    pub framework_source_excluded: Option<bool>,
+    #[serde(default)]
+    pub isolation: Option<IsolationRecord>,
+    #[serde(default)]
+    pub credential_exceptions: Option<Vec<String>>,
 }

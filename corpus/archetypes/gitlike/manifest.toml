@@ -61,4 +61,4 @@ description = "A domain failure must leave stdout untouched (scripts consume it)
 cases = ["cat-object-unknown-exit-3", "config-get-unset-key"]
 
 [gaps]
-PAR01 = "Config layering (cwd walk-up, precedence chain) is specced past current capability on purpose — signal for the PAR01 parity-config-layering epic. The config-layering expected-fail cases are its executable shape; a hand-rolled pass is friction signal, not a framework pass."
+PAR01 = { text = "Config layering (cwd walk-up, precedence chain) is specced past current capability on purpose — signal for the PAR01 parity-config-layering epic. The config-layering expected-fail cases are its executable shape; a hand-rolled pass is friction signal, not a framework pass.", evidence = "uses-crate:clapfig" }

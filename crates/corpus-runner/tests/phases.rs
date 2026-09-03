@@ -6,17 +6,27 @@ mod common;
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Duration;
 
 use common::script;
 use corpus_runner::archetype::{Archetype, InvariantCommand, InvariantContract, Invariants};
-use corpus_runner::report::{InvariantStatus, QuestionnaireReport, RunReport};
+use corpus_runner::report::{DocsSource, InvariantStatus, QuestionnaireReport, RunReport};
 use corpus_runner::{acceptance, questionnaire, session, workspace};
+use sha2::{Digest, Sha256};
 
 const NO_TIMEOUT: Duration = Duration::from_secs(60);
 
+const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 // Every directory under `corpus/` holding committed run reports.
-const COMMITTED_RUN_DIRS: &[&str] = &["pilot/runs", "rerun/runs", "completion/runs", "demo"];
+const COMMITTED_RUN_DIRS: &[&str] = &[
+    "pilot/runs",
+    "rerun/runs",
+    "completion/runs",
+    "parity/runs",
+    "demo",
+];
 
 fn corpus_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus")
@@ -47,6 +57,7 @@ fn filled_sheet() -> String {
     );
     sheet = answer(&sheet, "sources.external", "none");
     sheet = answer(&sheet, "confidence", "high");
+    sheet = answer(&sheet, "confidence_reason", "Every assertion passes.");
     sheet
 }
 
@@ -58,6 +69,7 @@ fn rendered(argv: &[&str]) -> InvariantCommand {
     InvariantCommand {
         argv: argv.iter().map(|s| (*s).to_string()).collect(),
         contract: InvariantContract::Rendered,
+        equal_across_modes: true,
     }
 }
 
@@ -65,6 +77,23 @@ fn opaque(argv: &[&str]) -> InvariantCommand {
     InvariantCommand {
         argv: argv.iter().map(|s| (*s).to_string()).collect(),
         contract: InvariantContract::OpaqueBytes,
+        equal_across_modes: true,
+    }
+}
+
+fn either(argv: &[&str]) -> InvariantCommand {
+    InvariantCommand {
+        argv: argv.iter().map(|s| (*s).to_string()).collect(),
+        contract: InvariantContract::Either,
+        equal_across_modes: true,
+    }
+}
+
+fn rendered_content_varies_by_mode(argv: &[&str]) -> InvariantCommand {
+    InvariantCommand {
+        argv: argv.iter().map(|s| (*s).to_string()).collect(),
+        contract: InvariantContract::Rendered,
+        equal_across_modes: false,
     }
 }
 
@@ -111,7 +140,7 @@ fn filled_sheet_collects_with_answers_and_blindness_record() {
 }
 
 #[test]
-fn unanswered_required_field_is_an_uncollected_report_not_a_panic() {
+fn unanswered_required_field_is_a_collected_report_with_no_answers() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(
         dir.path().join(questionnaire::SHEET_FILENAME),
@@ -120,7 +149,7 @@ fn unanswered_required_field_is_an_uncollected_report_not_a_panic() {
     .unwrap();
 
     let report = questionnaire::collect(dir.path());
-    assert!(!report.collected);
+    assert!(report.collected, "{:?}", report.diagnostics);
     assert!(report.diagnostics.iter().any(|d| d.contains("summary")));
     assert!(report.answers.is_empty());
 }
@@ -131,6 +160,17 @@ fn missing_sheet_is_an_uncollected_report() {
     let report = questionnaire::collect(dir.path());
     assert!(!report.collected);
     assert!(!report.diagnostics.is_empty());
+}
+
+#[test]
+fn unparseable_sheet_is_an_uncollected_report() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join(questionnaire::SHEET_FILENAME), "garbage").unwrap();
+
+    let report = questionnaire::collect(dir.path());
+    assert!(!report.collected);
+    assert!(!report.diagnostics.is_empty());
+    assert!(report.answers.is_empty());
 }
 
 #[test]
@@ -152,7 +192,8 @@ fn provisioned_workspace_is_blind() {
     let run_dir = tempfile::tempdir().unwrap();
     let docs_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs");
 
-    let ws = workspace::provision(run_dir.path(), &archetype, &docs_dir, "8.1.1").unwrap();
+    let ws = workspace::provision(run_dir.path(), &archetype, &docs_dir, CURRENT_VERSION).unwrap();
+    assert_eq!(ws.docs_source, DocsSource::Checkout);
 
     for file in ["SPEC.md", "INSTRUCTIONS.md", "QUESTIONNAIRE.md"] {
         assert!(ws.root.join(file).is_file(), "missing {file}");
@@ -176,7 +217,7 @@ fn provisioned_workspace_is_blind() {
     assert!(!ws.root.join("crates").exists());
 
     let manifest = fs::read_to_string(ws.app_dir.join("Cargo.toml")).unwrap();
-    assert!(manifest.contains("standout = \"=8.1.1\""));
+    assert!(manifest.contains(&format!("standout = \"={CURRENT_VERSION}\"")));
     assert!(!manifest.contains("path"));
     assert!(!manifest.contains("git"));
     assert!(manifest.contains("[workspace]"));
@@ -188,7 +229,7 @@ fn provisioning_records_the_docs_snapshot_digest() {
     let run_dir = tempfile::tempdir().unwrap();
     let docs_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs");
 
-    let ws = workspace::provision(run_dir.path(), &archetype, &docs_dir, "8.1.1").unwrap();
+    let ws = workspace::provision(run_dir.path(), &archetype, &docs_dir, CURRENT_VERSION).unwrap();
 
     assert_eq!(ws.docs_sha256.len(), 64);
     assert_eq!(
@@ -210,7 +251,8 @@ fn provisioning_refuses_symlinks_in_the_docs_source() {
     fs::write(docs_dir.join("index.md"), "index").unwrap();
     std::os::unix::fs::symlink(&outside, docs_dir.join("guides/leak.md")).unwrap();
 
-    let err = workspace::provision(run_dir.path(), &archetype, &docs_dir, "8.1.1").unwrap_err();
+    let err =
+        workspace::provision(run_dir.path(), &archetype, &docs_dir, CURRENT_VERSION).unwrap_err();
     assert!(format!("{err:#}").contains("symlink"), "{err:#}");
 }
 
@@ -230,8 +272,117 @@ fn provisioning_refuses_symlinks_from_a_published_root_into_internal_docs() {
     )
     .unwrap();
 
-    let err = workspace::provision(run_dir.path(), &archetype, &docs_dir, "8.1.1").unwrap_err();
+    let err =
+        workspace::provision(run_dir.path(), &archetype, &docs_dir, CURRENT_VERSION).unwrap_err();
     assert!(format!("{err:#}").contains("symlink"), "{err:#}");
+}
+
+fn git(repo: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .status()
+        .unwrap_or_else(|e| panic!("running git {args:?}: {e}"));
+    assert!(status.success(), "git {args:?} failed");
+}
+
+fn tagged_docs_repo(root: &Path, tag: &str) {
+    fs::create_dir_all(root.join("docs/guides")).unwrap();
+    fs::create_dir_all(root.join("docs/crates")).unwrap();
+    fs::create_dir_all(root.join("crates/widget/docs")).unwrap();
+    fs::write(root.join("docs/index.md"), format!("index at {tag}\n")).unwrap();
+    fs::write(root.join("docs/guides/start.md"), "guide\n").unwrap();
+    fs::write(root.join("crates/widget/docs/index.md"), "widget docs\n").unwrap();
+    std::os::unix::fs::symlink("../../crates/widget/docs", root.join("docs/crates/widget"))
+        .unwrap();
+
+    git(root, &["init", "-q"]);
+    git(root, &["config", "user.email", "corpus@example.test"]);
+    git(root, &["config", "user.name", "corpus"]);
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "tagged docs"]);
+    git(root, &["tag", tag]);
+}
+
+#[test]
+fn provisioning_reads_docs_from_the_tag_when_the_pin_differs_from_the_checkout() {
+    let archetype = Archetype::load(&corpus_dir().join("archetypes"), "smoke").unwrap();
+    let run_dir = tempfile::tempdir().unwrap();
+    let repo = tempfile::tempdir().unwrap();
+    tagged_docs_repo(repo.path(), "v1.2.3");
+
+    let ws = workspace::provision(
+        run_dir.path(),
+        &archetype,
+        &repo.path().join("docs"),
+        "1.2.3",
+    )
+    .unwrap();
+
+    assert_eq!(ws.docs_source, DocsSource::Tag);
+    assert_eq!(
+        fs::read_to_string(ws.root.join("docs/index.md")).unwrap(),
+        "index at v1.2.3\n"
+    );
+    let widget_docs = ws.root.join("docs/crates/widget");
+    assert!(widget_docs.is_dir());
+    assert!(!fs::symlink_metadata(&widget_docs)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(
+        fs::read_to_string(widget_docs.join("index.md")).unwrap(),
+        "widget docs\n"
+    );
+
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo.path())
+        .args(["rev-parse", "v1.2.3^{commit}"])
+        .output()
+        .unwrap();
+    let expected_commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    assert_eq!(ws.docs_commit, expected_commit);
+}
+
+#[test]
+fn provisioning_leaves_no_extra_tree_in_the_run_artifact() {
+    let archetype = Archetype::load(&corpus_dir().join("archetypes"), "smoke").unwrap();
+    let run_dir = tempfile::tempdir().unwrap();
+    let repo = tempfile::tempdir().unwrap();
+    tagged_docs_repo(repo.path(), "v1.2.3");
+
+    workspace::provision(
+        run_dir.path(),
+        &archetype,
+        &repo.path().join("docs"),
+        "1.2.3",
+    )
+    .unwrap();
+
+    let entries: Vec<_> = fs::read_dir(run_dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(entries, vec![std::ffi::OsString::from("workspace")]);
+}
+
+#[test]
+fn provisioning_refuses_a_pin_with_no_matching_tag() {
+    let archetype = Archetype::load(&corpus_dir().join("archetypes"), "smoke").unwrap();
+    let run_dir = tempfile::tempdir().unwrap();
+    let repo = tempfile::tempdir().unwrap();
+    tagged_docs_repo(repo.path(), "v1.2.3");
+
+    let err = workspace::provision(
+        run_dir.path(),
+        &archetype,
+        &repo.path().join("docs"),
+        "9.9.9",
+    )
+    .unwrap_err();
+    assert!(format!("{err:#}").contains("v9.9.9"), "{err:#}");
 }
 
 #[test]
@@ -281,6 +432,14 @@ fn session_scrubs_the_environment_and_writes_the_transcript() {
     assert_eq!(report.transcript, session::TRANSCRIPT_FILENAME);
     assert!(!report.timed_out);
     assert_eq!(report.turns, None);
+    let expected_sha256: String = Sha256::digest(transcript.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    assert_eq!(
+        report.transcript_sha256.as_deref(),
+        Some(expected_sha256.as_str())
+    );
 }
 
 #[test]
@@ -328,8 +487,17 @@ fn failing_agent_is_recorded_not_fatal() {
     assert_eq!(report.exit_code, Some(3));
 }
 
+const DECLINES_OUTPUT_FLAG: &str = r#"
+if [ "$1" = "--help" ]; then
+  echo 'Usage: fake [--json]'
+  exit 0
+fi
+echo 'irrelevant'
+"#;
+
 // Honors `--output text|term|json`; term adds only ANSI bold.
 const WELL_BEHAVED: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]'; exit 0; fi
 mode=text
 prev=""
 for a in "$@"; do
@@ -345,6 +513,7 @@ esac
 
 // A corrupt binary: term leaks an unresolved tag marker and drifts from text.
 const CORRUPT: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]'; exit 0; fi
 mode=text
 prev=""
 for a in "$@"; do
@@ -359,7 +528,125 @@ esac
 "#;
 
 const OPAQUE: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]'; exit 0; fi
 printf '\001\002opaque\377\n'
+"#;
+
+const ARTIFACT_LIKE: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]'; exit 0; fi
+echo 'kind: Pod  name: web-0'
+"#;
+
+const CONTENT_NAMES_THE_MODE: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]'; exit 0; fi
+mode=text
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--output" ]; then mode="$a"; fi
+  prev="$a"
+done
+case "$mode" in
+  json) echo '{"term.output": "json"}' ;;
+  term) printf 'term.output = term\n' ;;
+  *) echo 'term.output = text' ;;
+esac
+"#;
+
+const HELP_ADVERTISES_ONLY_OUTPUT_FILE_PATH: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output-file-path <path>]'; exit 0; fi
+echo 'irrelevant'
+"#;
+
+const HELP_MENTIONS_OUTPUT_ON_STDERR: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]' 1>&2; exit 0; fi
+mode=text
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--output" ]; then mode="$a"; fi
+  prev="$a"
+done
+case "$mode" in
+  json) echo '{"ok": true}' ;;
+  term) printf '\033[1mHello\033[0m table\n' ;;
+  *) echo 'Hello table' ;;
+esac
+"#;
+
+const HELP_MENTIONS_NO_OUTPUT_NOT_OUTPUT: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--no-output]'; exit 0; fi
+echo 'irrelevant'
+"#;
+
+const HELP_MENTIONS_OUTPUT_BRACKETED_NO_SPACE: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output]'; exit 0; fi
+mode=text
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--output" ]; then mode="$a"; fi
+  prev="$a"
+done
+case "$mode" in
+  json) echo '{"ok": true}' ;;
+  term) printf '\033[1mHello\033[0m table\n' ;;
+  *) echo 'Hello table' ;;
+esac
+"#;
+
+const HELP_FAILS_BUT_BINARY_ACCEPTS_OUTPUT: &str = r#"
+if [ "$1" = "--help" ]; then echo 'error: help unavailable' 1>&2; exit 1; fi
+mode=text
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--output" ]; then mode="$a"; fi
+  prev="$a"
+done
+case "$mode" in
+  json) echo '{"ok": true}' ;;
+  term) printf '\033[1mHello\033[0m table\n' ;;
+  *) echo 'Hello table' ;;
+esac
+"#;
+
+const ARTIFACT_LIKE_TIMES_OUT_WHEN_COLOR_OFF: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]'; exit 0; fi
+if [ -n "$NO_COLOR" ]; then sleep 30; fi
+echo 'kind: Pod  name: web-0'
+"#;
+
+const ARTIFACT_LIKE_ONLY_TEXT_MODE_RUNS_WHEN_COLOR_OFF: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]'; exit 0; fi
+mode=text
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--output" ]; then mode="$a"; fi
+  prev="$a"
+done
+if [ -n "$NO_COLOR" ] && [ "$mode" != "text" ]; then sleep 30; fi
+echo 'kind: Pod  name: web-0'
+"#;
+
+const ARTIFACT_LIKE_FAILS_WHEN_COLOR_OFF: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]'; exit 0; fi
+if [ -n "$NO_COLOR" ]; then echo 'boom' 1>&2; exit 1; fi
+echo 'kind: Pod  name: web-0'
+"#;
+
+const ARTIFACT_LIKE_JSON_MODE_FAILS_WITH_JSON_LOOKING_OUTPUT_WHEN_COLOR_OFF: &str = r#"
+if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]'; exit 0; fi
+mode=text
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--output" ]; then mode="$a"; fi
+  prev="$a"
+done
+if [ -n "$NO_COLOR" ]; then
+  if [ "$mode" = "json" ]; then
+    echo '{"error": "boom"}'
+    exit 1
+  fi
+  sleep 30
+fi
+echo 'kind: Pod  name: web-0'
 "#;
 
 #[test]
@@ -518,6 +805,424 @@ fn hanging_binary_times_out_as_a_finding() {
         .all(|c| c.detail.as_deref().unwrap().contains("timed out")));
 }
 
+#[test]
+fn binary_declining_the_output_flag_reads_not_applicable_not_failed() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", DECLINES_OUTPUT_FLAG);
+    let invariants = Invariants {
+        commands: vec![rendered(&["greet"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    assert_eq!(cells.len(), 30);
+    assert!(cells
+        .iter()
+        .all(|c| c.status == InvariantStatus::NotApplicable));
+    assert!(cells
+        .iter()
+        .all(|c| c.detail.as_deref() == Some("no output flag")));
+}
+
+#[test]
+fn either_contract_resolves_to_rendered_for_a_well_behaved_binary() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", WELL_BEHAVED);
+    let invariants = Invariants {
+        commands: vec![either(&["greet"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    assert_eq!(cells.len(), 30);
+    assert!(cells.iter().all(|c| c.status != InvariantStatus::Fail));
+    assert_eq!(
+        cells
+            .iter()
+            .filter(|c| c.status == InvariantStatus::Pass)
+            .count(),
+        14
+    );
+}
+
+#[test]
+fn either_contract_resolves_to_opaque_bytes_for_an_artifact_style_binary() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", ARTIFACT_LIKE);
+    let invariants = Invariants {
+        commands: vec![either(&["get", "pods"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    assert_eq!(cells.len(), 30);
+    assert!(cells.iter().all(|c| c.status != InvariantStatus::Fail));
+    assert!(cells
+        .iter()
+        .filter(|c| c.check == "stdout parses as JSON")
+        .all(|c| c.status == InvariantStatus::NotApplicable));
+}
+
+#[test]
+fn content_that_names_the_mode_fails_the_cross_mode_check_by_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", CONTENT_NAMES_THE_MODE);
+    let invariants = Invariants {
+        commands: vec![rendered(&["config", "list"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    let failed: Vec<&str> = cells
+        .iter()
+        .filter(|c| c.status == InvariantStatus::Fail)
+        .map(|c| c.check.as_str())
+        .collect();
+    assert_eq!(
+        failed,
+        vec![
+            "styling preserves text layout",
+            "styling preserves text layout"
+        ]
+    );
+}
+
+#[test]
+fn equal_across_modes_false_skips_the_cross_mode_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", CONTENT_NAMES_THE_MODE);
+    let invariants = Invariants {
+        commands: vec![rendered_content_varies_by_mode(&["config", "list"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    assert_eq!(cells.len(), 30);
+    assert!(cells.iter().all(|c| c.status != InvariantStatus::Fail));
+    assert_eq!(
+        cells
+            .iter()
+            .filter(|c| c.status == InvariantStatus::Pass)
+            .count(),
+        12
+    );
+    let styling: Vec<_> = cells
+        .iter()
+        .filter(|c| c.check == "styling preserves text layout")
+        .collect();
+    assert!(styling
+        .iter()
+        .all(|c| c.status == InvariantStatus::NotApplicable));
+    assert!(styling
+        .iter()
+        .filter(|c| c.mode == "term")
+        .all(|c| c.detail.as_deref() == Some("command's content varies by output mode")));
+    assert!(styling
+        .iter()
+        .filter(|c| c.mode != "term")
+        .all(
+            |c| c.detail.as_deref() == Some("check does not apply to text mode")
+                || c.detail.as_deref() == Some("check does not apply to json mode")
+        ));
+}
+
+#[test]
+fn help_page_advertising_only_output_file_path_reads_no_output_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", HELP_ADVERTISES_ONLY_OUTPUT_FILE_PATH);
+    let invariants = Invariants {
+        commands: vec![rendered(&["greet"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    assert_eq!(cells.len(), 30);
+    assert!(cells
+        .iter()
+        .all(|c| c.status == InvariantStatus::NotApplicable));
+    assert!(cells
+        .iter()
+        .all(|c| c.detail.as_deref() == Some("no output flag")));
+}
+
+#[test]
+fn help_page_naming_no_output_reads_no_output_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", HELP_MENTIONS_NO_OUTPUT_NOT_OUTPUT);
+    let invariants = Invariants {
+        commands: vec![rendered(&["greet"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    assert_eq!(cells.len(), 30);
+    assert!(cells
+        .iter()
+        .all(|c| c.status == InvariantStatus::NotApplicable));
+    assert!(cells
+        .iter()
+        .all(|c| c.detail.as_deref() == Some("no output flag")));
+}
+
+#[test]
+fn help_page_naming_output_bracketed_with_no_space_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", HELP_MENTIONS_OUTPUT_BRACKETED_NO_SPACE);
+    let invariants = Invariants {
+        commands: vec![rendered(&["greet"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    assert_eq!(cells.len(), 30);
+    assert!(cells.iter().all(|c| c.status != InvariantStatus::Fail));
+    assert!(cells
+        .iter()
+        .filter(|c| c.check == "exits 0")
+        .all(|c| c.status == InvariantStatus::Pass));
+}
+
+#[test]
+fn help_page_naming_output_on_stderr_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", HELP_MENTIONS_OUTPUT_ON_STDERR);
+    let invariants = Invariants {
+        commands: vec![rendered(&["greet"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    assert_eq!(cells.len(), 30);
+    assert!(cells.iter().all(|c| c.status != InvariantStatus::Fail));
+    assert!(cells
+        .iter()
+        .filter(|c| c.check == "exits 0")
+        .all(|c| c.status == InvariantStatus::Pass));
+}
+
+#[test]
+fn failing_help_probe_lets_the_matrix_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", HELP_FAILS_BUT_BINARY_ACCEPTS_OUTPUT);
+    let invariants = Invariants {
+        commands: vec![rendered(&["greet"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    assert_eq!(cells.len(), 30);
+    assert!(cells
+        .iter()
+        .any(|c| c.status != InvariantStatus::NotApplicable));
+    assert!(cells.iter().all(|c| c.status != InvariantStatus::Fail));
+    assert_eq!(
+        cells
+            .iter()
+            .filter(|c| c.status == InvariantStatus::Pass)
+            .count(),
+        14
+    );
+}
+
+#[test]
+fn applicability_reason_names_the_contract_mismatch_not_mode_variance() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", CONTENT_NAMES_THE_MODE);
+    let invariants = Invariants {
+        commands: vec![rendered_content_varies_by_mode(&["config", "list"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    let opaque_bytes_checks: Vec<_> = cells
+        .iter()
+        .filter(|c| c.check == "opaque output preserves text bytes")
+        .collect();
+    assert!(!opaque_bytes_checks.is_empty());
+    assert!(opaque_bytes_checks
+        .iter()
+        .all(|c| c.status == InvariantStatus::NotApplicable));
+    assert!(opaque_bytes_checks
+        .iter()
+        .all(|c| c.detail.as_deref() == Some("rendered command uses render invariants")));
+}
+
+#[test]
+fn either_contract_skips_a_first_cell_that_never_ran() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", ARTIFACT_LIKE_TIMES_OUT_WHEN_COLOR_OFF);
+    let invariants = Invariants {
+        commands: vec![either(&["get", "pods"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        Duration::from_millis(200),
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    let on_cells: Vec<_> = cells.iter().filter(|c| c.color == "on").collect();
+    assert!(!on_cells.is_empty());
+    assert!(on_cells.iter().all(|c| c.status != InvariantStatus::Fail));
+    assert!(on_cells
+        .iter()
+        .filter(|c| c.check == "stdout parses as JSON")
+        .all(|c| c.status == InvariantStatus::NotApplicable));
+}
+
+#[test]
+fn either_contract_waits_for_a_cell_that_actually_settles_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(
+        dir.path(),
+        "fake",
+        ARTIFACT_LIKE_ONLY_TEXT_MODE_RUNS_WHEN_COLOR_OFF,
+    );
+    let invariants = Invariants {
+        commands: vec![either(&["get", "pods"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        Duration::from_millis(200),
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    let on_cells: Vec<_> = cells.iter().filter(|c| c.color == "on").collect();
+    assert!(!on_cells.is_empty());
+    assert!(on_cells.iter().all(|c| c.status != InvariantStatus::Fail));
+    assert!(on_cells
+        .iter()
+        .filter(|c| c.check == "stdout parses as JSON")
+        .all(|c| c.status == InvariantStatus::NotApplicable));
+}
+
+#[test]
+fn either_contract_does_not_settle_on_a_first_cell_that_exited_nonzero() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", ARTIFACT_LIKE_FAILS_WHEN_COLOR_OFF);
+    let invariants = Invariants {
+        commands: vec![either(&["get", "pods"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        Duration::from_millis(200),
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    // color=off exits nonzero on every mode; that must not settle the either
+    // contract as `rendered` before color=on's opaque-bytes cell runs.
+    let on_cells: Vec<_> = cells.iter().filter(|c| c.color == "on").collect();
+    assert!(!on_cells.is_empty());
+    assert!(on_cells.iter().all(|c| c.status != InvariantStatus::Fail));
+    assert!(on_cells
+        .iter()
+        .filter(|c| c.check == "stdout parses as JSON")
+        .all(|c| c.status == InvariantStatus::NotApplicable));
+}
+
+#[test]
+fn either_contract_ignores_json_parsing_stray_output_from_a_failed_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(
+        dir.path(),
+        "fake",
+        ARTIFACT_LIKE_JSON_MODE_FAILS_WITH_JSON_LOOKING_OUTPUT_WHEN_COLOR_OFF,
+    );
+    let invariants = Invariants {
+        commands: vec![either(&["get", "pods"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        Duration::from_millis(200),
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    let on_cells: Vec<_> = cells.iter().filter(|c| c.color == "on").collect();
+    assert!(!on_cells.is_empty());
+    assert!(on_cells.iter().all(|c| c.status != InvariantStatus::Fail));
+    assert!(on_cells
+        .iter()
+        .filter(|c| c.check == "stdout parses as JSON")
+        .all(|c| c.status == InvariantStatus::NotApplicable));
+}
+
 fn test_isolation_record() -> corpus_runner::report::IsolationRecord {
     corpus_runner::report::IsolationRecord {
         backend: "test".into(),
@@ -539,6 +1244,7 @@ fn report_round_trips_through_json() {
             framework_version: "8.1.1".into(),
             docs_commit: "deadbeef".into(),
             docs_sha256: "cd".repeat(32),
+            docs_source: corpus_runner::report::DocsSource::Checkout,
             acceptance_sha256: "ef".repeat(32),
             questionnaire_fingerprint: questionnaire::definition().fingerprint().into(),
         },
@@ -565,10 +1271,12 @@ fn report_round_trips_through_json() {
             input_tokens: None,
             output_tokens: None,
             transcript: "transcript.jsonl".into(),
+            transcript_sha256: None,
         },
         provenance: corpus_runner::provenance::recorded(
             "claude --model claude-opus-5 -p 'do the thing'",
         ),
+        recovered_provenance: None,
         acceptance: corpus_runner::report::AcceptanceReport {
             built: true,
             build_detail: None,

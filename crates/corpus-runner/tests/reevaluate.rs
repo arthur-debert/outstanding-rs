@@ -131,6 +131,55 @@ fn historical_v2_report(archetype: &str) -> String {
     )
 }
 
+// Mirrors the backfilled block committed on the schema-2/3 pilot reports under
+// `corpus/pilot/runs/` after their transcripts were deleted.
+fn historical_v2_report_with_recovered_provenance(archetype: &str) -> String {
+    let base = historical_v2_report(archetype);
+    base.replacen(
+        "\"acceptance\":",
+        r#""recovered_provenance": {
+    "backend": "claude",
+    "executable_version": "2.1.234",
+    "model_requested": null,
+    "model_observed": "claude-opus-5[1m]",
+    "prompt": "Read INSTRUCTIONS.md in the current directory and carry it out completely.",
+    "settings": ["--dangerously-skip-permissions"]
+  },
+  "acceptance":"#,
+        1,
+    )
+}
+
+#[test]
+fn reevaluation_preserves_recovered_provenance_verbatim() {
+    let fixture = fixture(&historical_v2_report_with_recovered_provenance("fake"));
+
+    let report = reevaluate(&config(&fixture)).unwrap();
+
+    let recovered = report
+        .recovered_provenance
+        .as_ref()
+        .expect("recovered_provenance carried through re-evaluation");
+    assert_eq!(recovered.backend.as_deref(), Some("claude"));
+    assert_eq!(recovered.executable_version.as_deref(), Some("2.1.234"));
+    assert_eq!(
+        recovered.model_observed.as_deref(),
+        Some("claude-opus-5[1m]")
+    );
+
+    let restored: corpus_runner::report::RunReport =
+        serde_json::from_str(&fs::read_to_string(&fixture.output_report).unwrap()).unwrap();
+    assert_eq!(
+        restored
+            .recovered_provenance
+            .as_ref()
+            .unwrap()
+            .backend
+            .as_deref(),
+        Some("claude")
+    );
+}
+
 #[test]
 fn reevaluation_preserves_history_and_regenerates_objective_sections() {
     let fixture = fixture(&historical_v2_report("fake"));
@@ -162,6 +211,10 @@ fn reevaluation_preserves_history_and_regenerates_objective_sections() {
     assert_eq!(report.run_id, "fake-1700000000");
     assert_eq!(report.pins.framework_version, "8.1.1");
     assert_eq!(report.pins.docs_commit, "cafecafe");
+    assert_eq!(
+        report.pins.docs_source,
+        corpus_runner::report::DocsSource::Checkout
+    );
     assert_eq!(report.session.wall_seconds, 12.5);
     assert_eq!(report.session.turns, Some(3));
     assert_eq!(report.blindness.env_allowlist, vec!["PATH", "HOME"]);
@@ -297,4 +350,89 @@ fn archetype_mismatch_is_refused_with_both_names() {
     assert!(chain.contains("records archetype"), "{chain}");
     assert!(chain.contains("other") && chain.contains("fake"), "{chain}");
     assert!(!fixture.output_report.exists());
+}
+
+fn modern_schema5_report(archetype: &str) -> String {
+    format!(
+        r#"{{
+  "schema_version": 5,
+  "run_id": "{archetype}-1800000000",
+  "archetype": {{ "name": "{archetype}", "spec_sha256": "{a}" }},
+  "pins": {{
+    "framework_version": "10.0.0",
+    "docs_commit": "cafecafe",
+    "docs_sha256": "{b}",
+    "docs_source": "checkout",
+    "acceptance_sha256": "{c}",
+    "questionnaire_fingerprint": "fp-1"
+  }},
+  "evaluation": {{
+    "origin": "full-run",
+    "isolation": {{ "backend": "macos-seatbelt", "filesystem": "allow-default", "network": "denied" }},
+    "binary_sha256": null
+  }},
+  "blindness": {{
+    "policy": "workspace contains spec + published docs + crates.io pins only",
+    "env_allowlist": ["PATH", "HOME"],
+    "framework_source_excluded": true,
+    "isolation": {{ "backend": "macos-seatbelt", "filesystem": "allow-default", "network": "allowed-by-policy" }},
+    "credential_exceptions": [],
+    "agent_reported_docs": "docs/guides/minimal.md",
+    "agent_reported_external_sources": "none"
+  }},
+  "session": {{
+    "agent_cmd": "sh agent.sh",
+    "wall_seconds": 12.5,
+    "exit_code": 0,
+    "timed_out": false,
+    "turns": 3,
+    "input_tokens": 10,
+    "output_tokens": 20,
+    "transcript": "transcript.jsonl",
+    "transcript_sha256": "{d}"
+  }},
+  "provenance": {{
+    "backend": "claude",
+    "executable_version": "2.1.259",
+    "model_requested": null,
+    "model_observed": "claude-opus-5[1m]",
+    "prompt": "do the thing",
+    "settings": []
+  }},
+  "acceptance": {{ "built": true, "build_detail": null }},
+  "invariants": [],
+  "questionnaire": {{
+    "collected": true,
+    "diagnostics": [],
+    "answers": {{ "summary": "built it" }}
+  }}
+}}"#,
+        a = "ab".repeat(32),
+        b = "cd".repeat(32),
+        c = "ef".repeat(32),
+        d = "12".repeat(32),
+    )
+}
+
+#[test]
+fn a_modern_source_keeps_its_own_blindness_record() {
+    let fixture = fixture(&modern_schema5_report("fake"));
+
+    let report = reevaluate(&config(&fixture)).unwrap();
+
+    assert_eq!(
+        report.blindness.policy,
+        "workspace contains spec + published docs + crates.io pins only"
+    );
+    assert!(report.blindness.framework_source_excluded);
+    assert_eq!(report.blindness.isolation.backend, "macos-seatbelt");
+    assert_eq!(
+        report.blindness.isolation.network,
+        corpus_runner::report::NetworkEnforcement::AllowedByPolicy
+    );
+    assert!(report.blindness.credential_exceptions.is_empty());
+    assert_eq!(
+        report.blindness.agent_reported_docs.as_deref(),
+        Some("docs/guides/minimal.md")
+    );
 }

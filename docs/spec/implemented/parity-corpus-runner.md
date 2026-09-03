@@ -1,5 +1,37 @@
 # PAR04: The Corpus Runner as a Pipeline
 
+> As built, where the text below
+> differs:
+>
+> - D25's post-run file assertions read a single inventory of the whole
+>   sandbox, taken once the case's process group is confirmed dead, rather
+>   than opening each asserted path on demand — a path an inventory has no
+>   regular-file entry for is the same failure as a path the inventory
+>   never saw.
+> - `batch` takes one directory, `--out`; there is no separate `--runs-dir`
+>   for it, unlike `run`.
+> - D26's tag archive extracts `docs` (and each crate's `docs/` symlink
+>   target) from the tag with `git archive`, never the tag's whole tree.
+> - D17's evidence check runs on any case that carries a `gap` naming an
+>   evidence-bearing manifest `[gaps]` entry, independent of `expected`: a
+>   case already flipped to `expected = "pass"` once its epic closes the gap
+>   keeps reporting `hand-rolled-pass` instead of a silent ordinary pass.
+>   `scorecard.py`'s acceptance column reports required and gap cases as two
+>   counts for the same reason — mixing their denominators misread a pass
+>   rate no framework failure produced.
+> - `validity`'s two `--output term`, `NO_COLOR`-set cases asserted no ANSI;
+>   the framework's contract is the opposite (`docs/topics/output-modes.md`:
+>   an explicit `term` request is unconditional).
+> - `reevaluate` carries a schema-4-or-later source's own `blindness` block
+>   forward unchanged, rather than always substituting the historical-partial
+>   narrative: that narrative is accurate for a pre-instrumentation source
+>   (which never recorded its own agent-phase isolation) and false for one
+>   that did.
+> - ghlike and dockerlike's suite edits replay through `reevaluate`
+>   in the `standout-corpus` repository, not here; this repository has no
+>   ghlike or dockerlike implementation to reevaluate against (the roster's
+>   structural test forbids one).
+
 Runs beside PAR01 (config layering) after PAR02 (the machine contract), and must finish
 before PAR01's blind runs: two of its items (D17's evidence check and #455's file
 assertions) are what make PAR01's exit criterion measurable. It touches

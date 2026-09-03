@@ -18,26 +18,25 @@ makes runs reproducible and comparable.
   `acceptance.toml` in the same case schema as every roster suite, but no
   `manifest.toml`. The roster's structural test exempts it by name.
 - `runs/<run-id>/` — one directory per run: the provisioned `workspace/`, the
-  per-case `cases/` sandboxes, the session `transcript.jsonl`, and the
-  durable `report.json`. Runs are artifacts, not source: `runs/` is
-  gitignored. Deliberately kept demonstration runs live under `demo/`
-  instead (report + transcript only, never the workspace). Demo transcripts
-  are sanitized before committing: host paths become placeholders, session
-  ids are zeroed, and the host's tool/plugin/connector inventory is removed
-  from the init event.
-- `pilot/` — the pilot execution's committed artifacts: one
-  `runs/<run-id>/` per pilot run (report + sanitized transcript, demo
-  rules), and `scorecard.md` — the per-archetype signals, ranked friction
-  themes, and validity verdict. `sanitize-run.py` is the sanitizer every
-  committed run goes through, pilot or not.
-- `rerun/` — the same archetypes run again against the 9.0 release, in the
-  same shape: one `runs/<run-id>/` per run and `scorecard.md`, which is
-  scorecard v2 — the re-run beside the pilot, with the agent delta between
-  them stated.
-- `completion/` — the completion six's **first** blind runs, against the
-  published 9.0 line: one `runs/<run-id>/` per run, same demo rules, and
-  `scorecard.md`. These runs have no earlier row to compare against, so that
-  scorecard is a first data point rather than a comparison.
+  per-case `cases/` sandboxes, the session transcript, and the durable
+  `report.json`. Runs are artifacts, not source: `runs/` is gitignored.
+- `demo/`, `pilot/`, `rerun/`, `completion/`, `parity/` — committed run
+  evidence: one `runs/<run-id>/` per run, holding `report.json` only. A
+  run's transcript never enters the repository — it stays under
+  `--runs-dir` or the system temporary directory (a set's batch invocation
+  writes it under its own `--out` directory instead); `report.json`'s
+  `session.transcript_sha256` is its fingerprint. `sanitize-run.py` is the
+  sanitizer every committed report goes through: host paths become
+  placeholders and session ids are zeroed. `demo/` is a deliberately kept
+  demonstration set; `pilot/` is the pilot four's first runs against 8.1.1,
+  plus `scorecard.md` — the per-archetype signals, ranked friction themes,
+  and validity verdict; `rerun/` is the same four against 9.0.0, plus
+  `scorecard.md` v2 — the re-run beside the pilot, with the agent delta
+  between them stated; `completion/` is the completion six's **first**
+  blind runs, against the published 9.0 line, plus `scorecard.md` as a
+  first data point rather than a comparison; `parity/` is `gitlike`,
+  `cargolike` and `validity` against 10.0.0, plus `scorecard.md` — the
+  10.0.0 baseline the parity epics measure against.
 - `scorecard.py` — computes a scorecard's objective table from committed
   reports (`scorecard.py pilot=corpus/pilot/runs rerun=corpus/rerun/runs completion=corpus/completion/runs`).
   Every scorecard's figures come from this one script under one set of
@@ -96,6 +95,10 @@ Run workspaces default to the system temporary directory. `--runs-dir` may
 override it, but the runner refuses a directory beneath the framework
 checkout: a nested workspace would let parent traversal and Git discovery
 cross the blindness boundary.
+
+`corpus-runner batch <archetype>...` runs a whole set through this loop in
+one command, one archetype at a time, and sanitizes and scores the results —
+see [`docs/dev/running-a-set.md`](../docs/dev/running-a-set.md).
 
 Every external process (agent, cargo build, produced binary) runs under a
 deadline — an overrun is killed (whole process group) and recorded in the
@@ -184,9 +187,9 @@ Every archetype — `smoke` included — speaks it.
 
 ## Decision: the run-report schema
 
-`report.json`, `schema_version: 4`
+`report.json`, `schema_version: 5`
 ([ADR-0024](../docs/adr/0024-the-corpus-run-report-schema.md)). Committed
-schema-2 and schema-3 evidence still loads, unrewritten, through the typed
+schema-2 through schema-4 evidence still loads, unrewritten, through the typed
 historical-report path re-evaluation uses. Objective results and agent
 self-assessment are deliberately separate sections. The shape:
 
@@ -196,8 +199,12 @@ self-assessment are deliberately separate sections. The shape:
 - `pins` — what makes runs comparable: the crates.io framework version the
   scaffold pinned, the git commit the docs snapshot came from, the sha256 of
   the snapshot's actual bytes (the content-true pin a commit alone cannot
-  give when the tree is dirty), the exact acceptance-suite hash, and the exit
-  questionnaire's semantic fingerprint.
+  give when the tree is dirty), where that snapshot came from
+  (`docs_source`: `checkout` when the pin matches the runner's own version,
+  `tag` when `--framework-version` names another published version and
+  `provision` archived its docs from that version's git tag instead — a
+  missing tag refuses the run before the agent starts), the exact
+  acceptance-suite hash, and the exit questionnaire's semantic fingerprint.
 - `evaluation` — whether this was a full run or an isolated re-evaluation,
   the isolation record of the check boundary (backend, filesystem model,
   and the policy-derived network state: `denied` when the requested denial
@@ -212,7 +219,10 @@ self-assessment are deliberately separate sections. The shape:
 - `session` — instrumentation: the agent command, wall seconds, exit code,
   whether the session hit its deadline (`timed_out`), and turns/token counts
   when the transcript is Claude Code stream-json; plus the transcript path
-  (always linked, relative to the run directory).
+  (always linked, relative to the run directory) and its sha256
+  (`transcript_sha256`, absent on a report written before this field
+  existed) — the transcript's fingerprint, since the file itself is not
+  committed (see Layout above).
 - `provenance` — who implemented the run: the backend the runner spawned
   (`backend`, the program's name), the version that backend announced in the
   transcript, the model the command asked for (`model_requested` — absent
@@ -226,21 +236,28 @@ self-assessment are deliberately separate sections. The shape:
   `session.agent_cmd`, and a field neither source states is absent rather
   than guessed: a session spawned through a shell command that names no
   single program records nothing it cannot parse, a scripted agent announces
-  no version or model, and a re-evaluation keeps a schema-4 source's block
+  no version or model, and a re-evaluation keeps a schema-4-or-later source's block
   or, for an older one, states only what the recorded command says. Two runs
   compare as evidence when these match; where they cannot, the comparison
   states the delta and reads as observational.
 - `acceptance` — objective: whether the produced app built, and one entry
   per suite case, each carrying the case's `expected` marker and its
-  `outcome` (`pass`, `fail`, `expected-fail`, or `unexpected-pass`, the
-  news of a gap silently closed) plus the authored `stresses`/`gap`/
-  `reason` context so the report reads without the suite beside it.
+  `outcome` (`pass`, `fail`, `expected-fail`, `unexpected-pass` — the news
+  of a gap silently closed — or `hand-rolled-pass`, the same news with the
+  manifest's `[gaps]` evidence crate absent from the produced app's
+  `Cargo.toml`, so the pass was rebuilt by hand rather than closed by the
+  framework) plus the authored `stresses`/`gap`/`reason` context so the
+  report reads without the suite beside it.
 - `invariants` — objective: the fixed invariant plan (command × output mode ×
   color × compiled theme × check). Every identity has `pass`, `fail`,
   `not-run`, or `not-applicable`; reports never improve a denominator by
   omitting a cell.
-- `questionnaire` — subjective: whether a valid sheet was collected, its
-  diagnostics, and the decoded answers keyed by stable field id.
+- `questionnaire` — subjective: `collected` is false only when no sheet was
+  found or its structure could not be parsed at all; a sheet that parsed but
+  had a field rejected (a diagnostic, dropped from `answers`) still reads
+  `collected: true` alongside every answer that did decode. `confidence`
+  (`low`/`medium`/`high`) and its free-text `confidence_reason` are separate
+  fields, keyed by stable field id like every other answer.
 
 A run that completes the loop always writes a report, even when every case
 fails — failing cases are findings, not runner errors.
@@ -287,6 +304,9 @@ expected = "pass"                    # "pass" | "fail"
 # When expected = "fail" (specced past current capability), both are required:
 # gap    = "PAR01"                   # the epic that closes the gap — must be a key of the manifest's [gaps] table
 # reason = "why this fails today"
+# `gap` alone (no `reason`) also carries onto an expected = "pass" case: once
+# the named epic closes the gap the case flips to "pass" and keeps its `gap`
+# marker, so the evidence check below still runs on it.
 
 [case.run]
 argv = ["log", "--limit", "2"]       # arguments after the binary name
@@ -304,7 +324,22 @@ exit_code = 0
 stdout = "exact bytes\n"             # exact match, LF-normalized
 stderr = ""
 stdout_lines_end_with_once = ["<id:name>"] # each suffix ends exactly one non-empty line
+files_absent = ["sub/dir/.gitlike.lock"]   # paths that must not exist after the run
+
+[case.expect.files]                  # sandbox paths read back after the run, exact
+"sub/dir/.gitlike.toml" = "log.limit = 3\n"  # content, LF-normalized like stdout/stderr
 ```
+
+A case is one invocation; `[case.run.files]` seeds a precondition, and
+`[case.expect.files]`/`files_absent` read the sandbox back afterwards — the
+only way a store-mutating command's write path is checked rather than only
+its streams. Both are lookups against one inventory of the sandbox, taken
+after the case's process group is confirmed dead, that never follows a
+symlink, refuses anything but a regular file, and errors the case (naming
+the size) rather than silently truncating a sandbox over its total byte
+budget; `[case.expect.files]` values are exact content, and a key naming a
+path the inventory has no regular-file entry for is a failure, same as a
+`files_absent` path the inventory has any entry for at all.
 
 Besides the cases, a suite may carry a declarative invariants matrix. The global
 axes are the whole plan: every command runs on every global axis
@@ -326,7 +361,38 @@ contract = "rendered"                 # markers, layout, and JSON apply
 [[invariants.command]]
 argv = ["ref-list"]
 contract = "opaque-bytes"             # modes preserve text bytes
+
+[[invariants.command]]
+argv = ["build"]
+contract = "either"           # rendered or opaque-bytes, whichever the binary does, consistently
+
+[[invariants.command]]
+argv = ["config", "list"]
+contract = "rendered"
+equal_across_modes = false    # the content names the output mode
 ```
+
+A command's own choice can outrun what the suite could know spec-first.
+`contract = "either"` accepts whichever of `rendered` or `opaque-bytes` the
+produced binary actually satisfies — read from its first evaluated cell
+(json-mode output that parses as JSON reads `rendered`; failing that, a
+non-text mode whose bytes match the text baseline reads `opaque-bytes`) —
+and holds that contract for the rest of the command's cells, rather than
+failing an implementation the spec never ruled out. `equal_across_modes =
+false` marks a command whose content is deliberately not the same across
+modes — the resolved mode is part of what it prints, as `config list`'s
+`term.output` row is — so the cross-mode content check (`styling preserves
+text layout` for `rendered`, the byte-identity check for `opaque-bytes`)
+reads `not-applicable` instead of failing on content the spec asked for.
+Every other identity in the cell still runs.
+
+Before the matrix runs at all, the runner invokes the produced binary with
+`--help`. An application built with `no_output_flag()` (or
+`no_output_file_flag()`) never has to say so in the manifest: the runner
+reads the choice from the binary itself, and when `--help` never mentions
+`--output`, every planned cell for every command reads `not-applicable`
+with reason `no output flag` instead of failing an unknown-flag error on
+each one.
 
 Color is explicit and deterministic: `off` sets no-color controls; `on` sets
 terminal capability and force-color controls. A produced binary cannot swap
@@ -370,6 +436,8 @@ baseline does not run, the planned identities remain present as `not-run`.
 | `stdout_json_rows` | stdout parses as JSON and every value in each group co-occurs among the scalars of one single JSON array element (numbers match their decimal literal) |
 | `stdout_not_contains`, `stderr_not_contains` | no listed substring occurs in the stream |
 | `stdout_lines_end_with_once` | each suffix terminates exactly one non-empty stdout line |
+| `files` | a table of sandbox path → exact content (LF-normalized), read after the process exits |
+| `files_absent` | sandbox paths that must not exist after the process exits |
 
 Every listed string and every row group must be non-empty: an empty group or
 empty substring matches any output, so it would silently assert nothing —
@@ -415,7 +483,23 @@ cases = ["case-name", "..."]   # acceptance cases that exercise it
 
 [gaps]                          # only for partially-past-capability archetypes
 PAR01 = "what is specced past current capability, and why on purpose"
+# or, with a black-box-checkable evidence claim (D17):
+# PAR01 = { text = "...", evidence = "uses-crate:clapfig" }
 ```
+
+A `[gaps]` entry is prose alone, or prose plus `evidence`: a claim the runner
+can check against the produced workspace rather than trust at face value.
+`uses-crate:<name>` is the only kind today — the runner reads the produced
+app's `Cargo.toml` and reports `hand-rolled-pass` instead of an ordinary pass
+when the named crate is absent from `[dependencies]`. The check runs for any
+case that carries a `gap` naming an evidence-bearing `[gaps]` entry,
+independent of `expected`: on an `expected = "fail"` case (the gap's usual
+shape) the pass it overrides is `unexpected-pass`; on an `expected = "pass"`
+case — the same case once the named epic closes the gap and the suite flips
+it, `gap` kept — the pass it overrides is the ordinary `pass`. Either way, a
+black-box case cannot otherwise tell a framework-supplied capability from one
+the agent rebuilt by hand; `scorecard.py` counts these as `hand_rolled_passes`,
+separate from the ordinary pass/fail/expected-fail/unexpected-pass tally.
 
 ### The roster
 
