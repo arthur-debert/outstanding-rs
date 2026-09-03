@@ -74,6 +74,8 @@ pub use standout_render::{
 
 pub use setup::SetupError;
 
+pub use cli::{TermOutput, TermSettings};
+
 pub use standout_macros::{embed_styles, embed_templates, handler};
 
 pub use standout_macros::{Tabular, TabularRow};

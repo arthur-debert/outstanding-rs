@@ -114,6 +114,7 @@ pub enum DiagnosticKind {
     FinalWrite,
     External,
     App,
+    Config,
     Framework,
 }
 
@@ -130,6 +131,7 @@ impl From<RunErrorKind> for DiagnosticKind {
             RunErrorKind::FinalWrite(_) => Self::FinalWrite,
             RunErrorKind::External => Self::External,
             RunErrorKind::App => Self::App,
+            RunErrorKind::Config => Self::Config,
         }
     }
 }
@@ -237,6 +239,7 @@ mod tests {
             ),
             (RunErrorKind::External, "external"),
             (RunErrorKind::App, "app"),
+            (RunErrorKind::Config, "config"),
         ];
         for (kind, name) in expected {
             let wire = DiagnosticKind::from(kind);

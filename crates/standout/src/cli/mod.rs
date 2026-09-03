@@ -15,6 +15,7 @@
 //! [`DispatchResult::NoMatch`] with the `ArgMatches` for your own dispatch;
 //! [`CompletedRun`] wraps that outcome plus framework warnings.
 
+mod config;
 mod default_command;
 mod dispatch;
 mod emit;
@@ -33,6 +34,7 @@ pub mod hooks;
 pub mod macros;
 
 pub use builder::{App, AppBuilder, STRICT_STYLE_TAGS_ENV};
+pub use config::{MissingConfig, TermOutput, TermSettings};
 
 pub use group::{CommandConfig, GroupBuilder};
 

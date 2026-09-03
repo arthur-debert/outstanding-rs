@@ -10,6 +10,7 @@ use super::{
     output_mode_flag_spelling, App, AppBuilder, HookRegistrationSource, PendingCommand,
     TemplateRef, OUTPUT_MODE_FLAG_VALUES,
 };
+use crate::cli::config::{config_run_error, parse_override_pair, ResolvedConfig};
 use crate::cli::default_command::ParseFailure;
 use crate::cli::dispatch::{dispatch, extract_command_path, get_deepest_matches, DispatchOutput};
 use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
@@ -27,6 +28,13 @@ use crate::cli::ProcessOutcome;
 use crate::topics::display_with_pager;
 use crate::SetupError;
 use std::io::Write;
+
+const CONFIG_OVERRIDE_ARG: &str = "_config_override";
+
+struct ContextInputs {
+    sources: InputSources,
+    config: Option<ResolvedConfig>,
+}
 
 impl AppBuilder {
     pub fn commands<F>(mut self, configure: F) -> Result<Self, SetupError>
@@ -99,7 +107,10 @@ impl App {
                     matches,
                     output_mode,
                     self.process_edge_target(),
-                    InputSources::from_process(),
+                    ContextInputs {
+                        sources: InputSources::from_process(),
+                        config: None,
+                    },
                     StreamSink::new(capture.clone()),
                     warnings,
                 ),
@@ -120,7 +131,7 @@ impl App {
         matches: ArgMatches,
         output_mode: OutputMode,
         target: TargetProperties,
-        sources: InputSources,
+        inputs: ContextInputs,
         sink: StreamSink,
         warnings: WarningBuffer,
     ) -> DispatchResult {
@@ -156,8 +167,11 @@ impl App {
                 EntryStream::discarding()
             };
             let mut ctx = CommandContext::new(path, self.app_state.clone()).with_stream(stream);
-            ctx.extensions.insert(sources);
+            ctx.extensions.insert(inputs.sources);
             ctx.extensions.insert(warnings.clone());
+            if let Some(config) = inputs.config {
+                config.install(&mut ctx.extensions);
+            }
 
             let hooks = self.command_hooks.get(&path_str);
             let sub_matches = get_deepest_matches(&matches);
@@ -326,6 +340,13 @@ impl App {
             );
         }
 
+        if let Some(error) = self.config_override_flag_collision(&cmd) {
+            return (
+                DispatchResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
+                self.extract_output_mode_from_unparsed(&args),
+            );
+        }
+
         let mut augmented_cmd = self.augment_command_with_help(cmd);
 
         if let Some(error) = self.help_word_collision(&augmented_cmd) {
@@ -416,10 +437,61 @@ impl App {
             );
         }
 
+        let config = match self.resolve_config_for(&matches) {
+            Ok(config) => config,
+            Err(error) => return (DispatchResult::Error(error), output_mode),
+        };
+        let output_mode = self.extract_output_mode_over(
+            &matches,
+            config.as_ref().and_then(|config| config.term.as_ref()),
+        );
+
         (
-            self.dispatch_with_target(matches, output_mode, target, sources, sink, warnings),
+            self.dispatch_with_target(
+                matches,
+                output_mode,
+                target,
+                ContextInputs { sources, config },
+                sink,
+                warnings,
+            ),
             output_mode,
         )
+    }
+
+    fn resolve_config_for(&self, matches: &ArgMatches) -> Result<Option<ResolvedConfig>, RunError> {
+        let Some(seam) = self.config.as_ref() else {
+            return Ok(None);
+        };
+        let path = extract_command_path(matches).join(".");
+        if !self.get_commands().contains_key(&path) {
+            return Ok(None);
+        }
+        let overrides = match matches.try_get_many::<String>(CONFIG_OVERRIDE_ARG) {
+            Ok(Some(pairs)) => pairs
+                .map(|pair| parse_override_pair(pair))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|message| RunError::new(message, RunErrorKind::ClapUsage))?,
+            _ => Vec::new(),
+        };
+        let dir = std::env::current_dir()
+            .map_err(|error| RunError::new(error.to_string(), RunErrorKind::Config))?;
+        seam.resolve_at(&overrides, &dir)
+            .map(Some)
+            .map_err(|error| config_run_error(&error))
+    }
+
+    fn config_override_flag_collision(&self, cmd: &Command) -> Option<SetupError> {
+        let flag = self.config_override_flag.as_deref()?;
+        fn uses_long(cmd: &Command, flag: &str) -> bool {
+            cmd.get_arguments().any(|arg| arg.get_long() == Some(flag))
+                || cmd.get_subcommands().any(|sub| uses_long(sub, flag))
+        }
+        uses_long(cmd, flag).then(|| {
+            SetupError::Config(format!(
+                "config_override_flag(\"{flag}\") names a flag this application already declares"
+            ))
+        })
     }
 
     pub fn run<I, T>(&self, cmd: Command, args: I) -> bool
@@ -629,6 +701,18 @@ impl App {
                     .global(true)
                     .action(ArgAction::Set)
                     .help("Write output to file instead of stdout"),
+            );
+        }
+
+        if let Some(ref flag_name) = self.config_override_flag {
+            let flag: &'static str = Box::leak(flag_name.clone().into_boxed_str());
+            cmd = cmd.arg(
+                Arg::new(CONFIG_OVERRIDE_ARG)
+                    .long(flag)
+                    .value_name("KEY=VALUE")
+                    .global(true)
+                    .action(ArgAction::Append)
+                    .help("Override a configuration value"),
             );
         }
 

@@ -37,6 +37,7 @@ unicode-width = "0.2"
 clap = { version = "4", features = ["derive", "help"] }
 anyhow = "1"
 thiserror = "2"
+clapfig = "0.26"
 
 [features]
 default = []
