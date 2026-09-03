@@ -123,7 +123,7 @@ pub(crate) fn list(
         .try_source(FlagSource::new("reverse"))
         .try_source(ConfigSource::new(Some(config.reverse)))
         .resolve_from(matches, ctx.input_sources())?;
-    let store = TodoStore::load(config.store_path())?;
+    let store = store(ctx)?;
     let filter = if all {
         TodoFilter::All
     } else {

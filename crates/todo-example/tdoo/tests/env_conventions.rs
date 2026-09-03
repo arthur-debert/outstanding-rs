@@ -1,16 +1,14 @@
+mod common;
+
 use standout::OutputMode;
 use standout_test::TestHarness;
 
 const ESC: char = '\u{1b}';
 
-const STORE: &str = r#"{"todos":[{"id":1,"title":"buy milk","done":false}],"next_id":1}"#;
-
 const CONVENTION_VARS: [&str; 4] = ["NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "TERM"];
 
 fn conventions(vars: &[(&str, &str)]) -> TestHarness {
-    let mut harness = TestHarness::new()
-        .fixture("todos.json", STORE)
-        .env("TDOO__STORE", "todos.json");
+    let mut harness = common::tdoo();
     for key in CONVENTION_VARS {
         harness = match vars.iter().find(|(name, _)| *name == key) {
             Some((_, value)) => harness.env(key, *value),

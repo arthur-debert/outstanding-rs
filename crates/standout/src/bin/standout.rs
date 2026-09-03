@@ -1397,11 +1397,11 @@ fn generated_config_test(spec: &ProjectSpec) -> String {
             .run(
                 &app,
                 cli::command(),
-                [{executable}, "config", "get", "greeting"],
+                [{executable}, "config", "get", "term.output"],
             );
 
         shown.assert_success();
-        shown.assert_stdout_contains("greeting = Hi");
+        shown.assert_stdout_contains("term.output = json");
     }}"#,
         expected = quote(&expected)
     )
@@ -2244,7 +2244,7 @@ mod tests {
     use standout::OutputMode;
     use standout_test::TestHarness;
 
-    const CONFIG_FILE: &str = "greeting = \"Hi\"\n\n[term]\noutput = \"json\"\n";
+    const CONFIG_FILE: &str = "[term]\noutput = \"json\"\n";
 
     #[test]
     #[serial]
@@ -2298,14 +2298,13 @@ use standout::TermSettings;
 
 #[derive(Debug, Clone, Serialize, Deserialize, clapfig::Schema)]
 pub(crate) struct Config {
-    #[clapfig(default = "Hello")]
-    pub(crate) greeting: String,
     pub(crate) term: TermSettings,
 }
 
 pub(crate) fn builder() -> clapfig::TypedBuilder<Config> {
     clapfig::Clapfig::typed::<Config>()
         .app_name("{{ executable_name }}")
+        .add_search_path(clapfig::SearchPath::Platform)
         .add_search_path(clapfig::SearchPath::Cwd)
         .persist_scope("local", clapfig::SearchPath::Cwd)
         .persist_scope("global", clapfig::SearchPath::Platform)
@@ -3112,11 +3111,14 @@ mod tests {
         assert!(main.contains(".term_settings(|config: &config::Config| &config.term)"));
         assert!(main.contains("fn term_output_in_the_config_file_selects_json()"));
         assert!(main.contains(".fixture(\"inspect-tool.toml\", CONFIG_FILE)"));
+        assert!(main.contains("[\"inspect-tool\", \"config\", \"get\", \"term.output\"]"));
 
         let config = generated_source(&generated, "crates/inspect-tool/src/config.rs");
         assert!(config.contains("#[derive(Debug, Clone, Serialize, Deserialize, clapfig::Schema)]"));
         assert!(config.contains("pub(crate) term: TermSettings,"));
         assert!(config.contains(".app_name(\"inspect-tool\")"));
+        assert!(config.contains(".add_search_path(clapfig::SearchPath::Platform)"));
+        assert!(config.contains(".add_search_path(clapfig::SearchPath::Cwd)"));
         assert!(config.contains(".persist_scope(\"global\", clapfig::SearchPath::Platform)"));
 
         assert!(handlers.contains("#[handler]"));
