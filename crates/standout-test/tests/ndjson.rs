@@ -28,6 +28,7 @@ const TEMPLATES: &[(&str, &str)] = &[
     ("silent-stream.event", EVENT_TEMPLATE),
     ("warn", "{{ ok }}"),
     ("artifact", "wrote {{ report.entries }} entries"),
+    ("artifact.event", EVENT_TEMPLATE),
 ];
 
 #[derive(Serialize)]
@@ -381,7 +382,7 @@ fn assert_entries_are_the_version_then_the_render_error(
     let summary = entries[1]["summary"].as_str().unwrap_or_default();
     assert!(
         summary.contains(&format!(
-            "{payload} output was produced by a command that emitted events"
+            "{payload} output was produced by a command that emits events"
         )),
         "{payload}: {summary}"
     );

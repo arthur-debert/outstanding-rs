@@ -347,9 +347,13 @@ application's own discriminator, so one template covers every kind:
 ```
 
 Each rendered event is one flushed write, on a terminal and in a pipe alike;
-the summary follows from the command's own template. A command whose events are
-its whole result returns `Output::Silent` as its summary and needs only the
-`.event` template.
+the summary follows from the command's own template. `.build()` requires the
+`.event` template of every command that declares an event type, so a missing one
+is a setup error rather than a failure on the first event. A command whose
+events are its whole result returns `Output::Silent` as its summary and needs
+only the `.event` template: the summary template is the one `.build()` lets it
+skip, because which `Output` variant a handler returns is not something the
+build can read.
 
 ```text
 $ myapp apply
@@ -389,9 +393,12 @@ stops reading (`myapp apply --output ndjson | head -1`), Standout discards what
 follows, lets the handler run to completion, and reports the command's own
 status.
 
-Binary and artifact output cannot follow events, and are render errors under
-`ndjson` whether or not a command emits: a stream of JSON lines has no room for
-a payload.
+Binary and artifact output cannot follow events. A command that declares an
+event type carries `Output::Render` and `Output::Silent` only, so either payload
+is a render error under every representation — on the run that emitted nothing
+too, since the refusal follows the declaration rather than the count. Under
+`ndjson` a payload is a render error whether or not the command declares
+events: a stream of JSON lines has no room for one.
 
 ## NDJSON Mode
 

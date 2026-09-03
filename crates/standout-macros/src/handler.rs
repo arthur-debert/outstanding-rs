@@ -383,20 +383,23 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
     } else {
         quote! { __matches: &::clap::ArgMatches }
     };
-    let (event_param, event_argument, handler_event, handler_results) = match &event_type {
-        Some(event) => (
-            quote! { , __results: &mut #dispatch::Results<#event> },
-            quote! { , results },
-            quote! { #event },
-            quote! { results },
-        ),
-        None => (
-            quote! {},
-            quote! {},
-            quote! { #dispatch::NoEvents },
-            quote! { _results },
-        ),
-    };
+    let (event_param, event_argument, handler_event, handler_results, emits_events) =
+        match &event_type {
+            Some(event) => (
+                quote! { , __results: &mut #dispatch::Results<#event> },
+                quote! { , results },
+                quote! { #event },
+                quote! { results },
+                quote! { true },
+            ),
+            None => (
+                quote! {},
+                quote! {},
+                quote! { #dispatch::NoEvents },
+                quote! { _results },
+                quote! { false },
+            ),
+        };
 
     let return_type = &fn_item.sig.output;
 
@@ -466,6 +469,7 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
         impl #dispatch::Handler for #handler_struct_name {
             type Event = #handler_event;
             type Output = #output_type;
+            const EMITS_EVENTS: bool = #emits_events;
 
             fn handle(
                 &mut self,

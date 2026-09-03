@@ -640,6 +640,14 @@ impl DispatchResult {
 pub trait Handler {
     type Event: Serialize;
     type Output: Serialize;
+    /// True for a command that produces its result while it runs. It is the
+    /// command's own declaration rather than a count of what one invocation
+    /// emitted, so the framework refuses an output kind that cannot follow
+    /// events on the run that emits none too. The adapters set it; a
+    /// hand-written `Handler` with an inhabited `Event` that leaves it `false`
+    /// is still caught once it emits, but only after the first event's bytes
+    /// have gone out.
+    const EMITS_EVENTS: bool = false;
     fn handle(
         &mut self,
         matches: &ArgMatches,
@@ -723,6 +731,7 @@ where
 {
     type Event = E;
     type Output = T;
+    const EMITS_EVENTS: bool = true;
     fn handle(
         &mut self,
         matches: &ArgMatches,

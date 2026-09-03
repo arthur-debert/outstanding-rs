@@ -12,12 +12,13 @@
 //! - the encodings that produce one document have no incremental form yet, so
 //!   an emitting command under them fails the run.
 //!
-//! A failure that belongs to the framework rather than to the bytes — a
-//! missing event template, an encoding that cannot carry events — is retained
-//! here rather than returned, because `emit` reports only serialization and
-//! write failures. The dispatch closure takes it with [`EventDestination::take_failure`]
-//! once the handler returns, so the run reports a render error with its own
-//! message whether or not the handler propagated the `emit`.
+//! A failure that belongs to the framework rather than to the bytes — a missing
+//! event template, an unresolved style tag under strict mode, an encoding that
+//! cannot carry events — is retained here rather than returned, because `emit`
+//! reports only serialization and write failures. The dispatch closure takes it
+//! with [`EventDestination::take_failure`] once the handler returns, so the run
+//! reports a render error with its own message whether or not the handler
+//! propagated the `emit`.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -62,6 +63,7 @@ pub(crate) struct EventContext {
     pub color_policy: ColorPolicy,
     pub target: TargetProperties,
     pub warnings: Option<standout_render::warnings::WarningBuffer>,
+    pub strict_style_tags: bool,
 }
 
 pub(crate) struct EventDestination {
@@ -81,8 +83,10 @@ impl EventDestination {
         }
     }
 
-    /// How many events the command produced, so the caller can reject an
-    /// outcome that cannot follow them.
+    /// How many events the command produced. The declaration on `Handler` is
+    /// what decides whether an outcome may follow events; this is the backstop
+    /// for a hand-written handler whose declaration does not match its
+    /// event type.
     pub(crate) fn emitted(&self) -> usize {
         self.emitted.get()
     }
@@ -97,6 +101,17 @@ impl EventDestination {
         if failure.is_none() {
             *failure = Some(error);
         }
+    }
+
+    /// Strict mode's no-output-on-failure rule reaches each event: the render
+    /// window is read before the line is written, so a `.event` template with
+    /// an unresolved style tag fails the run with the destination untouched
+    /// rather than after degraded bytes have gone out.
+    fn strict_style_tags_error(&self) -> Option<RunError> {
+        if !self.context.strict_style_tags {
+            return None;
+        }
+        crate::cli::builder::execution::unresolved_style_tags_error(self.context.warnings.as_ref())
     }
 
     fn render(&self, event: &serde_json::Value) -> Result<String, RunError> {
@@ -136,7 +151,12 @@ impl EventSink for EventDestination {
         self.emitted.set(self.emitted.get() + 1);
         let representation = self.context.representation;
         if representation.is_human() {
-            return match self.render(event) {
+            return match self
+                .render(event)
+                .and_then(|text| match self.strict_style_tags_error() {
+                    Some(error) => Err(error),
+                    None => Ok(text),
+                }) {
                 Ok(text) => self.sink.write_line(text.as_bytes()),
                 Err(error) => {
                     self.fail(error);

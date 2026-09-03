@@ -5,7 +5,8 @@ use clap::Command;
 use serde::Serialize;
 use serde_json::json;
 use standout::cli::{
-    App, DispatchResult, EventsFnHandler, ExitStatus, HandlerResult, Output, Results, StreamSink,
+    App, DispatchResult, EventsFnHandler, ExitStatus, HandlerResult, Output, Results, RunErrorKind,
+    StreamSink,
 };
 use standout::{
     AmbiguousWidth, ColorMode, ColorPolicy, EmbeddedTemplates, IconMode, InputSources,
@@ -206,5 +207,158 @@ fn a_reader_that_leaves_lets_the_handler_finish_and_keeps_the_command_s_status()
         run.results().len(),
         RESOURCES.len() + 1,
         "the values the run produced stand whether or not anyone read them"
+    );
+}
+
+/// The whole point of the payload rule: an incremental command's events are
+/// already on the destination, so it renders and stays silent, and never hands
+/// back a second document.
+fn payload_command<T>(
+    templates: &'static [(&'static str, &'static str)],
+    emits: usize,
+    payload: fn() -> Output<T>,
+    destination: Shared,
+) -> DispatchResult
+where
+    T: serde::Serialize + 'static,
+{
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(templates, ""))
+        .command_with(
+            "apply",
+            EventsFnHandler::new(move |_, _ctx, results: &mut Results<Event>| {
+                for resource in RESOURCES.iter().take(emits) {
+                    results.emit(Event::ApplyStart { resource })?;
+                }
+                Ok::<_, anyhow::Error>(payload())
+            }),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    app.run_with_sink(
+        command(),
+        ["app", "apply"],
+        target(),
+        ColorPolicy::Never,
+        InputSources::from_process(),
+        StreamSink::new(destination),
+    )
+    .into_outcome()
+}
+
+fn render_error(outcome: &DispatchResult) -> String {
+    match outcome {
+        DispatchResult::Error(error) => {
+            assert_eq!(error.kind(), RunErrorKind::Render, "{error}");
+            error.to_string()
+        }
+        other => panic!("expected a render error, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_command_that_declares_events_cannot_return_a_binary_payload_when_it_emits_none() {
+    let destination = Shared::default();
+    let outcome = payload_command(
+        TEMPLATES,
+        0,
+        || -> Output<serde_json::Value> {
+            Output::Binary {
+                data: vec![0xDE, 0xAD],
+                filename: "apply.bin".into(),
+            }
+        },
+        destination.clone(),
+    );
+
+    assert!(render_error(&outcome).contains("binary output was produced by a command that emits"));
+    assert!(
+        destination.0.borrow().is_empty(),
+        "the run that never emitted wrote nothing"
+    );
+}
+
+#[test]
+fn a_command_that_declares_events_cannot_return_an_artifact_payload_when_it_emits_none() {
+    let destination = Shared::default();
+    let outcome = payload_command(
+        TEMPLATES,
+        0,
+        || -> Output<serde_json::Value> {
+            Output::Artifact(standout::cli::Artifact::new(vec![1u8]).suggest_destination("out.bin"))
+        },
+        destination.clone(),
+    );
+
+    assert!(render_error(&outcome).contains("artifact output was produced by a command that emits"));
+    assert!(destination.0.borrow().is_empty());
+}
+
+#[test]
+fn a_command_that_emitted_an_event_cannot_return_a_binary_payload_either() {
+    let destination = Shared::default();
+    let outcome = payload_command(
+        TEMPLATES,
+        1,
+        || -> Output<serde_json::Value> {
+            Output::Binary {
+                data: vec![0xDE, 0xAD],
+                filename: "apply.bin".into(),
+            }
+        },
+        destination.clone(),
+    );
+
+    assert!(render_error(&outcome).contains("binary output was produced by a command that emits"));
+    assert_eq!(
+        String::from_utf8_lossy(&destination.0.borrow()),
+        "starting web\n",
+        "the event it did emit stands; the payload is what the run refuses"
+    );
+}
+
+const UNRESOLVED_TAG_TEMPLATES: &[(&str, &str)] = &[
+    ("apply", "{{ add }} added"),
+    ("apply.event", "[nope]starting {{ event.resource }}[/nope]"),
+];
+
+#[test]
+fn strict_mode_fails_an_event_with_an_unresolved_style_tag_before_it_is_written() {
+    let destination = Shared::default();
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(UNRESOLVED_TAG_TEMPLATES, ""))
+        .strict_style_tags(true)
+        .command_with(
+            "apply",
+            EventsFnHandler::new(
+                |_, _ctx, results: &mut Results<Event>| -> HandlerResult<serde_json::Value> {
+                    results.emit(Event::ApplyStart { resource: "web" })?;
+                    Ok(Output::Render(json!({ "add": 1 })))
+                },
+            ),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let outcome = app
+        .run_with_sink(
+            command(),
+            ["app", "apply"],
+            target(),
+            ColorPolicy::Never,
+            InputSources::from_process(),
+            StreamSink::new(destination.clone()),
+        )
+        .into_outcome();
+
+    assert!(render_error(&outcome).contains("left 1 style tag unresolved: nope"));
+    assert!(
+        destination.0.borrow().is_empty(),
+        "strict mode writes nothing it is about to reject"
     );
 }

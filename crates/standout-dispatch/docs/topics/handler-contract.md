@@ -512,6 +512,7 @@ with no argument that can be constructed, and ignores the third parameter.
 pub trait Handler {
     type Event: Serialize;
     type Output: Serialize;
+    const EMITS_EVENTS: bool = false;
 
     fn handle(
         &mut self,
@@ -521,6 +522,13 @@ pub trait Handler {
     ) -> HandlerResult<Self::Output>;
 }
 ```
+
+`EMITS_EVENTS` is the declaration the consuming framework reads rather than
+counting what one invocation emitted: it decides at build time that the command
+needs its `<name>.event` template, and it refuses `Output::Binary` and
+`Output::Artifact` from an incremental command on the run that emits nothing
+too. `EventsFnHandler` and `#[handler]` set it; a hand-written `Handler` with an
+inhabited `Event` sets it alongside the associated type.
 
 `Results::emit` takes the event by value, returns once the framework has
 retained it and written it, and fails only when the value does not serialize

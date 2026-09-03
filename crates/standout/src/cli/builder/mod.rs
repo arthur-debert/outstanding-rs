@@ -10,7 +10,7 @@
 
 mod commands;
 mod config;
-mod execution;
+pub(crate) mod execution;
 mod rendering;
 
 use crate::context::ContextRegistry;
@@ -158,6 +158,19 @@ pub(crate) fn refresh_named_template(
     }
 }
 
+/// A command that produces its result while it runs renders every event from
+/// `<name>.event`, so the template is required at build time rather than
+/// discovered on the first event.
+fn missing_event_template_message(
+    command_path: &str,
+    template_name: &str,
+    event_name: &str,
+) -> String {
+    format!(
+        "command `{command_path}` produces its result while it runs, so it renders each event from template `{event_name}`, but that template is not registered; add it beside `{template_name}`, or drop the `Results` parameter if the command produces one batch value instead"
+    )
+}
+
 fn missing_template_message(
     command_path: &str,
     template_name: &str,
@@ -171,7 +184,7 @@ fn missing_template_message(
         )
     } else {
         format!(
-            "command `{command_path}` references template `{template_name}`, but no application templates are configured; add .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\") before .build(), register `{template_name}.event` if the command only emits events, or declare no presentation with .structured_only(), .silent(), or .binary()"
+            "command `{command_path}` references template `{template_name}`, but no application templates are configured; add .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\") before .build(), or declare no presentation with .structured_only(), .silent(), or .binary()"
         )
     };
 
@@ -682,18 +695,28 @@ impl AppBuilder {
                     path, &name, None,
                 )));
             };
-            // A command whose summary is `Silent` renders only its events, so
-            // `<name>.event` alone satisfies its presentation.
-            let resolved = match registry.get_content(&name) {
-                Ok(_) => Ok(()),
-                Err(standout_render::RegistryError::NotFound { .. })
-                    if registry.get_content(&format!("{name}.event")).is_ok() =>
-                {
-                    Ok(())
+            if pending.recipe.emits_events() {
+                let event_name = format!("{name}.event");
+                if registry.get_content(&event_name).is_err() {
+                    return Err(SetupError::Template(missing_event_template_message(
+                        path,
+                        &name,
+                        &event_name,
+                    )));
                 }
-                Err(error) => Err(error),
-            };
-            resolved.map_err(|error| {
+                // A handler that returns `Output::Silent` renders no summary,
+                // and which variant it returns is a value this build cannot
+                // read, so a summary template it never needs is optional here
+                // and a summary template it does need is a render error on the
+                // run that reaches for it.
+                if matches!(
+                    registry.get_content(&name),
+                    Err(standout_render::RegistryError::NotFound { .. })
+                ) {
+                    continue;
+                }
+            }
+            registry.get_content(&name).map_err(|error| {
                 let message = match error {
                     standout_render::RegistryError::NotFound { .. } => {
                         missing_template_message(path, &name, Some(registry))
@@ -790,6 +813,7 @@ impl App {
                 &self.context_registry,
                 self.template_engine.clone(),
                 self.template_registry.clone(),
+                self.strict_style_tags,
             );
             commands.insert(path.clone(), dispatch);
         }
@@ -1471,6 +1495,7 @@ impl App {
                 color_policy,
                 target,
                 warnings: Some(warnings.clone()),
+                strict_style_tags: self.strict_style_tags,
             },
         ));
         let mut results = Results::<H::Event>::for_run(None, destination.clone());
@@ -1487,7 +1512,17 @@ impl App {
             super::dispatch::reject_status_without_a_carrier(status, is_binary, is_artifact)
                 .map_err(|e| HookError::post_output("Render error").with_source(e))
         };
+        let emits_events = H::EMITS_EVENTS || destination.emitted() > 0;
+        let reject_payload_from_an_emitting_command = |is_binary: bool, is_artifact: bool| {
+            super::dispatch::reject_payload_from_an_emitting_command(
+                emits_events,
+                is_binary,
+                is_artifact,
+            )
+            .map_err(|e| HookError::post_output("Render error").with_source(e))
+        };
         reject_status_without_a_carrier(output.is_binary(), output.is_artifact())?;
+        reject_payload_from_an_emitting_command(output.is_binary(), output.is_artifact())?;
 
         let output = match output {
             HandlerOutput::Render(data) => {
@@ -1554,6 +1589,7 @@ impl App {
             None => output,
         };
         reject_status_without_a_carrier(output.is_binary(), output.is_artifact())?;
+        reject_payload_from_an_emitting_command(output.is_binary(), output.is_artifact())?;
         super::dispatch::reject_payload_under_stream(
             output_mode,
             output.is_binary(),

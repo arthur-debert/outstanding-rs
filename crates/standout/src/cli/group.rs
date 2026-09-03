@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use super::builder::{SharedTemplateEngine, TemplateAbsence, TemplateRef};
-use super::dispatch::{render_handler_output, DispatchFn};
+use super::dispatch::{render_handler_output, DispatchFn, DispatchOutput};
 use super::events::{event_template, EventContext, EventDestination};
 use crate::cli::handler::{
     CommandContext, FnHandler, Handler, HandlerResult, Results, RunRecorder, StreamSink,
@@ -43,12 +43,21 @@ pub(crate) trait CommandRecipe {
     #[allow(dead_code)]
     fn take_hooks(&mut self) -> Option<Hooks>;
 
+    /// True when the command's handler declares that it produces its result
+    /// while it runs, so build-time template validation can require the
+    /// `<name>.event` template it will render each event from.
+    fn emits_events(&self) -> bool {
+        false
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn create_dispatch(
         &self,
         template: &TemplateRef,
         context_registry: &ContextRegistry,
         template_engine: SharedTemplateEngine,
         template_registry: Option<Rc<crate::TemplateRegistry>>,
+        strict_style_tags: bool,
     ) -> DispatchFn;
 
     fn expected_args(&self) -> Vec<ExpectedArg>;
@@ -58,6 +67,7 @@ pub(crate) trait CommandRecipe {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dispatch_from_handler<H>(
     handler: Rc<RefCell<H>>,
     template: TemplateRef,
@@ -65,6 +75,7 @@ fn dispatch_from_handler<H>(
     template_engine: SharedTemplateEngine,
     template_registry: Option<Rc<crate::TemplateRegistry>>,
     structured_output_projection: Option<StructuredOutputProjection>,
+    strict_style_tags: bool,
 ) -> DispatchFn
 where
     H: Handler + 'static,
@@ -96,6 +107,7 @@ where
                         .extensions
                         .get::<standout_render::warnings::WarningBuffer>()
                         .cloned(),
+                    strict_style_tags,
                 },
             ));
             let mut results =
@@ -122,7 +134,11 @@ where
                 structured_output_projection.as_ref(),
                 target,
             )?;
-            super::dispatch::reject_payload_after_events(destination.emitted(), &output)?;
+            super::dispatch::reject_payload_from_an_emitting_command(
+                H::EMITS_EVENTS || destination.emitted() > 0,
+                matches!(output, DispatchOutput::Binary(_, _)),
+                matches!(output, DispatchOutput::Artifact { .. }),
+            )?;
             Ok(output)
         },
     ))
@@ -212,12 +228,17 @@ where
         self.questionnaire.take()
     }
 
+    fn emits_events(&self) -> bool {
+        H::EMITS_EVENTS
+    }
+
     fn create_dispatch(
         &self,
         template: &TemplateRef,
         context_registry: &ContextRegistry,
         template_engine: SharedTemplateEngine,
         template_registry: Option<Rc<crate::TemplateRegistry>>,
+        strict_style_tags: bool,
     ) -> DispatchFn {
         dispatch_from_handler(
             self.handler.clone(),
@@ -226,6 +247,7 @@ where
             template_engine,
             template_registry,
             self.structured_output_projection.clone(),
+            strict_style_tags,
         )
     }
 
@@ -242,6 +264,7 @@ pub(crate) struct ErasedConfigRecipe {
     config: RefCell<Option<Box<dyn ErasedCommandConfig>>>,
     template_name: Option<String>,
     template_absence: Option<TemplateAbsence>,
+    emits_events: bool,
     #[allow(dead_code)]
     hooks: RefCell<Option<Hooks>>,
     structured_output_projection: Option<StructuredOutputProjection>,
@@ -251,12 +274,14 @@ impl ErasedConfigRecipe {
     pub fn from_handler(mut handler: Box<dyn ErasedCommandConfig>) -> Self {
         let template_name = handler.template_name().map(String::from);
         let template_absence = handler.template_absence();
+        let emits_events = handler.emits_events();
         let hooks = handler.take_hooks();
         let structured_output_projection = handler.structured_output_projection().cloned();
         Self {
             config: RefCell::new(Some(handler)),
             template_name,
             template_absence,
+            emits_events,
             hooks: RefCell::new(hooks),
             structured_output_projection,
         }
@@ -284,12 +309,17 @@ impl CommandRecipe for ErasedConfigRecipe {
         None
     }
 
+    fn emits_events(&self) -> bool {
+        self.emits_events
+    }
+
     fn create_dispatch(
         &self,
         template: &TemplateRef,
         context_registry: &ContextRegistry,
         template_engine: SharedTemplateEngine,
         template_registry: Option<Rc<crate::TemplateRegistry>>,
+        strict_style_tags: bool,
     ) -> DispatchFn {
         let config = self
             .config
@@ -302,6 +332,7 @@ impl CommandRecipe for ErasedConfigRecipe {
             context_registry.clone(),
             template_engine,
             template_registry,
+            strict_style_tags,
         )
     }
 
@@ -358,6 +389,7 @@ where
         _context_registry: &ContextRegistry,
         _template_engine: SharedTemplateEngine,
         _template_registry: Option<Rc<crate::TemplateRegistry>>,
+        _strict_style_tags: bool,
     ) -> DispatchFn {
         dispatch_passthrough(self.handler.clone())
     }
@@ -654,6 +686,11 @@ pub(crate) trait ErasedCommandConfig {
     fn hooks(&self) -> Option<&Hooks>;
     fn take_hooks(&mut self) -> Option<Hooks>;
     fn take_questionnaire(&mut self) -> Option<QuestionnaireCommand>;
+    /// True when the handler declares that it produces its result while it runs.
+    fn emits_events(&self) -> bool {
+        false
+    }
+    #[allow(clippy::too_many_arguments)]
     fn register(
         self: Box<Self>,
         path: &str,
@@ -661,6 +698,7 @@ pub(crate) trait ErasedCommandConfig {
         context_registry: ContextRegistry,
         template_engine: SharedTemplateEngine,
         template_registry: Option<Rc<crate::TemplateRegistry>>,
+        strict_style_tags: bool,
     ) -> DispatchFn;
 
     fn expected_args(&self) -> Vec<ExpectedArg>;
@@ -803,6 +841,7 @@ where
         context_registry: ContextRegistry,
         template_engine: SharedTemplateEngine,
         template_registry: Option<Rc<crate::TemplateRegistry>>,
+        strict_style_tags: bool,
     ) -> DispatchFn {
         dispatch_from_handler(
             self.handler,
@@ -811,6 +850,7 @@ where
             template_engine,
             template_registry,
             self.structured_output_projection,
+            strict_style_tags,
         )
     }
 
@@ -861,6 +901,7 @@ where
         _context_registry: ContextRegistry,
         _template_engine: SharedTemplateEngine,
         _template_registry: Option<Rc<crate::TemplateRegistry>>,
+        _strict_style_tags: bool,
     ) -> DispatchFn {
         dispatch_passthrough(self.handler)
     }

@@ -75,23 +75,30 @@ pub(crate) fn payload_without_a_stream(output: &str) -> RunError {
     )
 }
 
-/// Rendered events are already on the destination, so a payload cannot follow
-/// them: it would be a second document sharing one file or one stdout.
-pub(crate) fn reject_payload_after_events(
-    events: usize,
-    output: &DispatchOutput,
+/// A command that produces its result while it runs writes it to the
+/// destination as it goes, so a payload cannot follow: it would be a second
+/// document sharing one file or one stdout. `emits_events` is the command's
+/// declaration, so the refusal is the same on an invocation that emitted
+/// nothing, and a caller can find it in its first test rather than on the run
+/// that finally emits.
+pub(crate) fn reject_payload_from_an_emitting_command(
+    emits_events: bool,
+    is_binary: bool,
+    is_artifact: bool,
 ) -> Result<(), RunError> {
-    if events == 0 {
+    if !emits_events {
         return Ok(());
     }
-    let payload = match output {
-        DispatchOutput::Binary(_, _) => "binary",
-        DispatchOutput::Artifact { .. } => "artifact",
-        DispatchOutput::Text { .. } | DispatchOutput::Silent { .. } => return Ok(()),
+    let payload = if is_binary {
+        "binary"
+    } else if is_artifact {
+        "artifact"
+    } else {
+        return Ok(());
     };
     Err(RunError::new(
         format!(
-            "{payload} output was produced by a command that emitted events; a command \
+            "{payload} output was produced by a command that emits events; a command \
              producing events carries Output::Render and Output::Silent only"
         ),
         RunErrorKind::Render,

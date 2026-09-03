@@ -42,6 +42,38 @@ fn writes_through_the_sink(output_mode: Representation) -> bool {
     output_mode.is_stream() || output_mode.is_human()
 }
 
+/// The strict-mode failure for whatever the render window has left unresolved
+/// so far, or `None` when it has left nothing. Callers apply it before writing
+/// the bytes it describes; `warnings` drops the superseded degrade warning.
+/// Every caller has already decided that strict mode is on.
+pub(crate) fn unresolved_style_tags_error(warnings: Option<&WarningBuffer>) -> Option<RunError> {
+    let unresolved = standout_render::diagnostics::unresolved_in_current_window();
+    if unresolved.is_empty() {
+        return None;
+    }
+    if let Some(warnings) = warnings {
+        warnings.retain(|warning| {
+            !warning.starts_with(standout_render::diagnostics::UNRESOLVED_DEGRADATION_PREFIX)
+        });
+    }
+    let (noun, pronoun, object) = if unresolved.len() == 1 {
+        ("style tag", "It is", "it")
+    } else {
+        ("style tags", "They are", "them")
+    };
+    Some(RunError::new(
+        format!(
+            "strict_style_tags is enabled and the render left {count} {noun} unresolved: \
+             {tags}. {pronoun} not defined in the active theme (a typo, or a tag the theme \
+             does not style). Define {object} in the theme, correct the tag name, or disable \
+             strict_style_tags to degrade to unstyled text instead.",
+            count = unresolved.len(),
+            tags = unresolved.join(", "),
+        ),
+        RunErrorKind::Render,
+    ))
+}
+
 struct ContextInputs {
     sources: InputSources,
     config: Option<ResolvedConfig>,
@@ -739,8 +771,17 @@ impl App {
         target.ambiguous_width = self.ambiguous_width;
         let sources = InputSources::from_process();
         let sink = StreamSink::process_stdout();
-        let result =
-            self.run_with_sink(cmd, args, target, ColorPolicy::Auto, sources, sink.clone());
+        // Nothing reads this run's values back, so its events are written and
+        // dropped rather than retained for the length of the command.
+        let result = self.run_recording(
+            cmd,
+            args,
+            target,
+            ColorPolicy::Auto,
+            sources,
+            sink.clone(),
+            RunRecorder::summary_only(),
+        );
         let primary_status = result.exit_status();
         let warnings = result.warnings().to_vec();
         let output_mode = result.output_mode();
@@ -844,29 +885,7 @@ impl App {
         if !self.strict_style_tags {
             return None;
         }
-        let unresolved = standout_render::diagnostics::unresolved_in_current_window();
-        if unresolved.is_empty() {
-            return None;
-        }
-        warnings.retain(|warning| {
-            !warning.starts_with(standout_render::diagnostics::UNRESOLVED_DEGRADATION_PREFIX)
-        });
-        let (noun, pronoun, object) = if unresolved.len() == 1 {
-            ("style tag", "It is", "it")
-        } else {
-            ("style tags", "They are", "them")
-        };
-        Some(RunError::new(
-            format!(
-                "strict_style_tags is enabled and the render left {count} {noun} unresolved: \
-                 {tags}. {pronoun} not defined in the active theme (a typo, or a tag the theme \
-                 does not style). Define {object} in the theme, correct the tag name, or disable \
-                 strict_style_tags to degrade to unstyled text instead.",
-                count = unresolved.len(),
-                tags = unresolved.join(", "),
-            ),
-            RunErrorKind::Render,
-        ))
+        unresolved_style_tags_error(Some(warnings))
     }
 
     /// Dispatch without writing either process stream; an output file override still writes.
@@ -926,7 +945,34 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        let recorder = RunRecorder::new();
+        self.run_recording(
+            cmd,
+            args,
+            target,
+            color_policy,
+            sources,
+            sink,
+            RunRecorder::new(),
+        )
+    }
+
+    /// `run_with_sink` with the run's recorder named, so an entry point that
+    /// never reads the values back can install one that keeps no events.
+    #[allow(clippy::too_many_arguments)]
+    fn run_recording<I, T>(
+        &self,
+        cmd: Command,
+        args: I,
+        target: TargetProperties,
+        color_policy: ColorPolicy,
+        sources: InputSources,
+        sink: StreamSink,
+        recorder: RunRecorder,
+    ) -> crate::cli::CompletedRun
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
         self.collect_run_warnings(color_policy, &recorder, |warnings| {
             self.dispatch_from_with_target(
                 cmd,
@@ -1300,8 +1346,11 @@ mod tests {
         ("list-15", "db={{ db }}, user={{ user }}"),
         ("fetch", "{{ url }}"),
         ("test-3", "[perm]{{ val }}[/perm]"),
+        ("apply", "{{ done }} done"),
+        ("apply.event", "starting {{ event.resource }}"),
     ];
 
+    use crate::cli::handler::EventsFnHandler;
     use crate::cli::handler::FnHandler;
     use crate::cli::handler::HandlerResult;
     use crate::cli::handler::Output as HandlerOutput;
@@ -3596,5 +3645,52 @@ header:
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("https://api.example.com"));
+    }
+
+    /// The process edge installs the summary-only recorder, so a long run's
+    /// events are written and dropped rather than held until it ends.
+    #[test]
+    fn a_summary_only_recorder_writes_every_event_and_returns_only_the_summary() {
+        #[derive(serde::Serialize)]
+        struct Started {
+            resource: String,
+        }
+
+        let app = App::builder()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
+                "apply",
+                EventsFnHandler::new(
+                    |_m, _ctx, results: &mut crate::cli::handler::Results<Started>| {
+                        for n in 0..64 {
+                            results.emit(Started {
+                                resource: format!("r{n}"),
+                            })?;
+                        }
+                        Ok::<_, anyhow::Error>(HandlerOutput::Render(
+                            serde_json::json!({"done": 64}),
+                        ))
+                    },
+                ),
+                |cfg| cfg,
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let capture = StreamCapture::default();
+        let run = app.run_recording(
+            Command::new("app").subcommand(Command::new("apply")),
+            ["app", "apply"],
+            TargetProperties::detect(),
+            ColorPolicy::Never,
+            InputSources::from_process(),
+            StreamSink::new(capture.clone()),
+            RunRecorder::summary_only(),
+        );
+
+        let written = String::from_utf8(capture.take()).unwrap();
+        assert_eq!(written.lines().count(), 64, "{written}");
+        assert_eq!(run.results(), [serde_json::json!({"done": 64})]);
     }
 }

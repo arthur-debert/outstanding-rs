@@ -12,7 +12,10 @@
 //!
 //! [`RunRecorder`] retains each value as data whatever representation the run
 //! selected, and carries the run's [`Delivery`] decision, so a test asserts on
-//! the values and on the rendered bytes separately. [`EventSink`] is the other
+//! the values and on the rendered bytes separately; the process edge installs
+//! [`RunRecorder::summary_only`] instead, which writes each event and keeps
+//! none, so a long run costs no memory for the events nobody reads back.
+//! [`EventSink`] is the other
 //! half: the representation-specific destination that renders or frames the
 //! value and writes it before `emit` returns. The consuming framework
 //! implements it, because the human representation of an event is a template
@@ -71,23 +74,53 @@ pub trait EventSink {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct RunRecord {
     records: Vec<serde_json::Value>,
     delivery: Delivery,
+    retain_events: bool,
 }
 
 /// Retains the run's result values and its delivery decision.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct RunRecorder(Rc<RefCell<RunRecord>>);
 
+impl Default for RunRecorder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RunRecorder {
+    /// Retains every value the run produces, events included, for an entry
+    /// point that hands them back through `results()`.
     pub fn new() -> Self {
-        Self::default()
+        Self::with_event_retention(true)
+    }
+
+    /// Retains the summary and the delivery decision and drops each event
+    /// instead of keeping it. The process edge installs this one: it writes
+    /// every event and returns none, so a run whose events nobody reads back
+    /// costs memory for one value rather than for its whole length.
+    pub fn summary_only() -> Self {
+        Self::with_event_retention(false)
+    }
+
+    fn with_event_retention(retain_events: bool) -> Self {
+        Self(Rc::new(RefCell::new(RunRecord {
+            records: Vec::new(),
+            delivery: Delivery::default(),
+            retain_events,
+        })))
     }
 
     pub fn record(&self, value: serde_json::Value) {
         self.0.borrow_mut().records.push(value);
+    }
+
+    /// Whether an emitted event is worth serializing for retention.
+    pub fn retains_events(&self) -> bool {
+        self.0.borrow().retain_events
     }
 
     pub fn set_delivery(&self, delivery: Delivery) {
@@ -140,7 +173,7 @@ impl<E: Serialize> Results<E> {
     }
 
     /// The channel a run installs: every value is written, and retained too
-    /// when the entry point has a recorder to read them back from.
+    /// when the entry point has a recorder that keeps events.
     pub fn for_run(recorder: Option<RunRecorder>, sink: Rc<dyn EventSink>) -> Self {
         Self {
             recorder,
@@ -152,12 +185,16 @@ impl<E: Serialize> Results<E> {
     /// Returns once the value has been retained and written; fails when it
     /// does not serialize or the destination refuses the bytes.
     pub fn emit(&mut self, event: E) -> Result<(), EmitError> {
+        let retaining = self
+            .recorder
+            .as_ref()
+            .filter(|recorder| recorder.retains_events());
         let open = self.sink.as_ref().filter(|sink| sink.is_open());
-        if self.recorder.is_none() && open.is_none() {
+        if retaining.is_none() && open.is_none() {
             return Ok(());
         }
         let value = serde_json::to_value(&event)?;
-        if let Some(recorder) = &self.recorder {
+        if let Some(recorder) = retaining {
             recorder.record(value.clone());
         }
         if let Some(sink) = open {
@@ -226,15 +263,42 @@ mod tests {
         assert_eq!(sink.values.borrow().len(), 1);
     }
 
+    /// Serializing it at all is the failure, so a channel that reports success
+    /// on it never asked for the bytes.
+    struct Unserializable;
+
+    impl Serialize for Unserializable {
+        fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+            Err(serde::ser::Error::custom("never asked"))
+        }
+    }
+
     #[test]
     fn a_discarding_channel_keeps_nothing_and_never_serializes() {
-        struct Unserializable;
-        impl Serialize for Unserializable {
-            fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
-                Err(serde::ser::Error::custom("never asked"))
-            }
-        }
         Results::discarding().emit(Unserializable).unwrap();
+    }
+
+    #[test]
+    fn a_summary_only_recorder_writes_every_event_and_retains_none() {
+        let recorder = RunRecorder::summary_only();
+        let sink = open();
+        let mut results = Results::for_run(Some(recorder.clone()), sink.clone());
+        for n in 0..3 {
+            results.emit(serde_json::json!({ "n": n })).unwrap();
+        }
+        recorder.record(serde_json::json!({"total": 3}));
+        assert_eq!(sink.values.borrow().len(), 3);
+        assert_eq!(recorder.records(), vec![serde_json::json!({"total": 3})]);
+    }
+
+    #[test]
+    fn a_summary_only_recorder_over_a_closed_sink_never_serializes_an_event() {
+        let closed = Rc::new(Delivered {
+            values: RefCell::new(Vec::new()),
+            open: false,
+        });
+        let mut results = Results::for_run(Some(RunRecorder::summary_only()), closed);
+        results.emit(Unserializable).unwrap();
     }
 
     #[test]
