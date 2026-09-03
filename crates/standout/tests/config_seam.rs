@@ -3,10 +3,10 @@ use clapfig::{Clapfig, SearchPath};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use standout::cli::{
-    App, AppBuilder, CommandContextInput, DiagnosticKind, ExitStatus, FnHandler, MissingConfig,
-    Output, RunErrorKind, TermSettings,
+    App, AppBuilder, CommandContextInput, DiagnosticKind, DispatchResult, ExitStatus, FnHandler,
+    HelpResult, MissingConfig, Output, RunErrorKind, TermSettings,
 };
-use standout::{EmbeddedTemplates, OutputMode, SetupError};
+use standout::{EmbeddedTemplates, InputSources, OutputMode, SetupError};
 use standout_test::{serial, TestHarness};
 
 const TEMPLATES: &[(&str, &str)] = &[("show", "index at {{ index_dir }}")];
@@ -144,7 +144,47 @@ fn a_bad_key_under_json_is_a_diagnostic_with_file_and_line() {
         "{}",
         range.filename
     );
-    assert_eq!(range.start.line, 2);
+    assert_eq!((range.start.line, range.start.column), (2, 1));
+}
+
+#[test]
+#[serial]
+fn a_malformed_file_under_json_carries_the_parse_position() {
+    let result = TestHarness::new()
+        .fixture("cfgapp.toml", "index_dir = \"/from-file\"\n= 1\n")
+        .run(
+            &configured_app(),
+            cfgapp(),
+            ["cfgapp", "show", "--output", "json"],
+        );
+
+    result.assert_exit_status(ExitStatus::FAILURE);
+    let diagnostic = result.expect_diagnostic();
+    assert_eq!(diagnostic.kind, DiagnosticKind::Config);
+    let range = diagnostic
+        .range
+        .expect("a parse error carries its position");
+    assert!(
+        range.filename.ends_with("cfgapp.toml"),
+        "{}",
+        range.filename
+    );
+    assert_eq!((range.start.line, range.start.column), (2, 1));
+}
+
+#[test]
+#[serial]
+fn a_non_file_unknown_key_under_json_carries_no_range() {
+    let result = TestHarness::new().env("CFGAPP__BOGUS_KEY", "1").run(
+        &configured_app(),
+        cfgapp(),
+        ["cfgapp", "show", "--output", "json"],
+    );
+
+    result.assert_exit_status(ExitStatus::FAILURE);
+    let diagnostic = result.expect_diagnostic();
+    assert_eq!(diagnostic.kind, DiagnosticKind::Config);
+    assert!(diagnostic.range.is_none(), "{diagnostic:?}");
 }
 
 #[test]
@@ -243,17 +283,114 @@ fn reading_config_without_configuring_it_is_a_typed_error() {
     );
 }
 
+fn commands_taking_set() -> Vec<Command> {
+    vec![
+        cfgapp().arg(Arg::new("set").long("set")),
+        cfgapp().arg(Arg::new("assign").long("assign").alias("set")),
+        cfgapp().arg(Arg::new("assign").long("assign").visible_alias("set")),
+        cfgapp().subcommand(Command::new("assign").long_flag("set")),
+        cfgapp().subcommand(
+            Command::new("assign")
+                .long_flag("assign")
+                .long_flag_alias("set"),
+        ),
+        cfgapp().subcommand(Command::new("nested").arg(Arg::new("set").long("set"))),
+        cfgapp().arg(Arg::new("_config_override").long("other")),
+    ]
+}
+
 #[test]
 #[serial]
-fn the_override_flag_refuses_a_name_the_application_declares() {
-    let result = TestHarness::new().run(
-        &configured_app(),
-        cfgapp().arg(Arg::new("set").long("set")),
-        ["cfgapp", "show"],
-    );
+fn the_override_flag_refuses_every_spelling_the_application_declares() {
+    for cmd in commands_taking_set() {
+        let result = TestHarness::new().run(&configured_app(), cmd, ["cfgapp", "show"]);
+        result.assert_error_kind(RunErrorKind::ClapUsage);
+        result.assert_error_contains("config_override_flag(\"set\")");
+    }
+}
 
-    result.assert_error_kind(RunErrorKind::ClapUsage);
-    result.assert_error_contains("config_override_flag(\"set\")");
+#[test]
+fn manual_parsing_and_verification_refuse_a_declared_override_flag() {
+    for cmd in commands_taking_set() {
+        let verified = configured_app().verify_command(&cmd);
+        assert!(
+            matches!(verified, Err(SetupError::Config(_))),
+            "{verified:?}"
+        );
+        let parsed = configured_app().get_matches_from(
+            cmd,
+            ["cfgapp", "show"],
+            &InputSources::from_process(),
+        );
+        assert!(matches!(parsed, HelpResult::Error(_)), "{parsed:?}");
+    }
+}
+
+#[test]
+fn the_override_flag_refuses_the_generated_help_and_version_flags() {
+    let app = |flag: &str| {
+        show_command(App::builder())
+            .config(fixture_builder())
+            .config_override_flag(flag)
+            .build()
+            .unwrap()
+    };
+    let help = app("help").verify_command(&cfgapp());
+    assert!(matches!(help, Err(SetupError::Config(_))), "{help:?}");
+    let version = app("version").verify_command(&cfgapp().version("1.0"));
+    assert!(matches!(version, Err(SetupError::Config(_))), "{version:?}");
+    assert!(app("version").verify_command(&cfgapp()).is_ok());
+    assert!(app("help")
+        .verify_command(&cfgapp().disable_help_flag(true))
+        .is_ok());
+}
+
+struct Cwd(std::path::PathBuf);
+
+impl Cwd {
+    fn enter(dir: &std::path::Path) -> Self {
+        let previous = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir).unwrap();
+        Self(previous)
+    }
+}
+
+impl Drop for Cwd {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.0);
+    }
+}
+
+fn dispatch_parsed(file: &str, args: &[&str]) -> standout::cli::CompletedRun {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("cfgapp.toml"), file).unwrap();
+    let _cwd = Cwd::enter(dir.path());
+    let app = configured_app();
+    let matches = match app.get_matches_from(cfgapp(), args, &InputSources::from_process()) {
+        HelpResult::Matches(matches) => matches,
+        other => panic!("{other:?}"),
+    };
+    app.dispatch(matches, OutputMode::Text)
+}
+
+#[test]
+#[serial]
+fn dispatch_resolves_the_config_for_manually_parsed_matches() {
+    let from_file = dispatch_parsed("index_dir = \"/from-file\"\n", &["cfgapp", "show"]);
+    assert_eq!(from_file.output(), Some("index at /from-file"));
+
+    let from_flag = dispatch_parsed(
+        "index_dir = \"/from-file\"\n",
+        &["cfgapp", "show", "--set", "index_dir=/from-flag"],
+    );
+    assert_eq!(from_flag.output(), Some("index at /from-flag"));
+
+    let failed = dispatch_parsed(BAD_FILE, &["cfgapp", "show"]);
+    assert!(
+        matches!(failed.outcome(), DispatchResult::Error(error) if error.kind() == RunErrorKind::Config),
+        "{:?}",
+        failed.outcome()
+    );
 }
 
 #[test]

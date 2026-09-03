@@ -133,24 +133,60 @@ impl ResolvedConfig {
 
 pub(crate) fn config_run_error(error: &ClapfigError) -> RunError {
     let prose = clapfig::render::render_plain(error);
-    let position = match error {
-        ClapfigError::UnknownKeys(infos) => infos
-            .first()
-            .map(|info| (info.path.display().to_string(), info.line as u64)),
-        ClapfigError::ParseError { path, .. } => Some((path.display().to_string(), 0)),
-        _ => None,
-    };
     let run_error = RunError::new(prose, RunErrorKind::Config);
-    match position {
-        Some((file, line)) => {
+    match config_error_position(error) {
+        Some((file, line, column)) => {
             let diagnostic = run_error.diagnostic();
             let diagnostic = Diagnostic::error(diagnostic.summary)
                 .detail(diagnostic.detail)
-                .range(file, line, 0);
+                .range(file, line, column);
             run_error.with_diagnostic(diagnostic)
         }
         None => run_error,
     }
+}
+
+fn config_error_position(error: &ClapfigError) -> Option<(String, u64, u64)> {
+    match error {
+        ClapfigError::UnknownKeys(infos) => {
+            let info = infos.first()?;
+            if info.line == 0 {
+                return None;
+            }
+            let column = info
+                .span
+                .zip(info.source.as_deref())
+                .map_or(0, |(span, source)| line_and_column(source, span.start).1);
+            Some((info.path.display().to_string(), info.line as u64, column))
+        }
+        ClapfigError::ParseError {
+            path,
+            source,
+            source_text,
+        } => {
+            let span = source.parse_span()?;
+            let (line, column) = line_and_column(source_text.as_deref()?, span.start);
+            Some((path.display().to_string(), line, column))
+        }
+        _ => None,
+    }
+}
+
+fn line_and_column(source: &str, offset: usize) -> (u64, u64) {
+    let mut line = 1;
+    let mut column = 1;
+    for (index, ch) in source.char_indices() {
+        if index >= offset {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            column = 1;
+        } else {
+            column += 1;
+        }
+    }
+    (line, column)
 }
 
 pub(crate) fn parse_override_pair(raw: &str) -> Result<(String, String), String> {

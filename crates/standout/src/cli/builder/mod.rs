@@ -363,7 +363,7 @@ pub struct App {
     pub(crate) help_handling: bool,
     pub(crate) help_word: bool,
     pub(crate) ambiguous_width: crate::AmbiguousWidth,
-    pub(crate) version: Option<&'static str>,
+    pub(crate) version: Option<String>,
     pub(crate) startup_warnings: Vec<String>,
     pub(crate) strict_style_tags: bool,
     pub(crate) config: Option<Rc<dyn ConfigSeam>>,
@@ -410,7 +410,7 @@ pub struct AppBuilder {
 
     pub(crate) ambiguous_width: crate::AmbiguousWidth,
 
-    pub(crate) version: Option<&'static str>,
+    pub(crate) version: Option<String>,
 
     pub(crate) startup_warnings: Vec<String>,
 
@@ -795,6 +795,13 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
+        if let Err(error) = self.config_override_flag_collision(&cmd) {
+            return HelpResult::Error(clap::Error::raw(
+                clap::error::ErrorKind::ArgumentConflict,
+                format!("{error}\n"),
+            ));
+        }
+
         let mut cmd = self.augment_command_with_help(cmd);
 
         if let Some(error) = self.help_word_collision(&cmd) {
@@ -1374,6 +1381,7 @@ impl App {
         self.malformed_registrations()?;
         self.validate_questionnaire_surfaces(cmd)?;
         self.unreachable_registrations(cmd)?;
+        self.config_override_flag_collision(cmd)?;
         let expected_args: HashMap<String, Vec<ExpectedArg>> = self
             .pending_commands
             .borrow()

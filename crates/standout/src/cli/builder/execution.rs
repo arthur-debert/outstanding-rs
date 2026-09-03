@@ -102,6 +102,10 @@ impl App {
     ) -> crate::cli::CompletedRun {
         let capture = StreamCapture::default();
         let run = self.collect_run_warnings(|warnings| {
+            let config = match self.resolve_config_for(&matches) {
+                Ok(config) => config,
+                Err(error) => return (DispatchResult::Error(error), output_mode),
+            };
             (
                 self.dispatch_with_target(
                     matches,
@@ -109,7 +113,7 @@ impl App {
                     self.process_edge_target(),
                     ContextInputs {
                         sources: InputSources::from_process(),
-                        config: None,
+                        config,
                     },
                     StreamSink::new(capture.clone()),
                     warnings,
@@ -333,14 +337,8 @@ impl App {
             .malformed_registrations()
             .and_then(|()| self.validate_questionnaire_surfaces(&cmd))
             .and_then(|()| self.unreachable_registrations(&cmd))
+            .and_then(|()| self.config_override_flag_collision(&cmd))
         {
-            return (
-                DispatchResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
-                self.extract_output_mode_from_unparsed(&args),
-            );
-        }
-
-        if let Some(error) = self.config_override_flag_collision(&cmd) {
             return (
                 DispatchResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
                 self.extract_output_mode_from_unparsed(&args),
@@ -481,17 +479,35 @@ impl App {
             .map_err(|error| config_run_error(&error))
     }
 
-    fn config_override_flag_collision(&self, cmd: &Command) -> Option<SetupError> {
-        let flag = self.config_override_flag.as_deref()?;
-        fn uses_long(cmd: &Command, flag: &str) -> bool {
-            cmd.get_arguments().any(|arg| arg.get_long() == Some(flag))
-                || cmd.get_subcommands().any(|sub| uses_long(sub, flag))
+    pub(crate) fn config_override_flag_collision(&self, cmd: &Command) -> Result<(), SetupError> {
+        let Some(flag) = self.config_override_flag.as_deref() else {
+            return Ok(());
+        };
+        fn declares(cmd: &Command, flag: &str) -> bool {
+            cmd.get_arguments().any(|arg| {
+                arg.get_id() == CONFIG_OVERRIDE_ARG
+                    || arg.get_long() == Some(flag)
+                    || arg
+                        .get_all_aliases()
+                        .is_some_and(|aliases| aliases.contains(&flag))
+            }) || cmd.get_subcommands().any(|sub| {
+                sub.get_long_flag() == Some(flag)
+                    || sub.get_all_long_flag_aliases().any(|alias| alias == flag)
+                    || declares(sub, flag)
+            })
         }
-        uses_long(cmd, flag).then(|| {
-            SetupError::Config(format!(
-                "config_override_flag(\"{flag}\") names a flag this application already declares"
-            ))
-        })
+        let generated = (flag == "help" && !cmd.is_disable_help_flag_set())
+            || (flag == "version"
+                && !cmd.is_disable_version_flag_set()
+                && (self.version.is_some()
+                    || cmd.get_version().is_some()
+                    || cmd.get_long_version().is_some()));
+        if declares(cmd, flag) || generated {
+            return Err(SetupError::Config(format!(
+                "config_override_flag(\"{flag}\") is already taken by this application's clap Command"
+            )));
+        }
+        Ok(())
     }
 
     pub fn run<I, T>(&self, cmd: Command, args: I) -> bool
@@ -675,15 +691,14 @@ impl App {
     pub(crate) fn augment_framework_surface(&self, mut cmd: Command) -> Command {
         self.augment_questionnaire_commands(&mut cmd, &[]);
 
-        if let Some(version) = self.version {
-            cmd = cmd.version(version);
+        if let Some(version) = &self.version {
+            cmd = cmd.version(version.clone());
         }
 
         if let Some(ref flag_name) = self.output_flag {
-            let flag: &'static str = Box::leak(flag_name.clone().into_boxed_str());
             cmd = cmd.arg(
                 Arg::new("_output_mode")
-                    .long(flag)
+                    .long(flag_name.clone())
                     .value_name("MODE")
                     .global(true)
                     .value_parser(OUTPUT_MODE_FLAG_VALUES)
@@ -693,10 +708,9 @@ impl App {
         }
 
         if let Some(ref flag_name) = self.output_file_flag {
-            let flag: &'static str = Box::leak(flag_name.clone().into_boxed_str());
             cmd = cmd.arg(
                 Arg::new("_output_file_path")
-                    .long(flag)
+                    .long(flag_name.clone())
                     .value_name("PATH")
                     .global(true)
                     .action(ArgAction::Set)
@@ -705,10 +719,9 @@ impl App {
         }
 
         if let Some(ref flag_name) = self.config_override_flag {
-            let flag: &'static str = Box::leak(flag_name.clone().into_boxed_str());
             cmd = cmd.arg(
                 Arg::new(CONFIG_OVERRIDE_ARG)
-                    .long(flag)
+                    .long(flag_name.clone())
                     .value_name("KEY=VALUE")
                     .global(true)
                     .action(ArgAction::Append)

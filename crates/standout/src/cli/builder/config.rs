@@ -14,7 +14,7 @@ impl AppBuilder {
     }
 
     pub fn version(mut self, version: impl Into<String>) -> Self {
-        self.version = Some(Box::leak(version.into().into_boxed_str()));
+        self.version = Some(version.into());
         self
     }
 
