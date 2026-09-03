@@ -20,21 +20,23 @@ makes runs reproducible and comparable.
 - `runs/<run-id>/` — one directory per run: the provisioned `workspace/`, the
   per-case `cases/` sandboxes, the session transcript, and the durable
   `report.json`. Runs are artifacts, not source: `runs/` is gitignored.
-- `demo/`, `pilot/`, `rerun/`, `completion/` — committed run evidence: one
-  `runs/<run-id>/` per run, holding `report.json` only. A run's transcript
-  never enters the repository — it stays under `--runs-dir` or the system
-  temporary directory (a set's batch invocation writes it under its own
-  `--out` directory instead); `report.json`'s `session.transcript_sha256`
-  is its fingerprint. `sanitize-run.py` is the sanitizer every committed
-  report goes through: host paths become placeholders and session ids are
-  zeroed. `demo/` is a deliberately kept demonstration set; `pilot/` is the
-  pilot four's first runs against 8.1.1, plus `scorecard.md` — the
-  per-archetype signals, ranked friction themes, and validity verdict;
-  `rerun/` is the same four against 9.0.0, plus `scorecard.md` v2 — the
-  re-run beside the pilot, with the agent delta between them stated;
-  `completion/` is the completion six's **first** blind runs, against the
-  published 9.0 line, plus `scorecard.md` as a first data point rather than
-  a comparison.
+- `demo/`, `pilot/`, `rerun/`, `completion/`, `parity/` — committed run
+  evidence: one `runs/<run-id>/` per run, holding `report.json` only. A
+  run's transcript never enters the repository — it stays under
+  `--runs-dir` or the system temporary directory (a set's batch invocation
+  writes it under its own `--out` directory instead); `report.json`'s
+  `session.transcript_sha256` is its fingerprint. `sanitize-run.py` is the
+  sanitizer every committed report goes through: host paths become
+  placeholders and session ids are zeroed. `demo/` is a deliberately kept
+  demonstration set; `pilot/` is the pilot four's first runs against 8.1.1,
+  plus `scorecard.md` — the per-archetype signals, ranked friction themes,
+  and validity verdict; `rerun/` is the same four against 9.0.0, plus
+  `scorecard.md` v2 — the re-run beside the pilot, with the agent delta
+  between them stated; `completion/` is the completion six's **first**
+  blind runs, against the published 9.0 line, plus `scorecard.md` as a
+  first data point rather than a comparison; `parity/` is `gitlike`,
+  `cargolike` and `validity` against 10.0.0, plus `scorecard.md` — the
+  10.0.0 baseline the parity epics (PAR01 onward) measure against.
 - `scorecard.py` — computes a scorecard's objective table from committed
   reports (`scorecard.py pilot=corpus/pilot/runs rerun=corpus/rerun/runs completion=corpus/completion/runs`).
   Every scorecard's figures come from this one script under one set of
@@ -302,6 +304,9 @@ expected = "pass"                    # "pass" | "fail"
 # When expected = "fail" (specced past current capability), both are required:
 # gap    = "PAR01"                   # the epic that closes the gap — must be a key of the manifest's [gaps] table
 # reason = "why this fails today"
+# `gap` alone (no `reason`) also carries onto an expected = "pass" case: once
+# the named epic closes the gap the case flips to "pass" and keeps its `gap`
+# marker, so the evidence check below still runs on it.
 
 [case.run]
 argv = ["log", "--limit", "2"]       # arguments after the binary name
@@ -485,12 +490,16 @@ PAR01 = "what is specced past current capability, and why on purpose"
 A `[gaps]` entry is prose alone, or prose plus `evidence`: a claim the runner
 can check against the produced workspace rather than trust at face value.
 `uses-crate:<name>` is the only kind today — the runner reads the produced
-app's `Cargo.toml` and, for a gap case that passes, reports `hand-rolled-pass`
-instead of `unexpected-pass` when the named crate is absent from
-`[dependencies]`. A black-box case cannot otherwise tell a framework-supplied
-capability from one the agent rebuilt by hand; `scorecard.py` counts these as
-`hand_rolled_passes`, separate from the ordinary pass/fail/expected-fail/
-unexpected-pass tally.
+app's `Cargo.toml` and reports `hand-rolled-pass` instead of an ordinary pass
+when the named crate is absent from `[dependencies]`. The check runs for any
+case that carries a `gap` naming an evidence-bearing `[gaps]` entry,
+independent of `expected`: on an `expected = "fail"` case (the gap's usual
+shape) the pass it overrides is `unexpected-pass`; on an `expected = "pass"`
+case — the same case once the named epic closes the gap and the suite flips
+it, `gap` kept — the pass it overrides is the ordinary `pass`. Either way, a
+black-box case cannot otherwise tell a framework-supplied capability from one
+the agent rebuilt by hand; `scorecard.py` counts these as `hand_rolled_passes`,
+separate from the ordinary pass/fail/expected-fail/unexpected-pass tally.
 
 ### The roster
 

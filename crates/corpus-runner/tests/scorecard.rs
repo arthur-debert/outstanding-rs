@@ -56,7 +56,10 @@ fn write_report(
             "transcript": "t.jsonl",
             "agent_cmd": agent_cmd,
         },
-        "acceptance": {"built": true, "cases": [{"name": "only", "outcome": "pass"}]},
+        "acceptance": {
+            "built": true,
+            "cases": [{"name": "only", "expected": "pass", "outcome": "pass"}],
+        },
         "invariants": [],
         "questionnaire": {"answers": {"workarounds": "", "friction": ""}},
     });
@@ -71,6 +74,60 @@ fn archetype_row<'a>(table: &'a str, archetype: &str) -> &'a str {
         .lines()
         .find(|line| line.starts_with(&format!("| {archetype} |")))
         .unwrap_or_else(|| panic!("no row for {archetype} in:\n{table}"))
+}
+
+// A gap case that closed its epic flips to `expected = "pass"` but keeps its
+// `gap` marker so the evidence check keeps running (corpus/README.md). It has
+// to count toward the required denominator from then on, and a hand-rolled
+// pass has to be visible even though it now lives in that bucket.
+#[test]
+fn a_case_flipped_to_expected_pass_still_carrying_gap_counts_as_required() {
+    let temp = tempfile::tempdir().unwrap();
+    let run = temp.path().join("flippedlike-1");
+    std::fs::create_dir_all(&run).unwrap();
+    let report = json!({
+        "schema_version": 4,
+        "run_id": "flippedlike-1",
+        "archetype": {"name": "flippedlike"},
+        "pins": {"framework_version": "9.0.0"},
+        "session": {"wall_seconds": 1.0, "output_tokens": 2, "transcript": "t.jsonl"},
+        "provenance": {"backend": "claude", "executable_version": "1", "model_observed": "m"},
+        "acceptance": {
+            "built": true,
+            "cases": [
+                {"name": "ordinary", "expected": "pass", "outcome": "pass"},
+                {"name": "regressed", "expected": "pass", "outcome": "fail"},
+                {
+                    "name": "closed-hand-rolled",
+                    "expected": "pass",
+                    "outcome": "hand-rolled-pass",
+                    "gap": "PAR01",
+                },
+                {
+                    "name": "still-open",
+                    "expected": "fail",
+                    "outcome": "expected-fail",
+                    "gap": "PAR02",
+                },
+                {
+                    "name": "closed-for-real",
+                    "expected": "fail",
+                    "outcome": "unexpected-pass",
+                    "gap": "PAR03",
+                },
+            ],
+        },
+        "invariants": [],
+        "questionnaire": {"answers": {"workarounds": "", "friction": ""}},
+    });
+    std::fs::write(run.join("report.json"), report.to_string()).unwrap();
+
+    let table = scorecard(&[&format!("t={}", temp.path().display())]);
+    let row = archetype_row(&table, "flippedlike");
+    assert!(
+        row.contains("1/3 (33.3%) (1 hand-rolled); 1 fail required · 2 gap (1 expected-fail, 1 unexpected-pass)"),
+        "{row}"
+    );
 }
 
 // Commands the runner's splitter and the scorecard's have to agree on, refusals included.
@@ -136,7 +193,7 @@ const PILOT_FIGURES: &[(&str, &str, &str, &str)] = &[
     ),
     (
         "gitlike",
-        "15/19 (78.9%); 4 unexpected-pass",
+        "15/15 (100.0%) required · 4 gap (4 unexpected-pass)",
         "48/48 (100.0%) applicable; 120 planned: 48 pass, 72 N/A",
         "| 5 |",
     ),

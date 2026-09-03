@@ -284,7 +284,7 @@ stdout_not_contains = [
 [[case]]
 name = "root-help-word-term-color-off"
 group = "themed-help"
-stresses = "root help word, --output term, color off: no ANSI, no markers, clap facts remain"
+stresses = "root help word, --output term, NO_COLOR set: term is unconditional, ANSI survives the env's color-off convention, no markers, clap facts remain"
 expected = "pass"
 [case.run]
 argv = ["help", "--output", "term"]
@@ -293,7 +293,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stderr = ""
-stdout_contains = ["show", "early", "late", "nest"]
+stdout_contains = ["show", "early", "late", "nest", "\u001b["]
 stdout_not_contains = [
     "[about?]",
     "[header?]",
@@ -304,7 +304,6 @@ stdout_not_contains = [
     "[default?]",
     "[values?]",
     "[example?]",
-    "\u001b[",
 ]
 
 [[case]]
@@ -493,7 +492,7 @@ stdout_not_contains = [
 [[case]]
 name = "leaf-help-word-term-color-off"
 group = "themed-help"
-stresses = "deep-leaf help word, --output term, color off"
+stresses = "deep-leaf help word, --output term, NO_COLOR set: term is unconditional, ANSI survives the env's color-off convention"
 expected = "pass"
 [case.run]
 argv = ["help", "nest", "inner", "leaf", "--output", "term"]
@@ -502,7 +501,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stderr = ""
-stdout_contains = ["leaf"]
+stdout_contains = ["leaf", "\u001b["]
 stdout_not_contains = [
     "[about?]",
     "[header?]",
@@ -513,7 +512,6 @@ stdout_not_contains = [
     "[default?]",
     "[values?]",
     "[example?]",
-    "\u001b[",
 ]
 
 # --- ROB01 invariant matrix --------------------------------------------------

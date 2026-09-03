@@ -29,27 +29,22 @@ pub fn run_cases(
                 Ok(execution) => {
                     let (raw_pass, detail) = evaluate(case, &execution);
                     match (case.expected, raw_pass) {
-                        (Expected::Pass, true) => (CaseOutcome::Pass, detail),
+                        (Expected::Pass, true) => {
+                            match evidence_override(case, gaps, app_cargo_toml) {
+                                Some((outcome, override_detail)) => {
+                                    (outcome, override_detail.or(detail))
+                                }
+                                None => (CaseOutcome::Pass, detail),
+                            }
+                        }
                         (Expected::Pass, false) => (CaseOutcome::Fail, detail),
                         (Expected::Fail, false) => (CaseOutcome::ExpectedFail, detail),
                         (Expected::Fail, true) => {
-                            let gap = case.gap.as_deref();
-                            let evidence = gap.and_then(|gap| gaps.get(gap)).and_then(GapEntry::evidence);
-                            match evidence {
+                            match evidence_override(case, gaps, app_cargo_toml) {
+                                Some((outcome, override_detail)) => {
+                                    (outcome, override_detail.or(detail))
+                                }
                                 None => (CaseOutcome::UnexpectedPass, detail),
-                                Some(evidence) => match app_cargo_toml {
-                                    Ok(cargo_toml) if evidence.satisfied_by(cargo_toml) => {
-                                        (CaseOutcome::UnexpectedPass, detail)
-                                    }
-                                    Ok(_) => (CaseOutcome::HandRolledPass, detail),
-                                    Err(read_err) => (
-                                        CaseOutcome::Fail,
-                                        Some(format!(
-                                            "evidence for gap {:?} could not be checked: the produced app's Cargo.toml could not be read: {read_err}",
-                                            gap.unwrap_or("?")
-                                        )),
-                                    ),
-                                },
                             }
                         }
                     }
@@ -78,6 +73,32 @@ pub fn run_cases(
         built: true,
         build_detail: None,
         cases: results,
+    }
+}
+
+/// Checks a passing case's `gap` against the manifest's evidence claim, independent
+/// of `expected`: a case that names a `[gaps]` entry carrying `evidence` is checked
+/// whether it is the gap's expected-fail case (an `unexpected-pass` candidate) or a
+/// case already flipped to `expected = "pass"` once the epic closed the gap (a
+/// `hand-rolled-pass` candidate otherwise reads as an ordinary pass). Returns `None`
+/// when the case names no gap, the gap carries no evidence claim, or the evidence is
+/// satisfied — the caller's own outcome for a bare pass then stands.
+fn evidence_override(
+    case: &Case,
+    gaps: &BTreeMap<String, GapEntry>,
+    app_cargo_toml: Result<&str, &str>,
+) -> Option<(CaseOutcome, Option<String>)> {
+    let gap = case.gap.as_deref()?;
+    let evidence = gaps.get(gap).and_then(GapEntry::evidence)?;
+    match app_cargo_toml {
+        Ok(cargo_toml) if evidence.satisfied_by(cargo_toml) => None,
+        Ok(_) => Some((CaseOutcome::HandRolledPass, None)),
+        Err(read_err) => Some((
+            CaseOutcome::Fail,
+            Some(format!(
+                "evidence for gap {gap:?} could not be checked: the produced app's Cargo.toml could not be read: {read_err}"
+            )),
+        )),
     }
 }
 

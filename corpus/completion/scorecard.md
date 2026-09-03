@@ -30,10 +30,10 @@ python3 corpus/scorecard.py completion=corpus/completion/runs
 
 | Archetype | Run | Standout | Acceptance | Hand-rolled passes | ROB01 invariants | Workarounds listed | Frictions listed | Session | Agent | Comparable |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| brewlike | completion | 9.0.0 | 26/28 (92.9%); 2 expected-fail | 0 | 84/84 (100.0%) applicable; 180 planned: 84 pass, 96 N/A | 4 | 6 | 14m28s, 60,140 generated tokens | claude 2.1.252, claude-opus-5[1m] | single run |
-| cargolike | completion | 9.0.0 | 28/50 (56.0%); 1 expected-fail, 21 unexpected-pass | 0 | 54/56 (96.4%) applicable; 120 planned: 54 pass, 2 fail, 64 N/A | 6 | 5 | 19m55s, 93,144 generated tokens | claude 2.1.252, claude-opus-5[1m] | single run |
+| brewlike | completion | 9.0.0 | 26/26 (100.0%) required · 2 gap (2 expected-fail) | 0 | 84/84 (100.0%) applicable; 180 planned: 84 pass, 96 N/A | 4 | 6 | 14m28s, 60,140 generated tokens | claude 2.1.252, claude-opus-5[1m] | single run |
+| cargolike | completion | 9.0.0 | 28/28 (100.0%) required · 22 gap (1 expected-fail, 21 unexpected-pass) | 0 | 54/56 (96.4%) applicable; 120 planned: 54 pass, 2 fail, 64 N/A | 6 | 5 | 19m55s, 93,144 generated tokens | claude 2.1.252, claude-opus-5[1m] | single run |
 | dockerlike | completion | 9.0.0 | 44/46 (95.7%); 2 fail | 0 | 90/90 (100.0%) applicable; 210 planned: 90 pass, 120 N/A | 5 | 5 | 24m54s, 103,231 generated tokens | claude 2.1.252, claude-opus-5[1m] | single run |
-| gcloudlike | completion | 9.0.0 | 27/51 (52.9%); 24 unexpected-pass | 0 | 28/28 (100.0%) applicable; 60 planned: 28 pass, 32 N/A | 4 | 5 | 18m47s, 88,248 generated tokens | claude 2.1.252, claude-opus-5[1m] | single run |
+| gcloudlike | completion | 9.0.0 | 27/27 (100.0%) required · 24 gap (24 unexpected-pass) | 0 | 28/28 (100.0%) applicable; 60 planned: 28 pass, 32 N/A | 4 | 5 | 18m47s, 88,248 generated tokens | claude 2.1.252, claude-opus-5[1m] | single run |
 | kubelike | completion | 9.0.0 | 42/42 (100.0%) | 0 | 58/66 (87.9%) applicable; 150 planned: 58 pass, 8 fail, 84 N/A | 4 | 4 | 15m52s, 73,008 generated tokens | claude 2.1.252, claude-opus-5[1m] | single run |
 | pnpmlike | completion | 9.0.0 | 32/32 (100.0%) | 0 | 28/28 (100.0%) applicable; 60 planned: 28 pass, 32 N/A | 5 | 4 | 17m13s, 81,865 generated tokens | claude 2.1.252, claude-opus-5[1m] | single run |
 

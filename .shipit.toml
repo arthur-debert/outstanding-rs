@@ -43,6 +43,7 @@ ignore = [
   "corpus/pilot/runs/**",
   "corpus/rerun/runs/**",
   "corpus/completion/runs/**",
+  "corpus/parity/runs/**",
   "corpus/demo/**",
   "crates/corpus-runner/tests/fixtures/**",
 ]

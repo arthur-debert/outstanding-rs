@@ -10,7 +10,7 @@ use std::fs;
 use std::path::Path;
 
 use common::script;
-use corpus_runner::archetype::Archetype;
+use corpus_runner::archetype::{Archetype, CaseSuite};
 use corpus_runner::cases::run_cases;
 use corpus_runner::manifest::{Evidence, GapEntry};
 use corpus_runner::report::{CaseOutcome, CaseResult};
@@ -24,6 +24,11 @@ fn run_suite(toml: &str, binary_body: &str) -> Vec<CaseResult> {
     run_suite_with_evidence(toml, binary_body, &BTreeMap::new(), Ok(""))
 }
 
+// Parses with `CaseSuite::parse` directly, not `Archetype::load`: these are
+// low-level `run_cases` tests of the outcome/evidence contract, driven by
+// whatever `gaps` map the test passes to `run_cases` itself, decoupled from
+// `Archetype::load`'s own manifest-membership check (`archetype.rs`'s
+// full-load tests cover that contract).
 fn run_suite_with_evidence(
     toml: &str,
     binary_body: &str,
@@ -35,12 +40,10 @@ fn run_suite_with_evidence(
     let archetype_dir = dir.path().join("archetypes/fake");
     fs::create_dir_all(&archetype_dir).unwrap();
     fs::write(archetype_dir.join("spec.md"), "spec").unwrap();
-    fs::write(
-        archetype_dir.join("acceptance.toml"),
-        format!("schema = 1\narchetype = \"fake\"\n{toml}"),
-    )
-    .unwrap();
-    let archetype = Archetype::load(&dir.path().join("archetypes"), "fake").unwrap();
+    let acceptance_path = archetype_dir.join("acceptance.toml");
+    let acceptance_text = format!("schema = 1\narchetype = \"fake\"\n{toml}");
+    fs::write(&acceptance_path, &acceptance_text).unwrap();
+    let suite = CaseSuite::parse(&acceptance_text, "fake", &acceptance_path).unwrap();
     let isolation = Isolation::new(
         dir.path(),
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
@@ -48,7 +51,7 @@ fn run_suite_with_evidence(
     .unwrap();
     let report = run_cases(
         &binary,
-        &archetype.suite.cases,
+        &suite.cases,
         &dir.path().join("cases"),
         &isolation,
         gaps,
@@ -1194,6 +1197,55 @@ stdout = "hello\n"
 
     let without_evidence = run_suite(toml, "echo hello");
     assert_eq!(without_evidence[0].outcome, CaseOutcome::UnexpectedPass);
+}
+
+#[test]
+fn evidence_check_still_runs_once_a_gap_case_flips_to_expected_pass() {
+    // Once an epic closes a gap, the suite's case moves from `expected =
+    // "fail"` to `expected = "pass"` and keeps its `gap` marker (D17 covers
+    // both). The evidence check must still run on it — a pass with the
+    // evidence crate absent is a hand-rolled pass either way, not an
+    // invisible ordinary pass.
+    let mut gaps = BTreeMap::new();
+    gaps.insert(
+        "PAR01".to_string(),
+        GapEntry::Evidenced {
+            text: "named sets are specced past current capability".to_string(),
+            evidence: "uses-crate:clapfig".to_string(),
+        },
+    );
+    let toml = r#"
+[[case]]
+name = "gap-closed-and-passing"
+stresses = "hand-rolled pass detection on a flipped case"
+expected = "pass"
+gap = "PAR01"
+[case.run]
+argv = []
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+stdout = "hello\n"
+"#;
+
+    let without_crate = run_suite_with_evidence(
+        toml,
+        "echo hello",
+        &gaps,
+        Ok("[dependencies]\nserde = \"1\"\n"),
+    );
+    assert_eq!(without_crate[0].outcome, CaseOutcome::HandRolledPass);
+
+    let with_crate = run_suite_with_evidence(
+        toml,
+        "echo hello",
+        &gaps,
+        Ok("[dependencies]\nclapfig = \"0.24\"\n"),
+    );
+    assert_eq!(with_crate[0].outcome, CaseOutcome::Pass);
+
+    let without_gaps_table = run_suite(toml, "echo hello");
+    assert_eq!(without_gaps_table[0].outcome, CaseOutcome::Pass);
 }
 
 #[test]

@@ -89,6 +89,25 @@ fn roster_archetype_completes_the_loop_with_case_results() {
     fs::create_dir_all(&archetype_dir).unwrap();
     fs::write(archetype_dir.join("spec.md"), "# caselike\n").unwrap();
     fs::write(archetype_dir.join("acceptance.toml"), ACCEPTANCE).unwrap();
+    fs::write(
+        archetype_dir.join("manifest.toml"),
+        r#"
+interactions = []
+
+[archetype]
+name = "caselike"
+survey = "C1"
+summary = "one line"
+status = "partially-past-capability"
+
+[features]
+used = []
+
+[gaps]
+PARXX = "the fixture cannot do this on purpose"
+"#,
+    )
+    .unwrap();
 
     let bin_dir = scratch.path().join("bin");
     common::install_fake_cargo(&bin_dir, "caselike", CASELIKE);

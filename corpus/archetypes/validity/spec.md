@@ -110,9 +110,11 @@ still reaches the leaf by naming its path, `validity help nest inner leaf`.
   `[desc?]`, `[default?]`, `[values?]`, `[example?]`.
 - Clap facts are present: a usage line; root help names `show`,
   `early`, `late`, and `nest`; leaf help names the leaf.
-- `--output term` with color forced on still carries ANSI (the
+- An explicit `--output term` is unconditional: it still carries ANSI
+  even with `NO_COLOR` set (an explicit flag beats every env var; the
   framework help theme must survive the incomplete app theme). Text
-  mode and color-off carry no ANSI.
+  mode, and `auto` output suppressed by the environment's color-off
+  convention, carry no ANSI.
 
 ## Exit codes
 

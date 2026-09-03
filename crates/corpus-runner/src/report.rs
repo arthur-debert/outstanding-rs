@@ -228,4 +228,12 @@ pub struct HistoricalBlindness {
     pub agent_reported_docs: Option<String>,
     #[serde(default)]
     pub agent_reported_external_sources: Option<String>,
+    #[serde(default)]
+    pub policy: Option<String>,
+    #[serde(default)]
+    pub framework_source_excluded: Option<bool>,
+    #[serde(default)]
+    pub isolation: Option<IsolationRecord>,
+    #[serde(default)]
+    pub credential_exceptions: Option<Vec<String>>,
 }
