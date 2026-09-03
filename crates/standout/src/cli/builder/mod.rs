@@ -39,7 +39,7 @@ use super::default_command::ParseFailure;
 use super::dispatch::DispatchFn;
 use super::group::CommandRecipe;
 use super::handler::{
-    CommandContext, EntryStream, Extensions, HandlerResult, Output as HandlerOutput, StreamSink,
+    CommandContext, Extensions, Handler, Output as HandlerOutput, Results, StreamSink,
 };
 use super::help::data::{extract_help_data, extract_help_data_with_topics};
 use super::help::{
@@ -171,7 +171,7 @@ fn missing_template_message(
         )
     } else {
         format!(
-            "command `{command_path}` references template `{template_name}`, but no application templates are configured; add .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\") before .build(), or declare no presentation with .structured_only(), .silent(), or .binary()"
+            "command `{command_path}` references template `{template_name}`, but no application templates are configured; add .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\") before .build(), register `{template_name}.event` if the command only emits events, or declare no presentation with .structured_only(), .silent(), or .binary()"
         )
     };
 
@@ -682,7 +682,18 @@ impl AppBuilder {
                     path, &name, None,
                 )));
             };
-            registry.get_content(&name).map_err(|error| {
+            // A command whose summary is `Silent` renders only its events, so
+            // `<name>.event` alone satisfies its presentation.
+            let resolved = match registry.get_content(&name) {
+                Ok(_) => Ok(()),
+                Err(standout_render::RegistryError::NotFound { .. })
+                    if registry.get_content(&format!("{name}.event")).is_ok() =>
+                {
+                    Ok(())
+                }
+                Err(error) => Err(error),
+            };
+            resolved.map_err(|error| {
                 let message = match error {
                     standout_render::RegistryError::NotFound { .. } => {
                         missing_template_message(path, &name, Some(registry))
@@ -1405,21 +1416,20 @@ impl App {
     }
 
     /// One handler, hooks and render included; `color_policy` decides whether the
-    /// rendered human text carries escape sequences, and `sink` takes
-    /// `ctx.stream()` entries under `ndjson`.
+    /// rendered human text carries escape sequences, and `sink` is where the
+    /// handler's events are written as it emits them.
     #[allow(clippy::too_many_arguments)]
-    pub fn run_command<F, T>(
+    pub fn run_command<H>(
         &self,
         path: &str,
         matches: &ArgMatches,
-        handler: F,
+        mut handler: H,
         template: crate::TemplateRef,
         color_policy: ColorPolicy,
         sink: StreamSink,
     ) -> Result<RenderedOutput, HookError>
     where
-        F: FnOnce(&ArgMatches, &CommandContext) -> HandlerResult<T>,
-        T: Serialize,
+        H: Handler,
     {
         let config = self
             .resolve_config(matches)
@@ -1428,16 +1438,10 @@ impl App {
             matches,
             config.as_ref().and_then(|config| config.term.as_ref()),
         );
-        let stream = if output_mode.is_stream() {
-            EntryStream::writing_to(sink)
-        } else {
-            EntryStream::discarding()
-        };
         let mut ctx = CommandContext::new(
             path.split('.').map(String::from).collect(),
             self.app_state.clone(),
-        )
-        .with_stream(stream);
+        );
         let warnings = WarningBuffer::new();
         self.seed_startup_warnings(&warnings);
         ctx.extensions.insert(InputSources::from_process());
@@ -1452,7 +1456,30 @@ impl App {
             hooks.run_pre_dispatch(matches, &mut ctx)?;
         }
 
-        let (output, status) = match handler(matches, &ctx) {
+        let mut target = TargetProperties::detect();
+        target.ambiguous_width = self.ambiguous_width;
+        let destination = std::rc::Rc::new(crate::cli::events::EventDestination::new(
+            sink,
+            crate::cli::events::EventContext {
+                command_path: path.to_string(),
+                template: crate::cli::events::rendered_event_template(&template),
+                theme: self.theme.clone(),
+                context_registry: self.context_registry.clone(),
+                template_engine: self.template_engine.clone(),
+                template_registry: self.template_registry.clone(),
+                representation: output_mode,
+                color_policy,
+                target,
+                warnings: Some(warnings.clone()),
+            },
+        ));
+        let mut results = Results::<H::Event>::for_run(None, destination.clone());
+        let handled = handler.handle(matches, &ctx, &mut results);
+        drop(results);
+        if let Some(failure) = destination.take_failure() {
+            return Err(HookError::post_output("Render error").with_source(failure));
+        }
+        let (output, status) = match handled {
             Ok(output) => output.split_exit_status(),
             Err(e) => return Err(HookError::post_output("Handler error").with_source(e)),
         };
@@ -1471,8 +1498,6 @@ impl App {
                     json_data = hooks.run_post_dispatch(matches, &ctx, json_data)?;
                 }
 
-                let mut target = TargetProperties::detect();
-                target.ambiguous_width = self.ambiguous_width;
                 let request = RenderRequest {
                     data: json_data,
                     template: template.clone(),

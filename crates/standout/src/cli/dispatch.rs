@@ -7,7 +7,7 @@ use crate::cli::builder::{SharedTemplateEngine, TemplateAbsence, TemplateRef};
 use crate::cli::handler::Output as HandlerOutput;
 use crate::cli::handler::{
     AppFailure, CommandContext, Diagnostic, ExitStatus, ExternalFailure, RunError, RunErrorKind,
-    RunRecorder,
+    RunRecorder, StreamSink,
 };
 use crate::cli::hooks::{ArtifactOutput, HookError, Hooks};
 use crate::context::ContextRegistry;
@@ -73,6 +73,29 @@ pub(crate) fn payload_without_a_stream(output: &str) -> RunError {
         ),
         RunErrorKind::Render,
     )
+}
+
+/// Rendered events are already on the destination, so a payload cannot follow
+/// them: it would be a second document sharing one file or one stdout.
+pub(crate) fn reject_payload_after_events(
+    events: usize,
+    output: &DispatchOutput,
+) -> Result<(), RunError> {
+    if events == 0 {
+        return Ok(());
+    }
+    let payload = match output {
+        DispatchOutput::Binary(_, _) => "binary",
+        DispatchOutput::Artifact { .. } => "artifact",
+        DispatchOutput::Text { .. } | DispatchOutput::Silent { .. } => return Ok(()),
+    };
+    Err(RunError::new(
+        format!(
+            "{payload} output was produced by a command that emitted events; a command \
+             producing events carries Output::Render and Output::Silent only"
+        ),
+        RunErrorKind::Render,
+    ))
 }
 
 pub(crate) fn reject_payload_under_stream(
@@ -377,15 +400,16 @@ pub(crate) fn hook_run_error(mut error: HookError, phase: crate::cli::HookPhase)
         .with_source(error)
 }
 
-/// The recorder is a parameter rather than a `CommandContext` member: it is the
-/// framework's, and a handler that could reach it could record values the typed
-/// `Results` channel never saw.
+/// The recorder and the sink are parameters rather than `CommandContext`
+/// members: they are the framework's, and a handler that could reach them could
+/// record or write values the typed `Results` channel never saw.
 pub type DispatchFn = Rc<
     RefCell<
         dyn FnMut(
             &ArgMatches,
             &CommandContext,
             &RunRecorder,
+            &StreamSink,
             Option<&Hooks>,
             crate::Representation,
             ColorPolicy,
@@ -401,6 +425,7 @@ pub fn dispatch(
     matches: &ArgMatches,
     ctx: &CommandContext,
     recorder: &RunRecorder,
+    sink: &StreamSink,
     hooks: Option<&Hooks>,
     output_mode: crate::Representation,
     color_policy: ColorPolicy,
@@ -411,6 +436,7 @@ pub fn dispatch(
         matches,
         ctx,
         recorder,
+        sink,
         hooks,
         output_mode,
         color_policy,

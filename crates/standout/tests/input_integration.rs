@@ -109,10 +109,10 @@ fn run_command_resolves_declared_input() {
         .run_command(
             "create",
             sub,
-            |_m, ctx| {
+            FnHandler::new(|_m, ctx| {
                 let body: &String = ctx.input("body").expect("body should be resolved");
                 Ok(Output::Render(json!({ "echo": body })))
-            },
+            }),
             standout::TemplateRef::Inline(("{{ echo }}").to_string()),
             ColorPolicy::Auto,
             standout::cli::StreamSink::new(Vec::new()),

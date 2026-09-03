@@ -501,6 +501,49 @@ Bytes are owned; streaming is deliberately not part of this contract.
 
 ---
 
+## Incremental commands
+
+`Handler` carries two associated types. `Output` is the batch value or the
+summary; `Event` is the type of the values the command produces while it runs.
+A batch command sets `Event = NoEvents`, whose uninhabited type leaves `emit`
+with no argument that can be constructed, and ignores the third parameter.
+
+```rust,ignore
+pub trait Handler {
+    type Event: Serialize;
+    type Output: Serialize;
+
+    fn handle(
+        &mut self,
+        matches: &ArgMatches,
+        ctx: &CommandContext,
+        results: &mut Results<Self::Event>,
+    ) -> HandlerResult<Self::Output>;
+}
+```
+
+`Results::emit` takes the event by value, returns once the framework has
+retained it and written it, and fails only when the value does not serialize
+(`EmitError::Serialize`) or the destination refuses the bytes
+(`EmitError::Write`). `E: Serialize` is the whole bound: an event may hold an
+`Rc` or anything else that does not cross threads.
+
+`Results` is `&mut` and not `Clone`, so a handler cannot store it or keep
+emitting past its own run, and it exposes `emit` and nothing else: a handler
+cannot ask which representation is running or where the bytes go.
+
+The adapter behind a two-argument closure (`FnHandler`) sets `Event = NoEvents`;
+`EventsFnHandler` is the adapter behind a three-argument closure taking
+`&mut Results<E>`. `#[handler]` picks between them from whether the function
+declares a `Results` parameter.
+
+`RunRecorder` is the framework's own retention of the same values, passed to
+the dispatch closure rather than held on the context, so a handler cannot
+record values the channel never saw. `EventSink` is what the consuming
+framework implements to render or frame an event for a representation.
+
+---
+
 ## CommandContext
 
 `CommandContext` provides execution environment information and state access:
@@ -510,7 +553,6 @@ pub struct CommandContext {
     pub command_path: Vec<String>,
     pub app_state: Rc<Extensions>,
     pub extensions: Extensions,
-    pub stream: EntryStream,
 }
 ```
 
@@ -520,7 +562,10 @@ pub struct CommandContext {
 
 **extensions**: Per-request, mutable state injected by pre-dispatch hooks. Use for user sessions, request IDs, computed values.
 
-**stream** (`ctx.stream()`): The run's entry stream. `emit(&value)` writes the value as one JSON line when the consuming framework resolved a stream output mode and does nothing otherwise; `is_live()` says which. The dispatch layer never writes to it itself.
+The context carries no presentation state. A command that produces its result
+while it runs receives the typed results channel as the third parameter of
+`Handler::handle`, not through the context; see
+[Incremental commands](#incremental-commands).
 
 > For comprehensive coverage of state management, see [App State and Extensions](app-state.md).
 

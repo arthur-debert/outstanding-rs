@@ -9,12 +9,18 @@ use syn::{
     Error, Expr, FnArg, ItemFn, Meta, Pat, PatType, Result, Token, Type,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 enum ParamKind {
-    Flag { cli_name: Option<String> },
-    Arg { cli_name: Option<String> },
+    Flag {
+        cli_name: Option<String>,
+    },
+    Arg {
+        cli_name: Option<String>,
+    },
     Ctx,
     Matches,
+    /// `&mut Results<E>`: the command's typed results channel, carrying `E`.
+    Results(Type),
     None,
 }
 
@@ -143,6 +149,29 @@ fn is_reference_type(ty: &Type) -> bool {
     matches!(ty, Type::Reference(_))
 }
 
+/// The event type of a `&mut Results<E>` parameter, which is what makes a
+/// handler incremental; `None` for every other parameter type.
+fn results_event_type(ty: &Type) -> Option<Type> {
+    let Type::Reference(reference) = ty else {
+        return None;
+    };
+    reference.mutability?;
+    let Type::Path(path) = reference.elem.as_ref() else {
+        return None;
+    };
+    let segment = path.path.segments.last()?;
+    if segment.ident != "Results" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
+    match args.args.first()? {
+        syn::GenericArgument::Type(event) => Some(event.clone()),
+        _ => None,
+    }
+}
+
 fn is_unit_result(fn_item: &ItemFn) -> bool {
     matches!(extract_result_ok_type(fn_item), Some(Type::Tuple(t)) if t.elems.is_empty())
 }
@@ -188,7 +217,7 @@ fn generate_expected_arg(param: &ParamInfo, dispatch: &TokenStream) -> Option<To
                 })
             }
         }
-        ParamKind::Ctx | ParamKind::Matches | ParamKind::None => None,
+        ParamKind::Ctx | ParamKind::Matches | ParamKind::Results(_) | ParamKind::None => None,
     }
 }
 
@@ -225,7 +254,7 @@ fn generate_extraction(param: &ParamInfo) -> TokenStream {
                 }
             }
         }
-        ParamKind::Ctx | ParamKind::Matches | ParamKind::None => {
+        ParamKind::Ctx | ParamKind::Matches | ParamKind::Results(_) | ParamKind::None => {
             quote! {}
         }
     }
@@ -243,6 +272,9 @@ fn generate_call_arg(param: &ParamInfo) -> TokenStream {
         }
         ParamKind::Matches => {
             quote! { __matches }
+        }
+        ParamKind::Results(_) => {
+            quote! { __results }
         }
         ParamKind::None => {
             quote! { #rust_name }
@@ -279,11 +311,15 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
     let mut params: Vec<ParamInfo> = Vec::new();
     let mut has_ctx = false;
     let mut _has_matches = false;
+    let mut event_type: Option<Type> = None;
 
     for fn_arg in &fn_item.sig.inputs {
         match fn_arg {
             FnArg::Typed(pat_type) => {
-                let kind = parse_param_kind(pat_type)?;
+                let kind = match results_event_type(&pat_type.ty) {
+                    Some(event) => ParamKind::Results(event),
+                    None => parse_param_kind(pat_type)?,
+                };
                 let rust_name = extract_param_name(&pat_type.pat)?;
 
                 let cli_name = match &kind {
@@ -298,6 +334,15 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
                 }
                 if matches!(kind, ParamKind::Matches) {
                     _has_matches = true;
+                }
+                if let ParamKind::Results(event) = &kind {
+                    if event_type.is_some() {
+                        return Err(Error::new(
+                            pat_type.span(),
+                            "#[handler] functions take at most one Results parameter",
+                        ));
+                    }
+                    event_type = Some(event.clone());
                 }
 
                 if matches!(kind, ParamKind::None) && !is_reference_type(&pat_type.ty) {
@@ -337,6 +382,20 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
         quote! { __matches: &::clap::ArgMatches, __ctx: &#dispatch::CommandContext }
     } else {
         quote! { __matches: &::clap::ArgMatches }
+    };
+    let (event_param, event_argument, handler_event, handler_results) = match &event_type {
+        Some(event) => (
+            quote! { , __results: &mut #dispatch::Results<#event> },
+            quote! { , results },
+            quote! { #event },
+            quote! { results },
+        ),
+        None => (
+            quote! {},
+            quote! {},
+            quote! { #dispatch::NoEvents },
+            quote! { _results },
+        ),
     };
 
     let return_type = &fn_item.sig.output;
@@ -390,7 +449,7 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
         #clean_fn
 
         #[allow(non_snake_case)]
-        #fn_vis fn #wrapper_name(__matches: &::clap::ArgMatches, __ctx: &#dispatch::CommandContext) #wrapper_return_type {
+        #fn_vis fn #wrapper_name(__matches: &::clap::ArgMatches, __ctx: &#dispatch::CommandContext #event_param) #wrapper_return_type {
             #(#extractions)*
             #call_and_return
         }
@@ -405,17 +464,17 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
         #fn_vis struct #handler_struct_name;
 
         impl #dispatch::Handler for #handler_struct_name {
-            type Event = #dispatch::NoEvents;
+            type Event = #handler_event;
             type Output = #output_type;
 
             fn handle(
                 &mut self,
                 matches: &::clap::ArgMatches,
                 ctx: &#dispatch::CommandContext,
-                _results: &mut #dispatch::Results<Self::Event>,
+                #handler_results: &mut #dispatch::Results<Self::Event>,
             ) -> #dispatch::HandlerResult<Self::Output>
             {
-                #dispatch::IntoHandlerResult::into_handler_result(#wrapper_name(matches, ctx))
+                #dispatch::IntoHandlerResult::into_handler_result(#wrapper_name(matches, ctx #event_argument))
             }
 
             fn expected_args(&self) -> ::std::vec::Vec<#dispatch::verify::ExpectedArg> {

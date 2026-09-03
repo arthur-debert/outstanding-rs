@@ -1,17 +1,23 @@
 error[E0599]: no method named `recorder` found for struct `CommandContext` in the current scope
- --> tests/ui/handler_cannot_reach_the_recorder.rs:9:25
-  |
-9 |     let _recorder = ctx.recorder();
-  |                         ^^^^^^^^ method not found in `CommandContext`
+  --> tests/ui/handler_cannot_reach_the_recorder.rs:10:25
+   |
+10 |     let _recorder = ctx.recorder();
+   |                         ^^^^^^^^ method not found in `CommandContext`
 
 error[E0599]: no method named `results` found for struct `CommandContext` in the current scope
-  --> tests/ui/handler_cannot_reach_the_recorder.rs:10:24
+  --> tests/ui/handler_cannot_reach_the_recorder.rs:11:24
    |
-10 |     let _channel = ctx.results::<serde_json::Value>();
+11 |     let _channel = ctx.results::<serde_json::Value>();
    |                        ^^^^^^^ method not found in `CommandContext`
 
-error[E0599]: no method named `clone` found for mutable reference `&mut Results<serde_json::Value>` in the current scope
-  --> tests/ui/handler_cannot_reach_the_recorder.rs:13:17
+error[E0599]: no method named `stream` found for struct `CommandContext` in the current scope
+  --> tests/ui/handler_cannot_reach_the_recorder.rs:12:23
    |
-13 |         results.clone()
+12 |     let _stream = ctx.stream();
+   |                       ^^^^^^ method not found in `CommandContext`
+
+error[E0599]: no method named `clone` found for mutable reference `&mut Results<serde_json::Value>` in the current scope
+  --> tests/ui/handler_cannot_reach_the_recorder.rs:15:17
+   |
+15 |         results.clone()
    |                 ^^^^^ method not found in `&mut Results<serde_json::Value>`

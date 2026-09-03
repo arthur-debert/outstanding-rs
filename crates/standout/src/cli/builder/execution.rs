@@ -21,8 +21,8 @@ use crate::cli::dispatch::{
 use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
 use crate::cli::handler::{
     ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, Delivery, DispatchResult,
-    EntryStream, ExitStatus, OutputKind, RunError, RunErrorKind, RunOutput, RunRecorder,
-    StreamCapture, StreamSink, SuccessKind,
+    ExitStatus, OutputKind, RunError, RunErrorKind, RunOutput, RunRecorder, StreamCapture,
+    StreamSink, SuccessKind,
 };
 use crate::cli::hooks::{ArtifactOutput, Hooks, RenderedOutput, TextOutput};
 use crate::cli::questionnaire::{
@@ -35,6 +35,12 @@ use crate::SetupError;
 use std::io::Write;
 
 const CONFIG_OVERRIDE_ARG: &str = "_config_override";
+
+/// True for the representations whose bytes accrue while the command runs, so
+/// the sink is the one destination the whole run writes through.
+fn writes_through_the_sink(output_mode: Representation) -> bool {
+    output_mode.is_stream() || output_mode.is_human()
+}
 
 struct ContextInputs {
     sources: InputSources,
@@ -218,6 +224,7 @@ impl App {
             sub_matches,
             &ctx,
             &recorder,
+            &sink,
             hooks,
             output_mode,
             color_policy,
@@ -346,9 +353,14 @@ impl App {
             Some(path) => Delivery::File(path.to_path_buf()),
             None => Delivery::Stdout,
         });
-        // The file override takes the entries too, so the sink is retargeted first.
-        let stream = if output_mode.is_stream() {
-            if let Some(path) = override_path {
+        // The file override takes the events too, so the sink is retargeted
+        // before the handler runs and the summary follows them into it. Line
+        // framing creates the file up front, the way it did before events
+        // existed; the human representation waits for a first byte, so a run
+        // that ends without one — an artifact, a binary payload — leaves the
+        // file uncreated and reports its own failure.
+        if let Some(path) = override_path.filter(|_| writes_through_the_sink(output_mode)) {
+            if output_mode.is_stream() {
                 let file = open_output_file(path).map_err(|e| {
                     RunError::new(
                         format!("Error writing output: {}", e),
@@ -356,12 +368,12 @@ impl App {
                     )
                 })?;
                 sink.redirect(file);
+            } else {
+                let path = path.to_path_buf();
+                sink.redirect_on_first_write(move || open_output_file(&path));
             }
-            EntryStream::writing_to(sink.clone())
-        } else {
-            EntryStream::discarding()
-        };
-        let mut ctx = CommandContext::new(path, self.app_state.clone()).with_stream(stream);
+        }
+        let mut ctx = CommandContext::new(path, self.app_state.clone());
         ctx.extensions.insert(warnings.clone());
         Ok(ctx)
     }
@@ -413,6 +425,13 @@ impl App {
             output
         };
 
+        // A binary payload and an artifact own the file the user named, and a
+        // silent outcome writes nothing, so none of them takes the destination
+        // the run's rendered text was pointed at.
+        if !matches!(final_output, RenderedOutput::Text(_)) {
+            sink.cancel_pending_redirect();
+        }
+
         if let Err(error) = super::super::dispatch::reject_payload_under_stream(
             output_mode,
             final_output.is_binary(),
@@ -439,9 +458,17 @@ impl App {
             let dest = OutputDestination::File(path);
 
             match &final_output {
-                RenderedOutput::Text(t) if output_mode.is_stream() => {
+                // The events are already in the file, so the summary joins them
+                // there: newline-terminated under line framing, and as the
+                // unterminated document a batch run writes otherwise.
+                RenderedOutput::Text(t) if writes_through_the_sink(output_mode) => {
                     let written = sink.with_writer(|file| {
-                        writeln!(file, "{}", t.raw).and_then(|()| file.flush())
+                        if output_mode.is_stream() {
+                            writeln!(file, "{}", t.raw)
+                        } else {
+                            write!(file, "{}", t.raw)
+                        }
+                        .and_then(|()| file.flush())
                     });
                     if let Err(e) = written {
                         return DispatchResult::Error(RunError::new(
@@ -882,8 +909,9 @@ impl App {
         run.with_entries(String::from_utf8_lossy(&capture.take()).into_owned())
     }
 
-    /// `run_with` with the run's color policy and the destination of
-    /// `ctx.stream()` entries; entries are written only under `ndjson`.
+    /// `run_with` with the run's color policy and the destination the whole
+    /// run writes through: a handler's events as it emits them, then whatever
+    /// the caller writes after it.
     #[allow(clippy::too_many_arguments)]
     pub fn run_with_sink<I, T>(
         &self,
@@ -2032,7 +2060,7 @@ mod tests {
         let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| Ok(HandlerOutput::Render(Data { value: 42 })),
+            FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(Data { value: 42 }))),
             crate::TemplateRef::Inline(("{{ value }}").to_string()),
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
@@ -2058,12 +2086,12 @@ mod tests {
         let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
         let sub_matches = matches.subcommand_matches("test").unwrap();
 
-        let result = standout.run_command::<_, ()>(
+        let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| -> HandlerResult<()> {
                 panic!("Handler should not be called");
-            },
+            }),
             crate::TemplateRef::Absent,
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
@@ -2094,11 +2122,11 @@ mod tests {
         let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| {
                 Ok(HandlerOutput::Render(Data {
                     msg: "hello".into(),
                 }))
-            },
+            }),
             crate::TemplateRef::Inline(("{{ msg }}").to_string()),
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
@@ -2119,10 +2147,10 @@ mod tests {
         let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
         let sub_matches = matches.subcommand_matches("test").unwrap();
 
-        let result = standout.run_command::<_, ()>(
+        let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| Ok(HandlerOutput::Silent),
+            FnHandler::new(|_m, _ctx| -> HandlerResult<()> { Ok(HandlerOutput::Silent) }),
             crate::TemplateRef::Absent,
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
@@ -2150,15 +2178,15 @@ mod tests {
         let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
         let sub_matches = matches.subcommand_matches("export").unwrap();
 
-        let result = standout.run_command::<_, ()>(
+        let result = standout.run_command(
             "export",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| -> HandlerResult<()> {
                 Ok(HandlerOutput::Binary {
                     data: vec![0xDE, 0xAD],
                     filename: "data.bin".into(),
                 })
-            },
+            }),
             crate::TemplateRef::Absent,
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
@@ -2188,16 +2216,16 @@ mod tests {
         let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
         let sub_matches = matches.subcommand_matches("export").unwrap();
 
-        let result = standout.run_command::<_, ()>(
+        let result = standout.run_command(
             "export",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| -> HandlerResult<()> {
                 Ok(HandlerOutput::Binary {
                     data: vec![0xDE, 0xAD],
                     filename: "data.bin".into(),
                 }
                 .with_exit_status(ExitStatus::from(2)))
-            },
+            }),
             crate::TemplateRef::Absent,
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
@@ -2221,16 +2249,16 @@ mod tests {
         let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
         let sub_matches = matches.subcommand_matches("export").unwrap();
 
-        let result = standout.run_command::<_, ()>(
+        let result = standout.run_command(
             "export",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| -> HandlerResult<()> {
                 Ok(HandlerOutput::Binary {
                     data: vec![0xDE, 0xAD],
                     filename: "data.bin".into(),
                 }
                 .with_exit_status(ExitStatus::SUCCESS))
-            },
+            }),
             crate::TemplateRef::Absent,
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
@@ -2254,15 +2282,15 @@ mod tests {
         let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
         let sub_matches = matches.subcommand_matches("export").unwrap();
 
-        let result = standout.run_command::<_, ()>(
+        let result = standout.run_command(
             "export",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| -> HandlerResult<()> {
                 Ok(HandlerOutput::Artifact(
                     crate::cli::Artifact::new(vec![1u8]).suggest_destination("out.bin"),
                 )
                 .with_exit_status(ExitStatus::SUCCESS))
-            },
+            }),
             crate::TemplateRef::Absent,
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
@@ -2286,15 +2314,15 @@ mod tests {
         let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
         let sub_matches = matches.subcommand_matches("export").unwrap();
 
-        let result = standout.run_command::<_, ()>(
+        let result = standout.run_command(
             "export",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| -> HandlerResult<()> {
                 Ok(HandlerOutput::Artifact(
                     crate::cli::Artifact::new(vec![1u8]).suggest_destination("out.bin"),
                 )
                 .with_exit_status(ExitStatus::from(2)))
-            },
+            }),
             crate::TemplateRef::Absent,
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
@@ -2331,10 +2359,10 @@ mod tests {
         let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| {
                 Ok(HandlerOutput::Render(serde_json::json!({"value": 1}))
                     .with_exit_status(ExitStatus::from(2)))
-            },
+            }),
             crate::TemplateRef::Inline("{{ value }}".to_string()),
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
@@ -2361,10 +2389,10 @@ mod tests {
         let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| {
                 Ok(HandlerOutput::Render(serde_json::json!({"value": 1}))
                     .with_exit_status(ExitStatus::from(2)))
-            },
+            }),
             crate::TemplateRef::Inline("{{ value }}".to_string()),
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
@@ -2572,7 +2600,7 @@ mod tests {
         let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| Ok(HandlerOutput::Render(Data { value: 42 })),
+            FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(Data { value: 42 }))),
             crate::TemplateRef::Inline(
                 ("value={{ value }}, added={{ added_by_hook }}").to_string(),
             ),
@@ -2616,7 +2644,7 @@ mod tests {
         let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| Ok(HandlerOutput::Render(Data { valid: false })),
+            FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(Data { valid: false }))),
             crate::TemplateRef::Inline(("{{ valid }}").to_string()),
             ColorPolicy::Auto,
             StreamSink::new(Vec::new()),

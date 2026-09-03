@@ -49,7 +49,8 @@ impl CompletedRun {
         &self.inner
     }
 
-    /// The `ctx.stream()` lines `run_with` and `dispatch` capture, newlines included.
+    /// The event lines `run_with` and `dispatch` capture as the handler emits
+    /// them, newlines included.
     pub fn entries(&self) -> &str {
         &self.entries
     }

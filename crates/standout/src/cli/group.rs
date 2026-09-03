@@ -8,8 +8,9 @@ use std::rc::Rc;
 
 use super::builder::{SharedTemplateEngine, TemplateAbsence, TemplateRef};
 use super::dispatch::{render_handler_output, DispatchFn};
+use super::events::{event_template, EventContext, EventDestination};
 use crate::cli::handler::{
-    CommandContext, FnHandler, Handler, HandlerResult, Results, RunRecorder,
+    CommandContext, FnHandler, Handler, HandlerResult, Results, RunRecorder, StreamSink,
 };
 use crate::cli::hooks::{Hooks, RenderedOutput, TextOutput};
 use crate::cli::questionnaire::{
@@ -73,14 +74,39 @@ where
         move |matches: &ArgMatches,
               ctx: &CommandContext,
               recorder: &RunRecorder,
+              sink: &StreamSink,
               hooks: Option<&Hooks>,
               output_mode: crate::Representation,
               color_policy: crate::ColorPolicy,
               theme: &crate::Theme,
               target: crate::TargetProperties| {
-            let mut results = Results::<H::Event>::recording(recorder.clone());
+            let destination = Rc::new(EventDestination::new(
+                sink.clone(),
+                EventContext {
+                    command_path: ctx.command_path.join("."),
+                    template: event_template(&template),
+                    theme: theme.clone(),
+                    context_registry: context_registry.clone(),
+                    template_engine: template_engine.clone(),
+                    template_registry: template_registry.clone(),
+                    representation: output_mode,
+                    color_policy,
+                    target,
+                    warnings: ctx
+                        .extensions
+                        .get::<standout_render::warnings::WarningBuffer>()
+                        .cloned(),
+                },
+            ));
+            let mut results =
+                Results::<H::Event>::for_run(Some(recorder.clone()), destination.clone());
             let result = handler.borrow_mut().handle(matches, ctx, &mut results);
-            render_handler_output(
+            // An event the framework could not carry outranks whatever the
+            // handler went on to return, including a swallowed `emit` error.
+            if let Some(failure) = destination.take_failure() {
+                return Err(failure);
+            }
+            let output = render_handler_output(
                 result,
                 matches,
                 ctx,
@@ -95,7 +121,9 @@ where
                 color_policy,
                 structured_output_projection.as_ref(),
                 target,
-            )
+            )?;
+            super::dispatch::reject_payload_after_events(destination.emitted(), &output)?;
+            Ok(output)
         },
     ))
 }
@@ -108,6 +136,7 @@ where
         move |matches: &ArgMatches,
               ctx: &CommandContext,
               _recorder: &RunRecorder,
+              _sink: &StreamSink,
               _hooks: Option<&Hooks>,
               _output_mode: crate::Representation,
               _color_policy: crate::ColorPolicy,

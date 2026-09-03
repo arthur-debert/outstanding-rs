@@ -558,13 +558,13 @@ fn run_command_hands_back_the_pending_artifact_without_writing() {
         .run_command(
             "export",
             &matches,
-            |_matches, _ctx| {
+            FnHandler::new(|_matches, _ctx| {
                 Ok(Output::Artifact(
                     Artifact::new(BYTES.to_vec())
                         .suggest_destination(&target)
                         .with_report(report()),
                 ))
-            },
+            }),
             standout::TemplateRef::Inline((TEMPLATE).to_string()),
             ColorPolicy::Auto,
             standout::cli::StreamSink::new(Vec::new()),

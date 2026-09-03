@@ -1,32 +1,82 @@
-//! The entry stream a handler writes to under the `ndjson` representation.
+//! The one destination a run's rendered bytes reach.
 //!
-//! [`EntryStream::emit`] serializes one value as compact JSON and writes it
-//! as one line, followed by a flush, so a consumer reading the pipe sees the
-//! entry when the handler produced it. The framework builds the stream at the
-//! dispatch edge: live, over a [`StreamSink`], when the resolved representation is
-//! `ndjson`; discarding otherwise, in which case `emit` neither serializes
-//! nor writes. Nothing more than line-per-value: no buffering, no
-//! backpressure, no async.
+//! Every byte a run produces goes through a [`StreamSink`]: a handler's
+//! incremental events as they are emitted, then the result or the diagnostic,
+//! then the warning entries. The process edge writes through it to stdout; a
+//! capture entry point hands it a [`StreamCapture`] and reads the bytes back;
+//! an output file override retargets it before the handler runs, so the file
+//! receives the whole run and stdout nothing —
+//! [`StreamSink::redirect`] straight away, or
+//! [`StreamSink::redirect_on_first_write`] when the run may end up writing
+//! nothing and the file should then not be created at all.
 //!
-//! The sink is the one destination of everything the stream carries: the
-//! handler's entries, then the result or the diagnostic, then the warning
-//! entries. The process edge writes through it to stdout; a capture entry
-//! point hands it a [`StreamCapture`] and reads the bytes back; an output
-//! file override retargets it with [`StreamSink::redirect`] before the
-//! handler runs, so the file receives the whole stream and stdout nothing.
+//! The sink classifies a `BrokenPipe` from its writer rather than reporting
+//! it: a reader that left closes the sink, every later write is discarded and
+//! reports success, and the handler runs to completion and the run reports the
+//! command's own status.
 
-use serde::Serialize;
 use std::cell::RefCell;
 use std::fmt;
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::rc::Rc;
 
+type OpenWriter = Box<dyn FnOnce() -> std::io::Result<Box<dyn Write>>>;
+
+struct Destination {
+    writer: Box<dyn Write>,
+    pending: Option<OpenWriter>,
+    open: bool,
+}
+
+impl Destination {
+    fn ready(&mut self) -> std::io::Result<()> {
+        let Some(open) = self.pending.take() else {
+            return Ok(());
+        };
+        self.writer = open()?;
+        Ok(())
+    }
+}
+
+impl Write for Destination {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if !self.open {
+            return Ok(buf.len());
+        }
+        self.ready()?;
+        match self.writer.write(buf) {
+            Err(error) if error.kind() == ErrorKind::BrokenPipe => {
+                self.open = false;
+                Ok(buf.len())
+            }
+            other => other,
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        if !self.open || self.pending.is_some() {
+            return Ok(());
+        }
+        match self.writer.flush() {
+            Err(error) if error.kind() == ErrorKind::BrokenPipe => {
+                self.open = false;
+                Ok(())
+            }
+            other => other,
+        }
+    }
+}
+
 #[derive(Clone)]
-pub struct StreamSink(Rc<RefCell<Box<dyn Write>>>);
+pub struct StreamSink(Rc<RefCell<Destination>>);
 
 impl StreamSink {
     pub fn new(writer: impl Write + 'static) -> Self {
-        Self(Rc::new(RefCell::new(Box::new(writer))))
+        Self(Rc::new(RefCell::new(Destination {
+            writer: Box::new(writer),
+            pending: None,
+            open: true,
+        })))
     }
 
     pub fn process_stdout() -> Self {
@@ -35,17 +85,45 @@ impl StreamSink {
 
     /// Replace the destination; every clone of this sink follows.
     pub fn redirect(&self, writer: impl Write + 'static) {
-        *self.0.borrow_mut() = Box::new(writer);
+        let mut destination = self.0.borrow_mut();
+        destination.writer = Box::new(writer);
+        destination.pending = None;
+        destination.open = true;
     }
 
-    /// For the bytes that follow the handler's entries on the same stream.
+    /// Replace the destination when there is a first byte to write, so a run
+    /// that writes none leaves the writer unopened; the failure to open it is
+    /// that write's failure.
+    pub fn redirect_on_first_write<W: Write + 'static>(
+        &self,
+        open: impl FnOnce() -> std::io::Result<W> + 'static,
+    ) {
+        let mut destination = self.0.borrow_mut();
+        destination.pending = Some(Box::new(move || {
+            open().map(|w| Box::new(w) as Box<dyn Write>)
+        }));
+        destination.open = true;
+    }
+
+    /// Drop a destination [`redirect_on_first_write`](Self::redirect_on_first_write)
+    /// armed but never needed, so the run keeps the destination it had.
+    pub fn cancel_pending_redirect(&self) {
+        self.0.borrow_mut().pending = None;
+    }
+
+    /// False once a write met a `BrokenPipe`: what follows is discarded.
+    pub fn is_open(&self) -> bool {
+        self.0.borrow().open
+    }
+
     pub fn with_writer<R>(&self, write: impl FnOnce(&mut dyn Write) -> R) -> R {
-        write(&mut **self.0.borrow_mut())
+        write(&mut *self.0.borrow_mut())
     }
 
-    fn write_line(&self, line: &[u8]) -> std::io::Result<()> {
+    /// One write of `bytes` and the newline that terminates it, then a flush.
+    pub fn write_line(&self, bytes: &[u8]) -> std::io::Result<()> {
         self.with_writer(|writer| {
-            writer.write_all(line)?;
+            writer.write_all(bytes)?;
             writer.write_all(b"\n")?;
             writer.flush()
         })
@@ -78,76 +156,28 @@ impl fmt::Debug for StreamSink {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct EntryStream {
-    sink: Option<StreamSink>,
-}
-
-impl EntryStream {
-    pub fn discarding() -> Self {
-        Self { sink: None }
-    }
-
-    pub fn writing_to(sink: StreamSink) -> Self {
-        Self { sink: Some(sink) }
-    }
-
-    /// True only under `ndjson`.
-    pub fn is_live(&self) -> bool {
-        self.sink.is_some()
-    }
-
-    /// A no-op on a discarding stream; fails when the value does not serialize or the write fails.
-    pub fn emit<T: Serialize + ?Sized>(&self, entry: &T) -> Result<(), StreamError> {
-        let Some(sink) = &self.sink else {
-            return Ok(());
-        };
-        let line = serde_json::to_vec(entry)?;
-        sink.write_line(&line)?;
-        Ok(())
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum StreamError {
-    #[error("stream entry does not serialize: {0}")]
-    Serialize(#[from] serde_json::Error),
-    #[error("stream entry could not be written: {0}")]
-    Write(#[from] std::io::Error),
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[derive(Serialize)]
-    struct Entry<'a> {
-        #[serde(rename = "type")]
-        entry_type: &'a str,
-        resource: &'a str,
+    struct Closed;
+
+    impl Write for Closed {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(ErrorKind::BrokenPipe, "closed"))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 
     #[test]
-    fn a_live_stream_writes_one_compact_line_per_entry() {
+    fn a_sink_writes_one_line_per_call() {
         let captured = StreamCapture::default();
-        let stream = EntryStream::writing_to(StreamSink::new(captured.clone()));
-        assert!(stream.is_live());
-        stream
-            .emit(&Entry {
-                entry_type: "apply_start",
-                resource: "web",
-            })
-            .unwrap();
-        stream
-            .emit(&Entry {
-                entry_type: "note",
-                resource: "line\nbreak",
-            })
-            .unwrap();
-        assert_eq!(
-            String::from_utf8(captured.take()).unwrap(),
-            "{\"type\":\"apply_start\",\"resource\":\"web\"}\n{\"type\":\"note\",\"resource\":\"line\\nbreak\"}\n"
-        );
+        let sink = StreamSink::new(captured.clone());
+        sink.write_line(b"{\"n\":1}").unwrap();
+        sink.write_line(b"{\"n\":2}").unwrap();
+        assert_eq!(captured.take(), b"{\"n\":1}\n{\"n\":2}\n");
     }
 
     #[test]
@@ -155,54 +185,69 @@ mod tests {
         let first = StreamCapture::default();
         let second = StreamCapture::default();
         let sink = StreamSink::new(first.clone());
-        let stream = EntryStream::writing_to(sink.clone());
-        stream.emit(&serde_json::json!({"n": 1})).unwrap();
+        let clone = sink.clone();
+        clone.write_line(b"{\"n\":1}").unwrap();
         sink.redirect(second.clone());
-        stream.emit(&serde_json::json!({"n": 2})).unwrap();
+        clone.write_line(b"{\"n\":2}").unwrap();
         sink.with_writer(|w| w.write_all(b"tail\n")).unwrap();
         assert_eq!(first.take(), b"{\"n\":1}\n");
         assert_eq!(second.take(), b"{\"n\":2}\ntail\n");
     }
 
     #[test]
-    fn a_discarding_stream_neither_serializes_nor_writes() {
-        struct Unserializable;
-        impl Serialize for Unserializable {
-            fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
-                Err(serde::ser::Error::custom("never asked"))
-            }
-        }
-        let stream = EntryStream::discarding();
-        assert!(!stream.is_live());
-        stream.emit(&Unserializable).unwrap();
-        assert!(EntryStream::default().emit(&Unserializable).is_ok());
+    fn a_reader_that_left_closes_the_sink_and_every_later_write_succeeds() {
+        let sink = StreamSink::new(Closed);
+        assert!(sink.is_open());
+        sink.write_line(b"first").unwrap();
+        assert!(!sink.is_open());
+        sink.write_line(b"second").unwrap();
+        sink.with_writer(|w| writeln!(w, "third")).unwrap();
     }
 
     #[test]
-    fn serialization_and_write_failures_are_distinct_errors() {
-        struct Closed;
-        impl Write for Closed {
+    fn a_deferred_destination_opens_on_the_first_write_and_not_before() {
+        let opened = Rc::new(RefCell::new(0));
+        let captured = StreamCapture::default();
+        let sink = StreamSink::new(Vec::new());
+        let count = opened.clone();
+        let target = captured.clone();
+        sink.redirect_on_first_write(move || {
+            *count.borrow_mut() += 1;
+            Ok(target)
+        });
+        assert_eq!(*opened.borrow(), 0);
+        sink.write_line(b"first").unwrap();
+        sink.write_line(b"second").unwrap();
+        assert_eq!(*opened.borrow(), 1);
+        assert_eq!(captured.take(), b"first\nsecond\n");
+    }
+
+    #[test]
+    fn a_deferred_destination_that_cannot_open_fails_the_write_that_needed_it() {
+        let sink = StreamSink::new(Vec::new());
+        sink.redirect_on_first_write(|| -> std::io::Result<Vec<u8>> {
+            Err(std::io::Error::new(
+                ErrorKind::NotFound,
+                "no such directory",
+            ))
+        });
+        let error = sink.write_line(b"first").unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn a_write_failure_that_is_not_a_broken_pipe_is_reported() {
+        struct Full;
+        impl Write for Full {
             fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    "closed",
-                ))
+                Err(std::io::Error::new(ErrorKind::StorageFull, "no room"))
             }
             fn flush(&mut self) -> std::io::Result<()> {
                 Ok(())
             }
         }
-        let stream = EntryStream::writing_to(StreamSink::new(Closed));
-        let write = stream.emit(&serde_json::json!({})).unwrap_err();
-        assert!(matches!(write, StreamError::Write(_)), "{write}");
-
-        let mut map = std::collections::HashMap::new();
-        map.insert((1u8, 2u8), 3u8);
-        let stream = EntryStream::writing_to(StreamSink::new(Vec::new()));
-        let serialize = stream.emit(&map).unwrap_err();
-        assert!(
-            matches!(serialize, StreamError::Serialize(_)),
-            "{serialize}"
-        );
+        let sink = StreamSink::new(Full);
+        assert!(sink.write_line(b"first").is_err());
+        assert!(sink.is_open());
     }
 }

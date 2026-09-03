@@ -19,6 +19,7 @@ mod config;
 mod default_command;
 mod dispatch;
 mod emit;
+pub(crate) mod events;
 mod questionnaire;
 mod result;
 
@@ -53,10 +54,10 @@ pub use help::{
 pub use handler::{
     AppFailure, Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext,
     CommandContextInput, ContractSurface, Delivery, Diagnostic, DiagnosticKind, DiagnosticPosition,
-    DiagnosticRange, DispatchResult, EmitError, EntryStream, Envelope, ExitStatus, ExternalFailure,
-    FnHandler, Handler, HandlerResult, InvalidAppStatus, InvalidExternalStatus, NoEvents, Output,
-    OutputKind, Results, RunError, RunErrorKind, RunOutput, RunRecorder, Severity, StreamCapture,
-    StreamError, StreamSink, SuccessKind,
+    DiagnosticRange, DispatchResult, EmitError, Envelope, EventsFnHandler, ExitStatus,
+    ExternalFailure, FnHandler, Handler, HandlerResult, InvalidAppStatus, InvalidExternalStatus,
+    NoEvents, Output, OutputKind, Results, RunError, RunErrorKind, RunOutput, RunRecorder,
+    Severity, StreamCapture, StreamSink, SuccessKind,
 };
 
 pub use help::{HelpArg, HelpDocument, HelpSubcommand};
