@@ -10,7 +10,7 @@ use std::fs;
 use std::path::Path;
 
 use common::script;
-use corpus_runner::archetype::Archetype;
+use corpus_runner::archetype::{Archetype, CaseSuite};
 use corpus_runner::cases::run_cases;
 use corpus_runner::manifest::{Evidence, GapEntry};
 use corpus_runner::report::{CaseOutcome, CaseResult};
@@ -24,6 +24,11 @@ fn run_suite(toml: &str, binary_body: &str) -> Vec<CaseResult> {
     run_suite_with_evidence(toml, binary_body, &BTreeMap::new(), Ok(""))
 }
 
+// Parses with `CaseSuite::parse` directly, not `Archetype::load`: these are
+// low-level `run_cases` tests of the outcome/evidence contract, driven by
+// whatever `gaps` map the test passes to `run_cases` itself, decoupled from
+// `Archetype::load`'s own manifest-membership check (`archetype.rs`'s
+// full-load tests cover that contract).
 fn run_suite_with_evidence(
     toml: &str,
     binary_body: &str,
@@ -35,12 +40,10 @@ fn run_suite_with_evidence(
     let archetype_dir = dir.path().join("archetypes/fake");
     fs::create_dir_all(&archetype_dir).unwrap();
     fs::write(archetype_dir.join("spec.md"), "spec").unwrap();
-    fs::write(
-        archetype_dir.join("acceptance.toml"),
-        format!("schema = 1\narchetype = \"fake\"\n{toml}"),
-    )
-    .unwrap();
-    let archetype = Archetype::load(&dir.path().join("archetypes"), "fake").unwrap();
+    let acceptance_path = archetype_dir.join("acceptance.toml");
+    let acceptance_text = format!("schema = 1\narchetype = \"fake\"\n{toml}");
+    fs::write(&acceptance_path, &acceptance_text).unwrap();
+    let suite = CaseSuite::parse(&acceptance_text, "fake", &acceptance_path).unwrap();
     let isolation = Isolation::new(
         dir.path(),
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
@@ -48,7 +51,7 @@ fn run_suite_with_evidence(
     .unwrap();
     let report = run_cases(
         &binary,
-        &archetype.suite.cases,
+        &suite.cases,
         &dir.path().join("cases"),
         &isolation,
         gaps,

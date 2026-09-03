@@ -3,7 +3,7 @@
   "run_id": "validity-1788391671",
   "archetype": {
     "name": "validity",
-    "spec_sha256": "4e838738f2a005de718260ac04d03c1d2d4c038ff0804f8344007c24c28e1660"
+    "spec_sha256": "1ac4aea1c5df9e4863488c098cd8fdb1e77afa0937ddfb8d14024514361daf65"
   },
   "pins": {
     "framework_version": "10.0.0",

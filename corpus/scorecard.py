@@ -8,15 +8,19 @@ One row per run, grouped by archetype so a re-run sits beside the run it is
 compared with. The counting rules are the ones the pilot scorecard published,
 so a set of pilot reports reproduces the pilot's figures:
 
-- acceptance: required cases (no `gap`) and gap cases (`gap` names a
-  manifest `[gaps]` entry, whichever `expected` the case carries) are two
-  denominators, never one — a case suite mixes cases the framework must
-  satisfy today with cases specced past it on purpose, and a single ratio
-  of the two reads as a framework score no framework failure produced. The
-  required cell is `passed/total (%)`, `pass` popped from its outcome tally
-  the same way as before; the gap cell, shown only when the suite has gap
-  cases, is `count gap` with its own outcome tally alongside — `hand-rolled`
-  in place of `hand-rolled-pass`, everything else (`pass`, `expected-fail`,
+- acceptance: required cases (`expected = "pass"`) and gap cases (`expected
+  = "fail"`, always naming a manifest `[gaps]` entry) are two denominators,
+  never one — a case suite mixes cases the framework must satisfy today with
+  cases specced past it on purpose, and a single ratio of the two reads as a
+  framework score no framework failure produced. A case that names a `gap`
+  but has flipped to `expected = "pass"` counts as required — the gap marker
+  only keeps its evidence check running, it no longer excuses the case from
+  the framework's score — so a `hand-rolled-pass` outcome can land in either
+  bucket. The required cell is `passed/total (%)`, `pass` popped from its
+  outcome tally, with `hand-rolled-pass` broken out as `(N hand-rolled)`
+  when nonzero; the gap cell, shown only when the suite has gap cases, is
+  `count gap` with its own outcome tally alongside — `hand-rolled` in place
+  of `hand-rolled-pass`, everything else (`pass`, `expected-fail`,
   `unexpected-pass`, `fail`) spelled out, because `unexpected-pass` is news
   about a gap closing and not an ordinary pass.
 - hand_rolled_passes: gap cases whose outcome is `hand-rolled-pass` — a
@@ -120,12 +124,15 @@ def acceptance(report):
     # A report omits `cases` when the suite produced none rather than writing
     # an empty list, so a run that built and ran nothing still reads.
     cases = report["acceptance"].get("cases", [])
-    required = [case for case in cases if not case.get("gap")]
-    gap = [case for case in cases if case.get("gap")]
+    required = [case for case in cases if case["expected"] == "pass"]
+    gap = [case for case in cases if case["expected"] == "fail"]
 
     tally = counts(case["outcome"] for case in required)
     passed = tally.pop("pass", 0)
+    required_hand_rolled = tally.pop("hand-rolled-pass", 0)
     required_cell = ratio(passed, len(required))
+    if required_hand_rolled:
+        required_cell = f"{required_cell} ({required_hand_rolled} hand-rolled)"
     rest = ", ".join(f"{count} {outcome}" for outcome, count in sorted(tally.items()))
     if rest:
         required_cell = f"{required_cell}; {rest}"

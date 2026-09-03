@@ -293,11 +293,6 @@ pub fn reevaluate(config: &ReevaluationConfig) -> anyhow::Result<RunReport> {
         None => provenance::recorded(&source.session.agent_cmd),
     };
 
-    // Re-evaluation reruns only the check phase; the agent phase already happened
-    // and is not re-verified. A schema-4-or-later source recorded that phase's own
-    // isolation as a fact, still true after re-evaluation, so it is kept. A source
-    // that predates that instrumentation carries none of these fields, and the
-    // historical narrative is what can honestly be said instead.
     let blindness = match (
         source.blindness.policy,
         source.blindness.framework_source_excluded,

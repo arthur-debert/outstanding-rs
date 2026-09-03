@@ -240,6 +240,17 @@ impl Archetype {
         let gaps = Manifest::load_optional(archetypes_dir, name)?
             .map(|manifest| manifest.gaps)
             .unwrap_or_default();
+        for case in &suite.cases {
+            if let Some(gap) = case.gap.as_deref() {
+                if !gaps.contains_key(gap) {
+                    bail!(
+                        "{}: case {:?} names gap {gap:?}, which is not a manifest [gaps] entry",
+                        acceptance_path.display(),
+                        case.name
+                    );
+                }
+            }
+        }
         Ok(Self {
             name: name.to_string(),
             spec,
@@ -736,5 +747,65 @@ exit_code = 0
         )))
         .unwrap();
         assert!(!suite.invariants.commands[0].equal_across_modes);
+    }
+
+    // Full-load tests (`Archetype::load`, not the low-level `CaseSuite::parse`
+    // above): a case's `gap` has to be a real manifest `[gaps]` key, or the
+    // evidence check `evidence_override` performs silently declines to run.
+    fn load_with_manifest_gap(case_gap: &str, manifest_gaps: &str) -> anyhow::Result<Archetype> {
+        let dir = tempfile::tempdir().unwrap();
+        let archetype_dir = dir.path().join("fake");
+        std::fs::create_dir_all(&archetype_dir).unwrap();
+        std::fs::write(archetype_dir.join("spec.md"), "# fake\n").unwrap();
+        std::fs::write(
+            archetype_dir.join("acceptance.toml"),
+            suite(&VALID_CASE.replace(
+                "expected = \"pass\"",
+                &format!("expected = \"pass\"\ngap = \"{case_gap}\""),
+            )),
+        )
+        .unwrap();
+        std::fs::write(
+            archetype_dir.join("manifest.toml"),
+            format!(
+                "interactions = []\n\n\
+                 [archetype]\n\
+                 name = \"fake\"\n\
+                 survey = \"C1\"\n\
+                 summary = \"one line\"\n\
+                 status = \"partially-past-capability\"\n\n\
+                 [features]\n\
+                 used = []\n\n\
+                 {manifest_gaps}"
+            ),
+        )
+        .unwrap();
+        Archetype::load(dir.path(), "fake")
+    }
+
+    #[test]
+    fn a_case_naming_a_known_manifest_gap_loads() {
+        let archetype =
+            load_with_manifest_gap("PAR01", "[gaps]\nPAR01 = \"still tracked\"\n").unwrap();
+        assert_eq!(archetype.suite.cases[0].gap.as_deref(), Some("PAR01"));
+    }
+
+    #[test]
+    fn a_case_naming_a_gap_missing_from_the_manifest_is_rejected() {
+        let err =
+            load_with_manifest_gap("PAR99", "[gaps]\nPAR01 = \"still tracked\"\n").unwrap_err();
+        assert!(
+            err.to_string().contains("not a manifest [gaps] entry"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn a_case_naming_a_gap_with_no_manifest_gaps_table_is_rejected() {
+        let err = load_with_manifest_gap("PAR01", "").unwrap_err();
+        assert!(
+            err.to_string().contains("not a manifest [gaps] entry"),
+            "{err:#}"
+        );
     }
 }

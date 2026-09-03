@@ -228,12 +228,6 @@ pub struct HistoricalBlindness {
     pub agent_reported_docs: Option<String>,
     #[serde(default)]
     pub agent_reported_external_sources: Option<String>,
-    // A pre-schema-4 source never carries these — the runner's isolation
-    // instrumentation postdates it, so re-evaluation falls back to a
-    // historical narrative. A schema-4-or-later source carries a real,
-    // machine-verified record of its own agent-phase isolation, still true
-    // after re-evaluation (only the check phase reruns), so it is kept
-    // rather than replaced with that narrative.
     #[serde(default)]
     pub policy: Option<String>,
     #[serde(default)]
