@@ -85,9 +85,10 @@ stdout, in a file the user names, or, for complete human output on a terminal, i
 external pager. The application author declares which commands may page; the CLI user
 declines paging per run with `--no-pager`, which disables paging outright. That
 declaration only makes a command eligible; which command runs is a terminal setting
-resolved in the same order: `PAGER`, then the `[term] pager` key, a command string from a
-file or `MYAPP__TERM__PAGER`, unset by default. With neither set, or the winning value
-empty, nothing pages. A named output file wins over paging. A pager that cannot start
+resolved in the same order: the `[term] pager` key, a command string from
+`MYAPP__TERM__PAGER` or a file, unset by default; then `PAGER`, which is not an override
+convention like `NO_COLOR` but the platform's pager, read at the detection rung the way
+`COLUMNS` supplies width. With neither set, or the winning value empty, nothing pages. A named output file wins over paging. A pager that cannot start
 delivers to stdout unpaged without changing the run's status; a pager that stops reading
 ends delivery without failing the run.
 Structured encodings, incremental human output and a stdout that is not a terminal never
