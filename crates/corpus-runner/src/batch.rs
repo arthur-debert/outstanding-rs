@@ -26,24 +26,10 @@ pub struct BatchConfig {
     pub account: Option<String>,
 }
 
-/// Where each archetype's untrusted run workspace lives until sanitizing
-/// removes it. `--out` is the batch's one user-facing directory, already
-/// verified outside the checkout, so nesting the scratch space under it
-/// needs no separate boundary check or CLI option; a hidden name keeps it
-/// out of the scorecards' directory listing and off by default in `ls`.
 const SCRATCH_DIRNAME: &str = ".scratch";
 
-/// One archetype's result within the batch: the run id it was sanitized
-/// under, or a detail naming what could not complete — provisioning,
-/// the agent session, the build/check loop, or sanitizing the evidence.
-/// The batch records this and moves on to the next archetype rather than
-/// stopping the set.
 pub type ArchetypeOutcome = Result<String, String>;
 
-/// Runs every archetype in order, then always writes both scorecards from
-/// whatever evidence `--out` holds — including a partial set, when an
-/// earlier archetype failed. The caller decides the process exit status
-/// from the returned outcomes: non-zero when any is `Err`.
 pub fn batch(config: &BatchConfig) -> anyhow::Result<Vec<(String, ArchetypeOutcome)>> {
     std::fs::create_dir_all(&config.out_dir).with_context(|| {
         format!(
@@ -101,10 +87,6 @@ fn run_one(config: &BatchConfig, scratch_root: &Path, archetype: &str) -> Archet
     Ok(report.run_id)
 }
 
-/// Sanitizes `run_dir`'s evidence into `dest`, then removes `run_dir` — the
-/// scratch copy under `<out>/.scratch/` — since it now only duplicates what
-/// sanitizing wrote. A sanitize failure returns before the removal and
-/// leaves `run_dir` in place for inspection.
 fn sanitize_and_cleanup(
     script: &Path,
     run_dir: &Path,
@@ -135,9 +117,6 @@ fn sanitize(
     python3(script, &args).map(drop)
 }
 
-// The objective table (`scorecard.py`'s default markdown output) and the
-// comparability/fingerprint form (`--json`, what a later re-run compares
-// against) are both written under `--out`, from the same sanitized runs.
 fn write_scorecards(script: &Path, out_dir: &Path) -> anyhow::Result<()> {
     let label = format!("batch={}", out_dir.display());
     let markdown = python3(script, &[label.clone().into()])?;
@@ -149,8 +128,6 @@ fn write_scorecards(script: &Path, out_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Runs `python3 <script> <args>...` to completion and returns its stdout as
-/// text; a non-zero exit carries stderr in the error.
 fn python3(script: &Path, args: &[std::ffi::OsString]) -> anyhow::Result<String> {
     let output = Command::new("python3")
         .arg(script)

@@ -1,5 +1,5 @@
-// The exit questionnaire: rendered into the blind workspace at provision
-// time, answered by the agent in place, decoded via `standout-input`.
+//! The exit questionnaire: rendered into the blind workspace at provision
+//! time, answered by the agent in place, decoded via `standout-input`.
 
 use std::path::Path;
 
@@ -118,10 +118,6 @@ pub fn collect(workspace: &Path) -> QuestionnaireReport {
                 })
                 .collect(),
         },
-        // A rejected field is dropped, the rest kept: a run whose self-report is
-        // discarded cannot say how blind it was. The sheet was found and read, so
-        // this is not the same fact as no sheet existing — `collected` says only
-        // that.
         Err(diagnostics) => {
             let rejected: Vec<&str> = diagnostics
                 .iter()
@@ -182,11 +178,6 @@ mod tests {
         );
     }
 
-    // A rejected field (confidence answered as more than one line, which
-    // ADR-0016 forbids for a scalar) is a diagnostic on a sheet that was
-    // found, not the absence of one: `collected` stays true, and every
-    // other answer — including the field's own free-text sibling — is
-    // kept.
     #[test]
     fn a_field_that_does_not_decode_keeps_the_answers_that_did() {
         let dir = tempfile::tempdir().unwrap();
@@ -214,7 +205,6 @@ mod tests {
             collected.answers.get("confidence_reason").unwrap(),
             "Every assertion passes."
         );
-        // The value the questionnaire rejected is a diagnostic, not an answer.
         assert_eq!(collected.answers.get("confidence"), None, "{collected:?}");
     }
 }

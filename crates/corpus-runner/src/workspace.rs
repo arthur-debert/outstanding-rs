@@ -1,6 +1,6 @@
-// Blind-workspace provisioning: everything the agent sees, and nothing
-// more — spec, instructions, questionnaire, a published-docs snapshot, and
-// a cargo scaffold pinned to exact-version crates.io dependencies.
+//! Blind-workspace provisioning: everything the agent sees, and nothing
+//! more — spec, instructions, questionnaire, a published-docs snapshot, and
+//! a cargo scaffold pinned to exact-version crates.io dependencies.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -114,8 +114,6 @@ impl Isolation {
 
     pub fn apply_agent(&self, command: &mut Command) -> Result<(), String> {
         apply_phase_env(command, &self.agent_home);
-        // Claude Code keeps its shell scratch under /tmp, not TMPDIR; denied it, the
-        // session loses its shell. Redirected into the disposable home, not admitted.
         command.env("CLAUDE_CODE_TMPDIR", self.agent_home.join("tmp"));
         sandbox::apply(
             command,
@@ -154,8 +152,6 @@ impl Isolation {
         let probe_log = self.workspace_root.join(".boundary-probe.log");
         let _ = std::fs::remove_file(&probe_log);
         let mut command = Command::new("sh");
-        // Real opens, not `test -r`: Landlock leaves access(2) unrestricted. `true`,
-        // not `:`, so dash does not abort the script on the redirection error.
         command
             .args([
                 "-c",
@@ -246,9 +242,6 @@ pub fn provision(
             let commit = resolve_tag_commit(&repo_root, &tag)?;
             let archive_dir = create_docs_archive_scratch_dir(&tag)?;
             extract_tag_docs(&repo_root, &tag, archive_dir.path())?;
-            // Canonicalized so `is_published_docs_target`'s `strip_prefix`
-            // agrees with the canonicalized symlink targets `copy_recursive`
-            // resolves below (macOS's `/var` -> `/private/var`, otherwise).
             let archive_root = archive_dir.path().canonicalize().with_context(|| {
                 format!(
                     "resolving docs archive scratch directory {}",
@@ -312,13 +305,6 @@ fn resolve_tag_commit(repo_root: &Path, tag: &str) -> anyhow::Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-/// A scratch directory for the tag's docs archive, in the system temp
-/// directory. There is no isolation concern with that placement here:
-/// `extract_tag_docs` archives only `docs/` and the specific
-/// `crates/<name>/docs` directories its symlinks point to, never the tag's
-/// whole tree, so nothing sensitive ever lands in it; the directory is
-/// created, extracted into, read from, and dropped by the RAII guard,
-/// entirely before the agent process starts.
 fn create_docs_archive_scratch_dir(tag: &str) -> anyhow::Result<tempfile::TempDir> {
     tempfile::Builder::new()
         .prefix(".corpus-docs-tag-archive-")
@@ -326,10 +312,6 @@ fn create_docs_archive_scratch_dir(tag: &str) -> anyhow::Result<tempfile::TempDi
         .with_context(|| format!("creating docs archive scratch directory for tag {tag}"))
 }
 
-/// Extracts `docs/` and the specific `crates/<name>/docs` directories its
-/// `docs/crates/*` symlinks point to at this tag — nothing else — into
-/// `extract_root`, so those symlinks resolve exactly as they do in the live
-/// checkout without archiving the tag's whole tree.
 fn extract_tag_docs(repo_root: &Path, tag: &str, extract_root: &Path) -> anyhow::Result<()> {
     std::fs::create_dir_all(extract_root).with_context(|| {
         format!(
@@ -353,8 +335,6 @@ fn extract_tag_docs(repo_root: &Path, tag: &str, extract_root: &Path) -> anyhow:
         .arg(extract_root)
         .stdin(stdout)
         .status();
-    // Wait on the archive child before returning on any path, tar's included:
-    // an early `?` on tar_result would otherwise leave it unwaited.
     let archive_status = archive
         .wait()
         .with_context(|| format!("waiting for git archive of tag {tag}"))?;
@@ -368,14 +348,6 @@ fn extract_tag_docs(repo_root: &Path, tag: &str, extract_root: &Path) -> anyhow:
     Ok(())
 }
 
-/// Reads `docs/crates/*`'s symlink entries at `tag` (without extracting
-/// anything — a `git ls-tree`/`git cat-file` listing) and resolves each
-/// target to the `crates/<name>/docs` path it points at, so
-/// `extract_tag_docs` can archive exactly those directories alongside
-/// `docs/` instead of the tag's whole tree. `git archive`'s own pathspec
-/// matching does not glob (`crates/*/docs` matches nothing), so each path
-/// is resolved and passed explicitly. Empty if `docs/crates/` does not
-/// exist at this tag.
 fn resolve_crate_doc_symlink_targets(repo_root: &Path, tag: &str) -> anyhow::Result<Vec<String>> {
     let listing = Command::new("git")
         .arg("-C")
@@ -415,9 +387,6 @@ fn resolve_crate_doc_symlink_targets(repo_root: &Path, tag: &str) -> anyhow::Res
     Ok(targets)
 }
 
-/// Resolves `..`/`.` components lexically (no filesystem access), so a
-/// relative symlink target like `../../crates/widget/docs` resolved
-/// against its own directory yields a clean `crates/widget/docs`.
 fn normalize_relative_path(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for component in path.components() {

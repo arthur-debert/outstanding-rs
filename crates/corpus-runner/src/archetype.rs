@@ -1,6 +1,6 @@
-// Archetype loading: a directory under `corpus/archetypes/<name>/` holding
-// `spec.md` and `acceptance.toml`. See `corpus/README.md` for the roster
-// case schema (`schema = 1`, `[[case]]` tables).
+//! Archetype loading: a directory under `corpus/archetypes/<name>/` holding
+//! `spec.md` and `acceptance.toml`. See `corpus/README.md` for the roster
+//! case schema (`schema = 1`, `[[case]]` tables).
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
@@ -749,9 +749,6 @@ exit_code = 0
         assert!(!suite.invariants.commands[0].equal_across_modes);
     }
 
-    // Full-load tests (`Archetype::load`, not the low-level `CaseSuite::parse`
-    // above): a case's `gap` has to be a real manifest `[gaps]` key, or the
-    // evidence check `evidence_override` performs silently declines to run.
     fn load_with_manifest_gap(case_gap: &str, manifest_gaps: &str) -> anyhow::Result<Archetype> {
         let dir = tempfile::tempdir().unwrap();
         let archetype_dir = dir.path().join("fake");
