@@ -162,14 +162,40 @@ fn signal_process_group(pid: u32) {
     let _ = pid;
 }
 
+#[cfg(unix)]
+#[derive(Debug, PartialEq, Eq)]
+enum GroupProbe {
+    Gone,
+    Present,
+    Error(i32),
+}
+
+#[cfg(unix)]
+fn classify_killpg_result(ret: i32, errno: i32) -> GroupProbe {
+    if ret == 0 {
+        GroupProbe::Present
+    } else if errno == libc::ESRCH {
+        GroupProbe::Gone
+    } else if errno == libc::EPERM {
+        GroupProbe::Present
+    } else {
+        GroupProbe::Error(errno)
+    }
+}
+
 fn wait_for_process_group_to_die(pid: u32) -> Result<(), String> {
     #[cfg(unix)]
     {
         let deadline = Instant::now() + GROUP_KILL_GRACE;
         loop {
-            let anything_left = unsafe { libc::killpg(pid as libc::pid_t, 0) } == 0;
-            if !anything_left {
-                return Ok(());
+            let ret = unsafe { libc::killpg(pid as libc::pid_t, 0) };
+            let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            match classify_killpg_result(ret, errno) {
+                GroupProbe::Gone => return Ok(()),
+                GroupProbe::Present => {}
+                GroupProbe::Error(errno) => {
+                    return Err(format!("checking process group {pid}: errno {errno}"))
+                }
             }
             if Instant::now() >= deadline {
                 return Err(format!(
@@ -365,5 +391,17 @@ mod tests {
         // SAFETY: pid is its own process-group leader (set before spawn); reaches only its descendants.
         unsafe { libc::killpg(pid as libc::pid_t, libc::SIGKILL) };
         let _ = child.wait();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn classify_killpg_result_maps_errno_to_group_status() {
+        assert_eq!(classify_killpg_result(0, 0), GroupProbe::Present);
+        assert_eq!(classify_killpg_result(-1, libc::ESRCH), GroupProbe::Gone);
+        assert_eq!(classify_killpg_result(-1, libc::EPERM), GroupProbe::Present);
+        assert_eq!(
+            classify_killpg_result(-1, libc::EINVAL),
+            GroupProbe::Error(libc::EINVAL)
+        );
     }
 }

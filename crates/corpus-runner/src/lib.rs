@@ -89,19 +89,16 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
         "--runs-dir",
     )?;
     let source_root = checkout_root(&config.docs_dir)?;
-    let base = config
-        .run_id
-        .clone()
-        .unwrap_or_else(|| format!("{}-{}", archetype.name, unix_timestamp()));
-    let (run_id, run_dir) = claim_run_dir(&config.runs_dir, &base)?;
-    if let Some(wanted) = &config.run_id {
-        anyhow::ensure!(
-            &run_id == wanted,
-            "run id {wanted:?} was already claimed in {}; a stale scratch directory needs \
-             cleanup before this run can start",
-            config.runs_dir.display()
-        );
-    }
+    let (run_id, run_dir) = match &config.run_id {
+        Some(wanted) => (
+            wanted.clone(),
+            claim_exact_run_dir(&config.runs_dir, wanted)?,
+        ),
+        None => {
+            let base = format!("{}-{}", archetype.name, unix_timestamp());
+            claim_run_dir(&config.runs_dir, &base)?
+        }
+    };
 
     eprintln!(
         "[corpus] provisioning blind workspace in {}",
@@ -585,6 +582,25 @@ pub(crate) fn claim_run_dir(runs_dir: &Path, base: &str) -> anyhow::Result<(Stri
     anyhow::bail!("could not claim a run directory for {base} after 1000 attempts");
 }
 
+pub(crate) fn claim_exact_run_dir(runs_dir: &Path, run_id: &str) -> anyhow::Result<PathBuf> {
+    let run_dir = runs_dir.join(run_id);
+    match std::fs::create_dir(&run_dir) {
+        Ok(()) => Ok(run_dir),
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(err).with_context(|| {
+                format!(
+                    "run id {run_id:?} was already claimed in {}; a stale scratch directory \
+                     needs cleanup before this run can start",
+                    runs_dir.display()
+                )
+            })
+        }
+        Err(err) => {
+            Err(err).with_context(|| format!("creating run directory {}", run_dir.display()))
+        }
+    }
+}
+
 pub fn absolute(path: &Path) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
@@ -608,5 +624,20 @@ mod tests {
         assert_eq!(second, "smoke-42-1");
         assert_ne!(first_dir, second_dir);
         assert!(first_dir.is_dir() && second_dir.is_dir());
+    }
+
+    #[test]
+    fn exact_claim_on_collision_errors_and_creates_nothing() {
+        let runs = tempfile::tempdir().unwrap();
+        std::fs::create_dir(runs.path().join("smoke-42")).unwrap();
+
+        let err = claim_exact_run_dir(runs.path(), "smoke-42").unwrap_err();
+        assert!(err.to_string().contains("already claimed"));
+
+        let entries: Vec<_> = std::fs::read_dir(runs.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(entries, vec![std::ffi::OsString::from("smoke-42")]);
     }
 }
