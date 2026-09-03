@@ -154,17 +154,21 @@ impl TestHarness {
         self
     }
     pub fn cwd(mut self, path: impl Into<PathBuf>) -> Self {
-        self.cwd = Some(path.into());
+        let path = path.into();
+        if !path.is_absolute() {
+            validate_relative_path("cwd", &path);
+        }
+        self.cwd = Some(path);
         self
     }
     pub fn fixture(mut self, path: impl AsRef<Path>, content: impl Into<String>) -> Self {
-        let path = validate_fixture_path(path.as_ref());
+        let path = validate_relative_path("fixture", path.as_ref());
         self.fixtures.push((path, content.into().into_bytes()));
         self.ensure_tempdir();
         self
     }
     pub fn fixture_bytes(mut self, path: impl AsRef<Path>, content: impl Into<Vec<u8>>) -> Self {
-        let path = validate_fixture_path(path.as_ref());
+        let path = validate_relative_path("fixture", path.as_ref());
         self.fixtures.push((path, content.into()));
         self.ensure_tempdir();
         self
@@ -346,26 +350,23 @@ mod target_properties_defaults {
         assert_eq!(target.ambiguous_width, AmbiguousWidth::Wide);
     }
 }
-fn validate_fixture_path(path: &Path) -> PathBuf {
+fn validate_relative_path(method: &str, path: &Path) -> PathBuf {
     use std::path::Component;
     if path.is_absolute() {
         panic!(
-            "TestHarness::fixture: path {:?} is absolute; only relative paths are allowed so \
-             the fixture is confined to the harness tempdir",
-            path
+            "TestHarness::{method}: path {path:?} is absolute; only relative paths are allowed so \
+             the {method} is confined to the harness tempdir"
         );
     }
     for component in path.components() {
         match component {
             Component::ParentDir => panic!(
-                "TestHarness::fixture: path {:?} contains a `..` component; only relative \
-                 paths that stay inside the tempdir are allowed",
-                path
+                "TestHarness::{method}: path {path:?} contains a `..` component; only relative \
+                 paths that stay inside the tempdir are allowed"
             ),
             Component::Prefix(_) | Component::RootDir => panic!(
-                "TestHarness::fixture: path {:?} has a root or prefix component; only \
-                 relative paths inside the tempdir are allowed",
-                path
+                "TestHarness::{method}: path {path:?} has a root or prefix component; only \
+                 relative paths inside the tempdir are allowed"
             ),
             _ => {}
         }

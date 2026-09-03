@@ -769,6 +769,18 @@ fn fixture_rejects_parent_dir_escape() {
 }
 #[test]
 #[serial]
+#[should_panic(expected = "..")]
+fn relative_cwd_rejects_parent_dir_escape() {
+    let _ = TestHarness::new().cwd("../outside");
+}
+#[test]
+#[serial]
+#[should_panic(expected = "..")]
+fn relative_cwd_rejects_nested_parent_dir_escape() {
+    let _ = TestHarness::new().cwd("proj/../../outside");
+}
+#[test]
+#[serial]
 fn env_set_then_remove_restores_true_original() {
     std::env::set_var("STANDOUT_DOUBLE_PROBE", "original");
     let app = build_echo_app("echo");
