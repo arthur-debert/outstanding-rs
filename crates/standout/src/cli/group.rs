@@ -10,7 +10,8 @@ use super::builder::{SharedTemplateEngine, TemplateAbsence, TemplateRef};
 use super::dispatch::{render_handler_output, DispatchFn, DispatchOutput};
 use super::events::{event_template, EventContext, EventDestination};
 use crate::cli::handler::{
-    CommandContext, FnHandler, Handler, HandlerResult, Results, RunRecorder, StreamSink,
+    emits_events, CommandContext, FnHandler, Handler, HandlerResult, Results, RunRecorder,
+    StreamSink,
 };
 use crate::cli::hooks::{Hooks, RenderedOutput, TextOutput};
 use crate::cli::questionnaire::{
@@ -93,7 +94,7 @@ where
               target: crate::TargetProperties| {
             let command_path = ctx.command_path.join(".");
             super::dispatch::reject_events_under_a_document_encoding(
-                H::EMITS_EVENTS,
+                emits_events::<H::Event>(),
                 &command_path,
                 output_mode,
             )?;
@@ -141,7 +142,7 @@ where
                 target,
             )?;
             super::dispatch::reject_payload_from_an_emitting_command(
-                H::EMITS_EVENTS || destination.emitted(),
+                emits_events::<H::Event>(),
                 matches!(output, DispatchOutput::Binary(_, _)),
                 matches!(output, DispatchOutput::Artifact { .. }),
             )?;
@@ -235,7 +236,7 @@ where
     }
 
     fn emits_events(&self) -> bool {
-        H::EMITS_EVENTS
+        emits_events::<H::Event>()
     }
 
     fn create_dispatch(

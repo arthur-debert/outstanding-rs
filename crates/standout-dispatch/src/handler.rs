@@ -638,19 +638,13 @@ impl DispatchResult {
     }
 }
 pub trait Handler {
-    type Event: Serialize;
+    /// The type of the values the command produces while it runs.
+    /// [`NoEvents`] for a command that produces none, which is what
+    /// [`emits_events`](crate::emits_events) reads to decide whether this is
+    /// an incremental command. `'static` because an associated type carries no
+    /// lifetime from `handle`'s parameters.
+    type Event: Serialize + 'static;
     type Output: Serialize;
-    /// True for a command that produces its result while it runs. It is the
-    /// command's own declaration rather than a count of what one invocation
-    /// emitted, so the framework refuses an output kind that cannot follow
-    /// events on the run that emits none too. The adapters set it. A
-    /// hand-written `Handler` with an inhabited `Event` that leaves it `false`
-    /// loses only that refusal-before-the-fact: the destination remembers the
-    /// events it carried, so a payload after one is still refused, and an
-    /// event under an encoding that carries a command's results as one
-    /// document is refused on the emit itself rather than before the handler
-    /// ran.
-    const EMITS_EVENTS: bool = false;
     fn handle(
         &mut self,
         matches: &ArgMatches,
@@ -729,12 +723,11 @@ impl<F, E, T, R> Handler for EventsFnHandler<F, E, T, R>
 where
     F: FnMut(&ArgMatches, &CommandContext, &mut Results<E>) -> R,
     R: IntoHandlerResult<T>,
-    E: Serialize,
+    E: Serialize + 'static,
     T: Serialize,
 {
     type Event = E;
     type Output = T;
-    const EMITS_EVENTS: bool = true;
     fn handle(
         &mut self,
         matches: &ArgMatches,

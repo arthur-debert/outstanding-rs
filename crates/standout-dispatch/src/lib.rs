@@ -41,5 +41,5 @@ pub use hooks::{
     ArtifactOutput, HookError, HookPhase, Hooks, PostDispatchFn, PostOutputFn, PreDispatchFn,
     RenderedOutput, TextOutput,
 };
-pub use results::{Delivery, EmitError, EventSink, NoEvents, Results, RunRecorder};
+pub use results::{emits_events, Delivery, EmitError, EventSink, NoEvents, Results, RunRecorder};
 pub use stream::{StreamCapture, StreamSink};

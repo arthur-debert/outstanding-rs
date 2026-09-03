@@ -510,9 +510,8 @@ with no argument that can be constructed, and ignores the third parameter.
 
 ```rust,ignore
 pub trait Handler {
-    type Event: Serialize;
+    type Event: Serialize + 'static;
     type Output: Serialize;
-    const EMITS_EVENTS: bool = false;
 
     fn handle(
         &mut self,
@@ -523,24 +522,27 @@ pub trait Handler {
 }
 ```
 
-`EMITS_EVENTS` is the declaration the consuming framework reads rather than
-counting what one invocation emitted: it decides at build time that the command
-needs its `<name>.event` template, and it refuses `Output::Binary` and
-`Output::Artifact` from an incremental command on the run that emits nothing
-too, and it refuses an incremental command under an encoding that carries a
-command's results as one document before the handler runs. `EventsFnHandler`
-and `#[handler]` set it; a hand-written `Handler` with an inhabited `Event` sets
-it alongside the associated type. Leaving it `false` on a handler that emits
-loses only the refusals before the fact: the destination remembers the events it
-carried, so a payload after one is still refused, and an event under a document
-encoding is refused on the emit rather than before the handler ran.
+`emits_events::<H::Event>()` is how the consuming framework asks whether a
+command is incremental: every event type but `NoEvents` says it is. The fact
+comes from the handler's own signature rather than a declaration beside it, so
+no handler can say one thing and do another, and the framework can decide
+before the handler runs what counting one invocation's events could only tell
+it afterwards. It decides at build time that the command needs its
+`<name>.event` template; it refuses `Output::Binary` and `Output::Artifact`
+from an incremental command on the run that emits nothing too; and it refuses
+an incremental command under an encoding that carries a command's results as
+one document before the handler runs.
+
+`Event` is `'static` because an associated type carries no lifetime from
+`handle`'s parameters: an event holding a borrow of something the handler was
+passed has no way to name it here.
 
 `Results::emit` takes the event by value, returns once the framework has
 retained it and written it, and fails when the value does not serialize
 (`EmitError::Serialize`), the destination cannot turn it into bytes
-(`EmitError::Render`) or cannot write them (`EmitError::Write`). `E: Serialize`
-is the whole bound: an event may hold an `Rc` or anything else that does not
-cross threads.
+(`EmitError::Render`) or cannot write them (`EmitError::Write`). `Serialize` is
+the whole bound `Results` adds: an event may hold an `Rc` or anything else that
+does not cross threads.
 
 `Results` is `&mut` and not `Clone`, so a handler cannot store it or keep
 emitting past its own run, and it exposes `emit` and nothing else: a handler

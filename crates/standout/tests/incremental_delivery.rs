@@ -447,12 +447,16 @@ fn an_emit_failure_the_handler_swallows_still_fails_the_run() {
     assert!(destination.0.borrow().is_empty());
 }
 
-/// A hand-written `Handler` that emits, with `EMITS_EVENTS` left at the
-/// default the adapters would have set: the framework knows it is an emitting
-/// command only from the event it carries.
-struct Misdeclared(fn() -> Output<serde_json::Value>);
+/// A hand-written `Handler`, which sets its `Event` type and nothing else:
+/// what makes the command an incremental one is that type, so there is no
+/// second declaration for this handler to leave at a default.
+struct HandWritten {
+    ran: Rc<RefCell<bool>>,
+    emit: bool,
+    output: fn() -> Output<serde_json::Value>,
+}
 
-impl Handler for Misdeclared {
+impl Handler for HandWritten {
     type Event = Event<'static>;
     type Output = serde_json::Value;
 
@@ -462,19 +466,18 @@ impl Handler for Misdeclared {
         _: &CommandContext,
         results: &mut Results<Self::Event>,
     ) -> HandlerResult<serde_json::Value> {
-        let _ = results.emit(Event::ApplyStart { resource: "web" });
-        Ok((self.0)())
+        *self.ran.borrow_mut() = true;
+        if self.emit {
+            results.emit(Event::ApplyStart { resource: "web" })?;
+        }
+        Ok((self.output)())
     }
 }
 
-fn misdeclared_run(
-    args: &[&str],
-    payload: fn() -> Output<serde_json::Value>,
-    destination: Shared,
-) -> DispatchResult {
+fn hand_written_run(args: &[&str], handler: HandWritten, destination: Shared) -> DispatchResult {
     let app = App::builder()
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
-        .command_with("apply", Misdeclared(payload), |cfg| cfg)
+        .command_with("apply", handler, |cfg| cfg)
         .unwrap()
         .build()
         .unwrap();
@@ -491,12 +494,17 @@ fn misdeclared_run(
 }
 
 #[test]
-fn an_undeclared_emitter_is_refused_by_an_encoding_that_cannot_carry_events() {
+fn a_hand_written_emitter_is_refused_before_it_runs_by_an_encoding_that_cannot_carry_events() {
     for representation in ["json", "yaml", "csv"] {
         let destination = Shared::default();
-        let outcome = misdeclared_run(
+        let ran = Rc::new(RefCell::new(false));
+        let outcome = hand_written_run(
             &["app", &format!("--output={representation}"), "apply"],
-            || Output::Render(json!({ "add": 1 })),
+            HandWritten {
+                ran: ran.clone(),
+                emit: true,
+                output: || Output::Render(json!({ "add": 1 })),
+            },
             destination.clone(),
         );
 
@@ -505,27 +513,31 @@ fn an_undeclared_emitter_is_refused_by_an_encoding_that_cannot_carry_events() {
             "{representation}"
         );
         assert!(
-            destination.0.borrow().is_empty(),
-            "{representation}: the event the encoding cannot carry writes no document"
+            !*ran.borrow(),
+            "{representation}: a command that cannot be carried never runs"
         );
+        assert!(destination.0.borrow().is_empty(), "{representation}");
     }
 }
 
 #[test]
-fn an_undeclared_emitter_cannot_return_a_payload_after_the_event_it_emitted() {
+fn a_hand_written_emitter_cannot_return_a_payload_on_the_run_that_emits_none() {
     let destination = Shared::default();
-    let outcome = misdeclared_run(
+    let ran = Rc::new(RefCell::new(false));
+    let outcome = hand_written_run(
         &["app", "apply"],
-        || Output::Binary {
-            data: vec![0xDE, 0xAD],
-            filename: "apply.bin".into(),
+        HandWritten {
+            ran: ran.clone(),
+            emit: false,
+            output: || Output::Binary {
+                data: vec![0xDE, 0xAD],
+                filename: "apply.bin".into(),
+            },
         },
         destination.clone(),
     );
 
     assert!(render_error(&outcome).contains("binary output was produced by a command that emits"));
-    assert_eq!(
-        String::from_utf8_lossy(&destination.0.borrow()),
-        "starting web\n"
-    );
+    assert!(*ran.borrow());
+    assert!(destination.0.borrow().is_empty());
 }

@@ -52,12 +52,12 @@ pub use help::{
 };
 
 pub use handler::{
-    AppFailure, Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext,
-    CommandContextInput, ContractSurface, Delivery, Diagnostic, DiagnosticKind, DiagnosticPosition,
-    DiagnosticRange, DispatchResult, EmitError, Envelope, EventsFnHandler, ExitStatus,
-    ExternalFailure, FnHandler, Handler, HandlerResult, InvalidAppStatus, InvalidExternalStatus,
-    NoEvents, Output, OutputKind, Results, RunError, RunErrorKind, RunOutput, RunRecorder,
-    Severity, StreamCapture, StreamSink, SuccessKind,
+    emits_events, AppFailure, Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun,
+    CommandContext, CommandContextInput, ContractSurface, Delivery, Diagnostic, DiagnosticKind,
+    DiagnosticPosition, DiagnosticRange, DispatchResult, EmitError, Envelope, EventsFnHandler,
+    ExitStatus, ExternalFailure, FnHandler, Handler, HandlerResult, InvalidAppStatus,
+    InvalidExternalStatus, NoEvents, Output, OutputKind, Results, RunError, RunErrorKind,
+    RunOutput, RunRecorder, Severity, StreamCapture, StreamSink, SuccessKind,
 };
 
 pub use help::{HelpArg, HelpDocument, HelpSubcommand};

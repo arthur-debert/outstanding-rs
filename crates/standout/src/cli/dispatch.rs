@@ -77,12 +77,10 @@ pub(crate) fn payload_without_a_stream(output: &str) -> RunError {
 
 /// A command that produces its result while it runs writes it to the
 /// destination as it goes, so a payload cannot follow: it would be a second
-/// document sharing one file or one stdout. `emits_events` is the command's
-/// declaration or, for a hand-written `Handler` that left the declaration at
-/// its default, the destination's record of an event it actually carried. The
-/// declaration makes the refusal the same on an invocation that emitted
-/// nothing, so a caller finds it in its first test rather than on the run that
-/// finally emits.
+/// document sharing one file or one stdout. `emits_events` comes from the
+/// command's `Handler::Event` type, so the refusal is the same on an
+/// invocation that emitted nothing and a caller finds it in its first test
+/// rather than on the run that finally emits.
 pub(crate) fn reject_payload_from_an_emitting_command(
     emits_events: bool,
     is_binary: bool,
@@ -108,10 +106,9 @@ pub(crate) fn reject_payload_from_an_emitting_command(
 }
 
 /// The encodings that carry a command's results as one document have no
-/// incremental form yet, so an event under one is refused with this. The
-/// destination raises it on the emit itself, and dispatch entry raises it
-/// ahead of the handler when the command declares that it emits, so a mutating
-/// run never happens for a reason known before it started.
+/// incremental form yet, so an incremental command under one is refused with
+/// this, ahead of the handler, so a mutating run never happens for a reason
+/// known before it started.
 pub(crate) fn events_under_a_document_encoding(
     command_path: &str,
     output_mode: crate::Representation,
@@ -129,9 +126,7 @@ pub(crate) fn events_under_a_document_encoding(
 }
 
 /// The refusal above, taken before the handler runs, so no byte is written
-/// first. It reads the command's declaration; a hand-written `Handler` that
-/// left it at its default reaches the same refusal from the destination, on
-/// its first emit.
+/// first.
 pub(crate) fn reject_events_under_a_document_encoding(
     emits_events: bool,
     command_path: &str,
