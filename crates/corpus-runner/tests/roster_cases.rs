@@ -1197,6 +1197,55 @@ stdout = "hello\n"
 }
 
 #[test]
+fn evidence_check_still_runs_once_a_gap_case_flips_to_expected_pass() {
+    // Once an epic closes a gap, the suite's case moves from `expected =
+    // "fail"` to `expected = "pass"` and keeps its `gap` marker (D17 covers
+    // both). The evidence check must still run on it — a pass with the
+    // evidence crate absent is a hand-rolled pass either way, not an
+    // invisible ordinary pass.
+    let mut gaps = BTreeMap::new();
+    gaps.insert(
+        "PAR01".to_string(),
+        GapEntry::Evidenced {
+            text: "named sets are specced past current capability".to_string(),
+            evidence: "uses-crate:clapfig".to_string(),
+        },
+    );
+    let toml = r#"
+[[case]]
+name = "gap-closed-and-passing"
+stresses = "hand-rolled pass detection on a flipped case"
+expected = "pass"
+gap = "PAR01"
+[case.run]
+argv = []
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+stdout = "hello\n"
+"#;
+
+    let without_crate = run_suite_with_evidence(
+        toml,
+        "echo hello",
+        &gaps,
+        Ok("[dependencies]\nserde = \"1\"\n"),
+    );
+    assert_eq!(without_crate[0].outcome, CaseOutcome::HandRolledPass);
+
+    let with_crate = run_suite_with_evidence(
+        toml,
+        "echo hello",
+        &gaps,
+        Ok("[dependencies]\nclapfig = \"0.24\"\n"),
+    );
+    assert_eq!(with_crate[0].outcome, CaseOutcome::Pass);
+
+    let without_gaps_table = run_suite(toml, "echo hello");
+    assert_eq!(without_gaps_table[0].outcome, CaseOutcome::Pass);
+}
+
+#[test]
 fn config_layering_gaps_declare_the_clapfig_evidence() {
     for (archetype_name, gap) in [
         ("gitlike", "PAR01"),

@@ -407,9 +407,16 @@ fn validate_case_suite(suite: &CaseSuite, name: &str, path: &Path) -> anyhow::Re
         }
         match case.expected {
             Expected::Pass => {
-                if case.gap.is_some() || case.reason.is_some() {
+                if case.reason.is_some() {
                     bail!(
-                        "{}: case {:?} — `gap`/`reason` belong to expected-fail cases only",
+                        "{}: case {:?} — `reason` explains an expected failure; it does not belong on an expected = \"pass\" case",
+                        path.display(),
+                        case.name
+                    );
+                }
+                if case.gap.as_deref().is_some_and(str::is_empty) {
+                    bail!(
+                        "{}: case {:?} — `gap` must be non-empty when present",
                         path.display(),
                         case.name
                     );
@@ -646,14 +653,33 @@ exit_code = 0
     }
 
     #[test]
-    fn gap_or_reason_on_expected_pass_is_rejected() {
-        let err = parse(&suite(&VALID_CASE.replace(
+    fn gap_on_expected_pass_is_accepted() {
+        let suite = parse(&suite(&VALID_CASE.replace(
             "expected = \"pass\"",
             "expected = \"pass\"\ngap = \"PAR01\"",
         )))
+        .unwrap();
+        assert_eq!(suite.cases[0].gap.as_deref(), Some("PAR01"));
+    }
+
+    #[test]
+    fn empty_gap_on_expected_pass_is_rejected() {
+        let err = parse(&suite(
+            &VALID_CASE.replace("expected = \"pass\"", "expected = \"pass\"\ngap = \"\""),
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("must be non-empty"), "{err:#}");
+    }
+
+    #[test]
+    fn reason_on_expected_pass_is_rejected() {
+        let err = parse(&suite(&VALID_CASE.replace(
+            "expected = \"pass\"",
+            "expected = \"pass\"\ngap = \"PAR01\"\nreason = \"still tracked\"",
+        )))
         .unwrap_err();
         assert!(
-            err.to_string().contains("expected-fail cases only"),
+            err.to_string().contains("does not belong on an expected"),
             "{err:#}"
         );
     }

@@ -210,6 +210,7 @@ const SCANNED_ROOTS: &[&str] = &[
     "corpus/pilot/scorecard.md",
     "corpus/rerun",
     "corpus/completion",
+    "corpus/parity",
     "corpus/demo",
     "crates/corpus-runner/tests/fixtures",
 ];

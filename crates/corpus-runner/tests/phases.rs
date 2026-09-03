@@ -22,7 +22,13 @@ const NO_TIMEOUT: Duration = Duration::from_secs(60);
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // Every directory under `corpus/` holding committed run reports.
-const COMMITTED_RUN_DIRS: &[&str] = &["pilot/runs", "rerun/runs", "completion/runs", "demo"];
+const COMMITTED_RUN_DIRS: &[&str] = &[
+    "pilot/runs",
+    "rerun/runs",
+    "completion/runs",
+    "parity/runs",
+    "demo",
+];
 
 fn corpus_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus")

@@ -136,7 +136,7 @@ const PILOT_FIGURES: &[(&str, &str, &str, &str)] = &[
     ),
     (
         "gitlike",
-        "15/19 (78.9%); 4 unexpected-pass",
+        "15/15 (100.0%) required · 4 gap (4 unexpected-pass)",
         "48/48 (100.0%) applicable; 120 planned: 48 pass, 72 N/A",
         "| 5 |",
     ),

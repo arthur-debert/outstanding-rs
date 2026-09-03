@@ -293,23 +293,32 @@ pub fn reevaluate(config: &ReevaluationConfig) -> anyhow::Result<RunReport> {
         None => provenance::recorded(&source.session.agent_cmd),
     };
 
-    let report = RunReport {
-        schema_version: SCHEMA_VERSION,
-        run_id: source.run_id,
-        archetype: ArchetypeStamp {
-            name: archetype.name.clone(),
-            spec_sha256: archetype.spec_sha256(),
+    // Re-evaluation reruns only the check phase; the agent phase already happened
+    // and is not re-verified. A schema-4-or-later source recorded that phase's own
+    // isolation as a fact, still true after re-evaluation, so it is kept. A source
+    // that predates that instrumentation carries none of these fields, and the
+    // historical narrative is what can honestly be said instead.
+    let blindness = match (
+        source.blindness.policy,
+        source.blindness.framework_source_excluded,
+        source.blindness.isolation,
+        source.blindness.credential_exceptions,
+    ) {
+        (
+            Some(policy),
+            Some(framework_source_excluded),
+            Some(agent_isolation),
+            Some(credential_exceptions),
+        ) => Blindness {
+            policy,
+            env_allowlist: source.blindness.env_allowlist,
+            framework_source_excluded,
+            isolation: agent_isolation,
+            credential_exceptions,
+            agent_reported_docs: source.blindness.agent_reported_docs,
+            agent_reported_external_sources: source.blindness.agent_reported_external_sources,
         },
-        pins: Pins {
-            acceptance_sha256: archetype.acceptance_sha256().to_string(),
-            ..source.pins
-        },
-        evaluation: EvaluationStamp {
-            origin: "isolated-re-evaluation".to_string(),
-            isolation: isolation.evaluation_capability(),
-            binary_sha256: evaluation.binary_sha256,
-        },
-        blindness: Blindness {
+        _ => Blindness {
             policy: HISTORICAL_BLINDNESS_POLICY.to_string(),
             env_allowlist: source.blindness.env_allowlist,
             framework_source_excluded: false,
@@ -328,6 +337,25 @@ pub fn reevaluate(config: &ReevaluationConfig) -> anyhow::Result<RunReport> {
             agent_reported_docs: source.blindness.agent_reported_docs,
             agent_reported_external_sources: source.blindness.agent_reported_external_sources,
         },
+    };
+
+    let report = RunReport {
+        schema_version: SCHEMA_VERSION,
+        run_id: source.run_id,
+        archetype: ArchetypeStamp {
+            name: archetype.name.clone(),
+            spec_sha256: archetype.spec_sha256(),
+        },
+        pins: Pins {
+            acceptance_sha256: archetype.acceptance_sha256().to_string(),
+            ..source.pins
+        },
+        evaluation: EvaluationStamp {
+            origin: "isolated-re-evaluation".to_string(),
+            isolation: isolation.evaluation_capability(),
+            binary_sha256: evaluation.binary_sha256,
+        },
+        blindness,
         session: source.session,
         provenance,
         acceptance: evaluation.acceptance,
