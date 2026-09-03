@@ -769,6 +769,18 @@ fn fixture_rejects_parent_dir_escape() {
 }
 #[test]
 #[serial]
+#[should_panic(expected = "..")]
+fn relative_cwd_rejects_parent_dir_escape() {
+    let _ = TestHarness::new().cwd("../outside");
+}
+#[test]
+#[serial]
+#[should_panic(expected = "..")]
+fn relative_cwd_rejects_nested_parent_dir_escape() {
+    let _ = TestHarness::new().cwd("proj/../../outside");
+}
+#[test]
+#[serial]
 fn env_set_then_remove_restores_true_original() {
     std::env::set_var("STANDOUT_DOUBLE_PROBE", "original");
     let app = build_echo_app("echo");
@@ -937,4 +949,68 @@ fn harness_asserts_a_typed_artifact_write_failure() {
         result.artifact().is_none(),
         "a failed write produces no report"
     );
+}
+fn build_pwd_app() -> App {
+    App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "echo",
+            FnHandler::new(|_m, _ctx| {
+                let dir = std::env::current_dir().unwrap();
+                Ok(Output::Render(json!({ "msg": dir.to_string_lossy() })))
+            }),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+#[test]
+#[serial]
+fn relative_cwd_runs_inside_the_tempdir() {
+    let app = build_pwd_app();
+    let result =
+        TestHarness::new()
+            .cwd("proj/nested")
+            .run(&app, echo_command(), vec!["app", "echo"]);
+    let reported = std::path::PathBuf::from(result.stdout().trim())
+        .canonicalize()
+        .unwrap();
+    let temp_root = std::env::temp_dir().canonicalize().unwrap();
+    assert!(reported.starts_with(&temp_root), "{reported:?}");
+    assert!(reported.ends_with("proj/nested"), "{reported:?}");
+}
+#[test]
+#[serial]
+fn relative_cwd_lands_beside_fixtures() {
+    let app = build_pwd_app();
+    let harness = TestHarness::new()
+        .fixture("proj/todos.txt", "x\n")
+        .cwd("proj");
+    let expected = harness
+        .tempdir()
+        .unwrap()
+        .canonicalize()
+        .unwrap()
+        .join("proj");
+    let result = harness.run(&app, echo_command(), vec!["app", "echo"]);
+    let reported = std::path::PathBuf::from(result.stdout().trim())
+        .canonicalize()
+        .unwrap();
+    assert_eq!(reported, expected);
+    assert!(reported.join("todos.txt").is_file());
+}
+#[test]
+#[serial]
+fn absolute_cwd_is_used_as_given() {
+    let app = build_pwd_app();
+    let dir = tempfile::tempdir().unwrap();
+    let expected = dir.path().canonicalize().unwrap();
+    let result = TestHarness::new()
+        .cwd(dir.path())
+        .run(&app, echo_command(), vec!["app", "echo"]);
+    let reported = std::path::PathBuf::from(result.stdout().trim())
+        .canonicalize()
+        .unwrap();
+    assert_eq!(reported, expected);
 }
