@@ -32,8 +32,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 use super::config::{
-    claims_config_command, claims_config_path, config_command_collision, config_command_tree,
-    ConfigSeam,
+    claims_config_command, claims_config_path, config_command_collision, config_option_collision,
+    config_tree_claim, config_tree_takes_long, ConfigSeam,
 };
 use super::default_command::ParseFailure;
 use super::dispatch::DispatchFn;
@@ -50,7 +50,6 @@ use super::help::{
 use super::hooks::{ArtifactOutput, HookError, HookPhase, Hooks, RenderedOutput, TextOutput};
 use super::questionnaire::QuestionnaireCommand;
 use super::result::{HelpDisplay, HelpResult};
-use execution::command_takes_flag;
 use standout_dispatch::verify::ExpectedArg;
 use standout_render::warnings::WarningBuffer;
 
@@ -576,7 +575,7 @@ impl AppBuilder {
                 self.output_file_flag.as_deref(),
             ];
             if taken.contains(&Some(flag))
-                || (installs_config_command && command_takes_flag(&config_command_tree(), flag))
+                || (installs_config_command && config_tree_takes_long(flag))
             {
                 return Err(SetupError::Config(format!(
                     "config_override_flag(\"{flag}\") names a flag standout already installs"
@@ -593,6 +592,20 @@ impl AppBuilder {
         }
 
         if installs_config_command {
+            let taken = [
+                ("output_flag", self.output_flag.as_deref()),
+                ("output_file_flag", self.output_file_flag.as_deref()),
+            ]
+            .into_iter()
+            .find_map(|(option, flag)| {
+                flag.filter(|flag| config_tree_takes_long(flag))
+                    .map(|flag| (option, flag))
+            });
+            if let Some((option, flag)) = taken {
+                return Err(config_option_collision(&format!(
+                    "{option}(Some(\"{flag}\")) installs `--{flag}` as a root-global flag"
+                )));
+            }
             let claim = self
                 .pending_commands
                 .borrow()
@@ -1252,10 +1265,22 @@ impl App {
     }
 
     pub(crate) fn config_command_collision(&self, cmd: &Command) -> Result<(), SetupError> {
-        if self.installs_config_command() && cmd.get_subcommands().any(claims_config_command) {
+        if !self.installs_config_command() {
+            return Ok(());
+        }
+        if cmd.get_subcommands().any(claims_config_command) {
             return Err(config_command_collision(
                 "this application's clap `Command` declares `config` (as a subcommand name or alias)",
             ));
+        }
+        if let Some(claim) = cmd
+            .get_arguments()
+            .filter(|arg| arg.is_global_set())
+            .find_map(config_tree_claim)
+        {
+            return Err(config_option_collision(&format!(
+                "this application's clap `Command` declares a root-global argument with {claim}"
+            )));
         }
         Ok(())
     }

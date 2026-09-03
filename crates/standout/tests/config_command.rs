@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use clap::Command;
+use clap::{Arg, Command};
 use clapfig::{Clapfig, SearchPath};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -21,6 +21,9 @@ struct FixtureConfig {
     port: i64,
     #[clapfig(default = ["a", "b"])]
     tags: Vec<String>,
+    stamp: Option<clapfig::value::Datetime>,
+    stamps: Vec<clapfig::value::Datetime>,
+    ratio: Option<f64>,
     term: TermSettings,
 }
 
@@ -72,8 +75,12 @@ impl Run {
 }
 
 fn run_with(configure: impl FnOnce(AppBuilder) -> AppBuilder, args: &[&str]) -> Run {
+    run_file(FILE, configure, args)
+}
+
+fn run_file(file: &str, configure: impl FnOnce(AppBuilder) -> AppBuilder, args: &[&str]) -> Run {
     let harness = TestHarness::new()
-        .fixture("cfgapp.toml", FILE)
+        .fixture("cfgapp.toml", file)
         .fixture("global/.keep", "");
     let root = harness.tempdir().unwrap().to_path_buf();
     let app = configure(configured_builder(&root)).build().unwrap();
@@ -177,6 +184,102 @@ fn an_override_flag_the_config_tree_takes_is_a_setup_error() {
         .config_override_flag("set")
         .build()
         .is_ok());
+}
+
+#[test]
+fn a_root_global_the_config_tree_takes_is_a_setup_error() {
+    let root = tempfile::tempdir().unwrap();
+    let app = configured_builder(root.path()).build().unwrap();
+    let globals = || {
+        [
+            ("--scope", Arg::new("workspace").long("scope")),
+            ("--file", Arg::new("target").long("file")),
+            ("--force", Arg::new("yes").long("force")),
+            ("--scope", Arg::new("zone").long("zone").alias("scope")),
+            ("-o", Arg::new("origin").long("origin").short('o')),
+            ("id `output`", Arg::new("output").long("out")),
+        ]
+    };
+    for (claim, arg) in globals() {
+        let declared = cfgapp().arg(arg.global(true));
+        let verified = app.verify_command(&declared);
+        assert!(
+            matches!(&verified, Err(SetupError::Config(text)) if text.contains(claim)),
+            "{claim}: {verified:?}"
+        );
+        let result = TestHarness::new().run(&app, declared, ["cfgapp", "show"]);
+        result.assert_error_kind(RunErrorKind::ClapUsage);
+        result.assert_error_contains("no_config_command");
+    }
+
+    for (_, arg) in globals() {
+        assert!(app.verify_command(&cfgapp().arg(arg)).is_ok());
+    }
+    let kept = configured_builder(root.path())
+        .no_config_command()
+        .build()
+        .unwrap();
+    for (_, arg) in globals() {
+        assert!(kept.verify_command(&cfgapp().arg(arg.global(true))).is_ok());
+    }
+}
+
+#[test]
+fn a_framework_flag_the_config_tree_takes_is_a_setup_error() {
+    let root = tempfile::tempdir().unwrap();
+    type Install = fn(AppBuilder, &str) -> AppBuilder;
+    let flags: [(&str, Install); 2] = [
+        ("output_flag", |builder, flag| {
+            builder.output_flag(Some(flag))
+        }),
+        ("output_file_flag", |builder, flag| {
+            builder.output_file_flag(Some(flag))
+        }),
+    ];
+    for (option, install) in flags {
+        for flag in ["scope", "file", "force"] {
+            let taken = install(configured_builder(root.path()), flag).build().err();
+            assert!(
+                matches!(&taken, Some(SetupError::Config(text)) if text.contains(option)),
+                "{option}({flag}): {taken:?}"
+            );
+            assert!(install(configured_builder(root.path()), flag)
+                .no_config_command()
+                .build()
+                .is_ok());
+        }
+        assert!(install(configured_builder(root.path()), "mode")
+            .build()
+            .is_ok());
+    }
+}
+
+#[test]
+#[serial]
+fn config_json_spells_datetimes_and_non_finite_floats_as_strings() {
+    const TYPED: &str =
+        "stamp = 1979-05-27T07:32:00Z\nstamps = [1979-05-27, 07:32:00]\nratio = inf\n";
+    let json = run_file(
+        TYPED,
+        |b| b,
+        &["cfgapp", "config", "list", "--output", "json"],
+    )
+    .result;
+    json.assert_success();
+    let document: serde_json::Value = serde_json::from_str(json.stdout()).unwrap();
+    assert_eq!(document["stamp"], json!("1979-05-27T07:32:00Z"));
+    assert_eq!(document["stamps"], json!(["1979-05-27", "07:32:00"]));
+    assert_eq!(document["ratio"], json!("inf"));
+
+    let one = run_file(
+        TYPED,
+        |b| b,
+        &["cfgapp", "config", "get", "stamp", "--output", "json"],
+    )
+    .result;
+    one.assert_success();
+    let document: serde_json::Value = serde_json::from_str(one.stdout()).unwrap();
+    assert_eq!(document, json!({ "stamp": "1979-05-27T07:32:00Z" }));
 }
 
 #[test]

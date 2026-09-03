@@ -1,7 +1,8 @@
 use std::any::Any;
 use std::path::Path;
 
-use clap::Command;
+use clap::{Arg, Command};
+use clapfig::value::Value;
 use clapfig::{
     ClapfigError, ConfigAction, ConfigCommand, ConfigResult, DocumentRoot, TypedBuilder,
 };
@@ -38,6 +39,52 @@ pub(crate) fn config_command_collision(claim: &str) -> SetupError {
          configuration given to .config(...). Rename the application's command, or call \
          .no_config_command() to keep the name"
     ))
+}
+
+pub(crate) fn config_option_collision(claim: &str) -> SetupError {
+    SetupError::Config(format!(
+        "config — {claim}, and the `config` command standout installs for the configuration \
+         given to .config(...) takes it on its own tree, where clap would propagate the global. \
+         Rename the flag, or call .no_config_command() to keep it"
+    ))
+}
+
+pub(crate) fn config_tree_takes_long(flag: &str) -> bool {
+    config_tree_args(&config_command_tree()).any(|arg| arg_longs(arg).any(|long| long == flag))
+}
+
+pub(crate) fn config_tree_claim(global: &Arg) -> Option<String> {
+    let tree = config_command_tree();
+    let claim = config_tree_args(&tree).find_map(|taken| {
+        if let Some(long) = arg_longs(global).find(|long| arg_longs(taken).any(|t| t == *long)) {
+            return Some(format!("`--{long}`"));
+        }
+        if let Some(short) = arg_shorts(global).find(|short| arg_shorts(taken).any(|t| t == *short))
+        {
+            return Some(format!("`-{short}`"));
+        }
+        (global.get_id() == taken.get_id()).then(|| format!("the id `{}`", global.get_id()))
+    });
+    claim
+}
+
+fn config_tree_args(cmd: &Command) -> Box<dyn Iterator<Item = &Arg> + '_> {
+    Box::new(
+        cmd.get_arguments()
+            .chain(cmd.get_subcommands().flat_map(config_tree_args)),
+    )
+}
+
+fn arg_longs(arg: &Arg) -> impl Iterator<Item = &str> {
+    arg.get_long()
+        .into_iter()
+        .chain(arg.get_all_aliases().unwrap_or_default())
+}
+
+fn arg_shorts(arg: &Arg) -> impl Iterator<Item = char> + '_ {
+    arg.get_short()
+        .into_iter()
+        .chain(arg.get_all_short_aliases().unwrap_or_default())
 }
 
 const LINE_TEMPLATE: &str = "{{ line }}";
@@ -92,8 +139,23 @@ pub(crate) fn config_result_output(
     )
 }
 
-fn typed_value(value: &clapfig::value::Value) -> serde_json::Value {
-    serde_json::to_value(value).unwrap_or_else(|_| serde_json::Value::String(value.to_string()))
+fn typed_value(value: &Value) -> serde_json::Value {
+    match value {
+        Value::String(text) => serde_json::Value::String(text.clone()),
+        Value::Integer(int) => serde_json::Value::from(*int),
+        Value::Float(float) => serde_json::Number::from_f64(*float).map_or_else(
+            || serde_json::Value::String(value.to_string()),
+            serde_json::Value::Number,
+        ),
+        Value::Boolean(flag) => serde_json::Value::Bool(*flag),
+        Value::Datetime(_) => serde_json::Value::String(value.to_string()),
+        Value::Array(items) => serde_json::Value::Array(items.iter().map(typed_value).collect()),
+        Value::Map(map) => serde_json::Value::Object(
+            map.iter()
+                .map(|(key, value)| (key.clone(), typed_value(value)))
+                .collect(),
+        ),
+    }
 }
 
 fn escape_style_tags(text: &str) -> String {
@@ -342,6 +404,54 @@ mod tests {
         };
         let position = config_error_position(&ClapfigError::UnknownKeys(vec![info]));
         assert_eq!(position, Some(("app.toml".to_string(), 3, 1)));
+    }
+
+    #[test]
+    fn typed_values_project_datetimes_and_non_finite_floats_as_strings() {
+        let stamp: clapfig::value::Datetime = "1979-05-27T07:32:00Z".parse().unwrap();
+        let mut inner = clapfig::value::Map::new();
+        inner.insert("when".into(), Value::Datetime(stamp));
+        inner.insert("ratio".into(), Value::Float(f64::NAN));
+        let value = Value::Array(vec![
+            Value::Map(inner),
+            Value::Float(f64::INFINITY),
+            Value::Float(-f64::INFINITY),
+            Value::Float(1.5),
+            Value::Integer(7),
+            Value::Boolean(true),
+            Value::String("s".into()),
+        ]);
+        assert_eq!(
+            typed_value(&value),
+            json!([
+                { "when": "1979-05-27T07:32:00Z", "ratio": "nan" },
+                "inf",
+                "-inf",
+                1.5,
+                7,
+                true,
+                "s"
+            ])
+        );
+    }
+
+    #[test]
+    fn the_config_tree_claims_root_globals_by_long_short_and_id() {
+        let cases = [
+            (Arg::new("x").long("scope"), Some("`--scope`")),
+            (Arg::new("x").long("file"), Some("`--file`")),
+            (Arg::new("x").long("force"), Some("`--force`")),
+            (Arg::new("x").long("zone").alias("scope"), Some("`--scope`")),
+            (Arg::new("x").short('o'), Some("`-o`")),
+            (Arg::new("x").short('x').short_alias('o'), Some("`-o`")),
+            (Arg::new("output").long("out"), Some("the id `output`")),
+            (Arg::new("x").long("output"), None),
+            (Arg::new("x").long("set"), None),
+        ];
+        for (arg, expected) in cases {
+            assert_eq!(config_tree_claim(&arg).as_deref(), expected, "{arg:?}");
+        }
+        assert!(config_tree_takes_long("scope") && !config_tree_takes_long("output"));
     }
 
     #[test]
