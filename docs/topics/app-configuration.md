@@ -475,14 +475,11 @@ App::builder()
     .output_mode_fallback(OutputMode::Term)
 ```
 
-Precedence is `--output` first, then the fallback. An explicit `--output` always
+An explicit `--output` always
 wins, so this sets the default rather than overriding the user. Forcing color
 regardless of mode is a separate axis and is not what this call does.
 
-Every path that renders without an `--output` on the command line uses the
-fallback: command output, both help spellings (`app help` and `app --help`), the
-`--output` help entry's advertised default, and the diagnostics of errors raised
-before parsing. `app --help` renders in the fallback even when the command line
+`app --help` renders in the fallback even when the command line
 does carry an `--output` — the help flags never read the flag ([Help](./standout-help.md#output-modes)).
 
 ### File Output Flag

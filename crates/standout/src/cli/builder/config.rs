@@ -14,7 +14,7 @@ impl AppBuilder {
     }
 
     pub fn version(mut self, version: impl Into<String>) -> Self {
-        self.version = Some(Box::leak(version.into().into_boxed_str()));
+        self.version = Some(version.into());
         self
     }
 
@@ -108,6 +108,34 @@ impl AppBuilder {
 
     pub fn no_output_file_flag(mut self) -> Self {
         self.output_file_flag = None;
+        self
+    }
+
+    pub fn config<C>(mut self, builder: clapfig::TypedBuilder<C>) -> Self
+    where
+        C: clapfig::DocumentRoot + serde::de::DeserializeOwned + 'static,
+    {
+        self.config = Some(Box::new(crate::cli::config::TypedSeam::new(builder)));
+        self
+    }
+
+    pub fn term_settings<C, F>(mut self, accessor: F) -> Self
+    where
+        C: 'static,
+        F: Fn(&C) -> &crate::TermSettings + 'static,
+    {
+        let accessor: crate::cli::config::TermAccessor<C> = Box::new(accessor);
+        self.term_accessor = Some(Box::new(accessor));
+        self
+    }
+
+    pub fn config_override_flag(mut self, name: &str) -> Self {
+        self.config_override_flag = Some(name.to_string());
+        self
+    }
+
+    pub fn no_config_command(mut self) -> Self {
+        self.config_command = false;
         self
     }
 

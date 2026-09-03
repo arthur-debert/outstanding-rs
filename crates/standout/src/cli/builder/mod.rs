@@ -31,6 +31,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
+use super::config::ConfigSeam;
 use super::default_command::ParseFailure;
 use super::dispatch::DispatchFn;
 use super::group::CommandRecipe;
@@ -362,9 +363,13 @@ pub struct App {
     pub(crate) help_handling: bool,
     pub(crate) help_word: bool,
     pub(crate) ambiguous_width: crate::AmbiguousWidth,
-    pub(crate) version: Option<&'static str>,
+    pub(crate) version: Option<String>,
     pub(crate) startup_warnings: Vec<String>,
     pub(crate) strict_style_tags: bool,
+    pub(crate) config: Option<Rc<dyn ConfigSeam>>,
+    pub(crate) config_override_flag: Option<String>,
+    #[allow(dead_code)]
+    pub(crate) config_command: bool,
 }
 
 impl App {
@@ -405,11 +410,19 @@ pub struct AppBuilder {
 
     pub(crate) ambiguous_width: crate::AmbiguousWidth,
 
-    pub(crate) version: Option<&'static str>,
+    pub(crate) version: Option<String>,
 
     pub(crate) startup_warnings: Vec<String>,
 
     pub(crate) strict_style_tags: bool,
+
+    pub(crate) config: Option<Box<dyn ConfigSeam>>,
+
+    pub(crate) term_accessor: Option<Box<dyn std::any::Any>>,
+
+    pub(crate) config_override_flag: Option<String>,
+
+    pub(crate) config_command: bool,
 }
 
 impl AppBuilder {
@@ -443,6 +456,10 @@ impl AppBuilder {
             version: None,
             startup_warnings: Vec::new(),
             strict_style_tags: false,
+            config: None,
+            term_accessor: None,
+            config_override_flag: None,
+            config_command: true,
         }
     }
 
@@ -527,6 +544,37 @@ impl AppBuilder {
             }
         }
 
+        if let Some(accessor) = self.term_accessor.take() {
+            match self.config.as_mut() {
+                Some(seam) => seam.attach_term_accessor(accessor)?,
+                None => {
+                    return Err(SetupError::Config(
+                        "term_settings is set without .config(...): there is no configuration \
+                         to read the accessor from"
+                            .to_string(),
+                    ))
+                }
+            }
+        }
+
+        if let Some(flag) = self.config_override_flag.as_deref() {
+            if self.config.is_none() {
+                return Err(SetupError::Config(format!(
+                    "config_override_flag(\"{flag}\") is set without .config(...): there is \
+                     no configuration for the flag to override"
+                )));
+            }
+            let taken = [
+                self.output_flag.as_deref(),
+                self.output_file_flag.as_deref(),
+            ];
+            if taken.contains(&Some(flag)) {
+                return Err(SetupError::Config(format!(
+                    "config_override_flag(\"{flag}\") names a flag standout already installs"
+                )));
+            }
+        }
+
         let template_engine = self.template_engine.take().unwrap_or_else(|| {
             Rc::new(RefCell::new(Box::new(
                 standout_render::template::MiniJinjaEngine::new(),
@@ -569,6 +617,9 @@ impl AppBuilder {
             startup_warnings: self.startup_warnings,
             strict_style_tags: self.strict_style_tags
                 || strict_style_tags_from_env(std::env::var_os(STRICT_STYLE_TAGS_ENV)),
+            config: self.config.map(Rc::from),
+            config_override_flag: self.config_override_flag,
+            config_command: self.config_command,
         };
 
         app.ensure_commands_finalized();
@@ -744,6 +795,13 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
+        if let Err(error) = self.config_override_flag_collision(&cmd) {
+            return HelpResult::Error(clap::Error::raw(
+                clap::error::ErrorKind::ArgumentConflict,
+                format!("{error}\n"),
+            ));
+        }
+
         let mut cmd = self.augment_command_with_help(cmd);
 
         if let Some(error) = self.help_word_collision(&cmd) {
@@ -1161,17 +1219,28 @@ impl App {
     }
 
     pub fn extract_output_mode(&self, matches: &ArgMatches) -> OutputMode {
+        self.extract_output_mode_over(matches, None)
+    }
+
+    pub(crate) fn extract_output_mode_over(
+        &self,
+        matches: &ArgMatches,
+        term: Option<&crate::TermSettings>,
+    ) -> OutputMode {
+        let fallback = term
+            .and_then(|term| term.output)
+            .map_or(self.output_mode_fallback, OutputMode::from);
         if self.output_flag.is_none() {
-            return self.output_mode_fallback;
+            return fallback;
         }
         match matches.try_get_one::<String>("_output_mode") {
             // A `DefaultValue` source means the user never typed `--output`.
             Ok(Some(value))
                 if matches.value_source("_output_mode") != Some(ValueSource::DefaultValue) =>
             {
-                parse_output_mode_flag(value.as_str()).unwrap_or(self.output_mode_fallback)
+                parse_output_mode_flag(value.as_str()).unwrap_or(fallback)
             }
-            _ => self.output_mode_fallback,
+            _ => fallback,
         }
     }
 
@@ -1312,6 +1381,7 @@ impl App {
         self.malformed_registrations()?;
         self.validate_questionnaire_surfaces(cmd)?;
         self.unreachable_registrations(cmd)?;
+        self.config_override_flag_collision(cmd)?;
         let expected_args: HashMap<String, Vec<ExpectedArg>> = self
             .pending_commands
             .borrow()

@@ -2057,7 +2057,7 @@ const TEMPLATE_CATALOG: &[(&str, &str)] = &[
     (
         "workspace",
         r#"[workspace]
-resolver = "2"
+resolver = "3"
 members = [
     "crates/{{ lib_crate }}",
     "crates/{{ executable_name }}",
