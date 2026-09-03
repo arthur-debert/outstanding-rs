@@ -149,6 +149,7 @@ fn child_exited_without_reaping(_pid: u32) -> Result<bool, String> {
 fn signal_process_group(pid: u32) {
     #[cfg(unix)]
     {
+        // SAFETY: pid is its own process-group leader (set before spawn); reaches only its descendants.
         unsafe {
             libc::killpg(pid as libc::pid_t, libc::SIGKILL);
         }
@@ -320,6 +321,7 @@ mod tests {
         assert_eq!(outcome.exit_code, Some(0));
 
         let pid = *pid.lock().unwrap();
+        // SAFETY: a signal-0 probe only checks whether the group exists; it sends nothing.
         let probe = unsafe { libc::killpg(pid as libc::pid_t, 0) };
         assert_eq!(probe, -1);
         assert_eq!(
