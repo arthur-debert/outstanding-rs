@@ -1342,7 +1342,7 @@ fn generated_json_pipeline_test(spec: &ProjectSpec) -> String {
         r#"    #[test]
     #[serial]
     fn pipeline_serializes_json_for_configured_inputs() {{
-        let app = build_app().unwrap();
+        let (_user_dir, app) = test_app();
 
 {run}
 
@@ -1382,7 +1382,7 @@ fn generated_config_test(spec: &ProjectSpec) -> String {
         r#"    #[test]
     #[serial]
     fn term_output_in_the_config_file_selects_json() {{
-        let app = build_app().unwrap();
+        let (_user_dir, app) = test_app();
         let harness = {harness};
 {run}
 
@@ -2207,6 +2207,7 @@ standout-input = "{{ standout_version }}"
 serde_json = "1"
 serial_test = "3"
 standout-test = "{{ standout_version }}"
+tempfile = "3"
 "#,
     ),
     (
@@ -2219,18 +2220,18 @@ use anyhow::Result;
 use standout::{embed_styles, embed_templates};
 
 fn main() -> Result<()> {
-    let app = build_app()?;
+    let app = build_app(clapfig::SearchPath::Platform)?;
     app.run(cli::command(), std::env::args());
     Ok(())
 }
 
-fn build_app() -> Result<standout::cli::App> {
+fn build_app(user_scope: clapfig::SearchPath) -> Result<standout::cli::App> {
     Ok(standout::cli::App::builder()
         .version(env!("CARGO_PKG_VERSION"))
         .templates(embed_templates!("src/templates"))
         .styles(embed_styles!("src/styles"))
         .default_theme("{{ project_name }}")
-        .config(config::builder())
+        .config(config::builder(user_scope))
         .term_settings(|config: &config::Config| &config.term)
         .commands(cli::Commands::dispatch_config())?
         .build()?)
@@ -2243,13 +2244,20 @@ mod tests {
     use serial_test::serial;
     use standout::OutputMode;
     use standout_test::TestHarness;
+    use tempfile::TempDir;
 
     const CONFIG_FILE: &str = "[term]\noutput = \"json\"\n";
+
+    fn test_app() -> (TempDir, standout::cli::App) {
+        let user_dir = TempDir::new().unwrap();
+        let app = build_app(clapfig::SearchPath::Path(user_dir.path().to_path_buf())).unwrap();
+        (user_dir, app)
+    }
 
     #[test]
     #[serial]
     fn pipeline_renders_human_output_from_argument() {
-        let app = build_app().unwrap();
+        let (_user_dir, app) = test_app();
 
 {{ pipeline_human_run }}
 
@@ -2301,13 +2309,13 @@ pub(crate) struct Config {
     pub(crate) term: TermSettings,
 }
 
-pub(crate) fn builder() -> clapfig::TypedBuilder<Config> {
+pub(crate) fn builder(user_scope: clapfig::SearchPath) -> clapfig::TypedBuilder<Config> {
     clapfig::Clapfig::typed::<Config>()
         .app_name("{{ executable_name }}")
-        .add_search_path(clapfig::SearchPath::Platform)
+        .add_search_path(user_scope.clone())
         .add_search_path(clapfig::SearchPath::Cwd)
         .persist_scope("local", clapfig::SearchPath::Cwd)
-        .persist_scope("global", clapfig::SearchPath::Platform)
+        .persist_scope("global", user_scope)
 }
 "#,
     ),
@@ -3107,7 +3115,12 @@ mod tests {
             cli.contains("#[dispatch(pure, default, inputs = crate::handlers::inspect_inputs)]")
         );
         assert!(main.contains(".commands(cli::Commands::dispatch_config())?"));
-        assert!(main.contains(".config(config::builder())"));
+        assert!(main.contains("build_app(clapfig::SearchPath::Platform)?"));
+        assert!(main.contains("fn build_app(user_scope: clapfig::SearchPath)"));
+        assert!(main.contains(".config(config::builder(user_scope))"));
+        assert!(
+            main.contains("build_app(clapfig::SearchPath::Path(user_dir.path().to_path_buf()))")
+        );
         assert!(main.contains(".term_settings(|config: &config::Config| &config.term)"));
         assert!(main.contains("fn term_output_in_the_config_file_selects_json()"));
         assert!(main.contains(".fixture(\"inspect-tool.toml\", CONFIG_FILE)"));
@@ -3117,9 +3130,10 @@ mod tests {
         assert!(config.contains("#[derive(Debug, Clone, Serialize, Deserialize, clapfig::Schema)]"));
         assert!(config.contains("pub(crate) term: TermSettings,"));
         assert!(config.contains(".app_name(\"inspect-tool\")"));
-        assert!(config.contains(".add_search_path(clapfig::SearchPath::Platform)"));
+        assert!(config.contains("fn builder(user_scope: clapfig::SearchPath)"));
+        assert!(config.contains(".add_search_path(user_scope.clone())"));
         assert!(config.contains(".add_search_path(clapfig::SearchPath::Cwd)"));
-        assert!(config.contains(".persist_scope(\"global\", clapfig::SearchPath::Platform)"));
+        assert!(config.contains(".persist_scope(\"global\", user_scope)"));
 
         assert!(handlers.contains("#[handler]"));
         assert!(handlers.contains("#[flag] verbose: bool"));
