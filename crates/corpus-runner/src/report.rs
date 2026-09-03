@@ -93,7 +93,6 @@ pub struct SessionReport {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub transcript: String,
-    // Absent on a report written before this field existed.
     #[serde(default)]
     pub transcript_sha256: Option<String>,
 }
@@ -105,7 +104,6 @@ pub struct AgentProvenance {
     pub model_requested: Option<String>,
     pub model_observed: Option<String>,
     pub prompt: Option<String>,
-    // Without the default, an absent list would refuse the whole report.
     #[serde(default)]
     pub settings: Vec<String>,
 }

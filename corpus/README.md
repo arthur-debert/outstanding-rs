@@ -36,7 +36,7 @@ makes runs reproducible and comparable.
   blind runs, against the published 9.0 line, plus `scorecard.md` as a
   first data point rather than a comparison; `parity/` is `gitlike`,
   `cargolike` and `validity` against 10.0.0, plus `scorecard.md` — the
-  10.0.0 baseline the parity epics (PAR01 onward) measure against.
+  10.0.0 baseline the parity epics measure against.
 - `scorecard.py` — computes a scorecard's objective table from committed
   reports (`scorecard.py pilot=corpus/pilot/runs rerun=corpus/rerun/runs completion=corpus/completion/runs`).
   Every scorecard's figures come from this one script under one set of

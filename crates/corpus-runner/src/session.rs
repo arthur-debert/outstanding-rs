@@ -1,9 +1,9 @@
-// The implementation session: runs the agent command in the blind workspace,
-// scrubbed, instrumented, and deadlined. The agent is a seam — any shell
-// command works — with a hardened non-interactive Claude Code session as
-// the default. A session brokering a credential gives that seam up: the
-// broker answers one pid, so the runner spawns the agent itself rather than
-// a shell that spawns it.
+//! The implementation session: runs the agent command in the blind workspace,
+//! scrubbed, instrumented, and deadlined. The agent is a seam — any shell
+//! command works — with a hardened non-interactive Claude Code session as
+//! the default. A session brokering a credential gives that seam up: the
+//! broker answers one pid, so the runner spawns the agent itself rather than
+//! a shell that spawns it.
 
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -79,9 +79,6 @@ pub fn run_agent(
     let wall_seconds = started.elapsed().as_secs_f64();
 
     let stats = stream_json_stats(&read_tail(transcript_path, TRANSCRIPT_TAIL_BYTES));
-    // The hash of the transcript as the runner wrote it, before any later
-    // sanitization pass touches the bytes on disk; sanitize-run.py recomputes
-    // and overwrites this field to match the bytes it rewrites.
     let transcript_sha256 = hash_transcript(transcript_path)
         .with_context(|| format!("hashing transcript {}", transcript_path.display()))?;
 
@@ -132,8 +129,6 @@ fn is_executable(path: &Path) -> bool {
 // The runner spawns one program and hands that pid to the broker; it cannot do what a shell would.
 const SHELL_STRUCTURE: &[char] = &['|', '&', ';', '<', '>', '(', ')', '\n'];
 
-// Unquoted, these would reach the agent as literals and mean something different
-// from the same command run through a shell, so they are refused rather than passed.
 const SHELL_GLOB: &[char] = &['*', '?', '[', ']'];
 
 /// Honors quotes and backslash escapes, expands nothing, and refuses a command that needs a shell.
@@ -288,7 +283,6 @@ mod tests {
             argv.contains(&"--strict-mcp-config".to_string()),
             "{argv:?}"
         );
-        // `--setting-sources ''` is an argument, and it is empty.
         let sources = argv
             .iter()
             .position(|arg| arg == "--setting-sources")

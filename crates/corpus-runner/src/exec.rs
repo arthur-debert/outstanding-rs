@@ -1,7 +1,7 @@
-// The one subprocess supervisor: every external process the runner spawns
-// runs under `supervise`, which enforces a hard deadline over the child and
-// its output streams and kills the child's whole process group before
-// reaping it, whether it exits on its own or hits the deadline.
+//! The one subprocess supervisor: every external process the runner spawns
+//! runs under `supervise`, which enforces a hard deadline over the child and
+//! its output streams and kills the child's whole process group before
+//! reaping it, whether it exits on its own or hits the deadline.
 
 use std::io::Read;
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -77,10 +77,6 @@ pub fn supervise(
 ) -> Result<Supervised, String> {
     let started = Instant::now();
     let mut timed_out = false;
-    // `reaped_status` is set only on the non-unix fallback below, whose
-    // `try_wait` reaps as a side effect of checking; `child.wait()` after
-    // the loop would then error (the process is already gone), so that
-    // status has to be carried out of the loop instead of re-fetched.
     let mut reaped_status: Option<ExitStatus> = None;
     loop {
         let exited = if cfg!(unix) {
@@ -104,12 +100,6 @@ pub fn supervise(
         }
         std::thread::sleep(Duration::from_millis(25));
     }
-    // The whole process group is signalled here, before the leader is
-    // reaped below: reaping is what frees its pid for the OS to reuse, and
-    // a group signal after that point risks hitting an unrelated process
-    // that happened to receive the recycled pid. On non-unix this is a
-    // no-op (no process-group concept, and reaped_status already holds
-    // the leader's status from the loop above).
     signal_process_group(child.id());
     let _ = child.kill();
     let status = match reaped_status {
@@ -118,9 +108,6 @@ pub fn supervise(
             .wait()
             .map_err(|err| format!("reaping child: {err}"))?,
     };
-    // Only after the leader is reaped: a not-yet-reaped zombie leader
-    // answers a signal-0 probe too, so polling for the group to be gone
-    // before this point would always spin for the full grace period.
     wait_for_process_group_to_die(child.id());
     if timed_out {
         let grace_ends = Instant::now() + READER_GRACE;
@@ -134,12 +121,6 @@ pub fn supervise(
     })
 }
 
-/// Whether `pid` has exited, without reaping it — the `WNOWAIT` peek
-/// `waitid` supports and `waitpid`/`Child::try_wait` don't. This is what
-/// lets `supervise` signal the process group (see `signal_process_group`)
-/// before reaping the leader: reaping is what frees the pid for reuse, and
-/// a group signal after that could hit an unrelated, newly spawned process
-/// that happened to receive it.
 #[cfg(unix)]
 fn child_exited_without_reaping(pid: u32) -> Result<bool, String> {
     let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
@@ -157,8 +138,6 @@ fn child_exited_without_reaping(pid: u32) -> Result<bool, String> {
             std::io::Error::last_os_error()
         ));
     }
-    // `waitid` sets `si_signo` to `SIGCHLD` once a tracked state change is
-    // ready to report; `WNOHANG` leaves it 0 when there is nothing yet.
     Ok(info.si_signo != 0)
 }
 
@@ -170,9 +149,7 @@ fn child_exited_without_reaping(_pid: u32) -> Result<bool, String> {
 fn signal_process_group(pid: u32) {
     #[cfg(unix)]
     {
-        // SAFETY: pid was made its own process-group leader (via
-        // `place_in_own_group`) before spawn, so this reaches only that
-        // run's descendants.
+        // SAFETY: pid is its own process-group leader (set before spawn); reaches only its descendants.
         unsafe {
             libc::killpg(pid as libc::pid_t, libc::SIGKILL);
         }
@@ -181,19 +158,11 @@ fn signal_process_group(pid: u32) {
     let _ = pid;
 }
 
-/// Blocks, bounded by `GROUP_KILL_GRACE`, until nothing in `pid`'s process
-/// group answers a signal-0 existence probe. Call only after the group's
-/// leader has been reaped (`Child::wait`): a zombie leader answers the
-/// probe too, so calling this first would spin for the full grace period
-/// on every case, leader included, rather than only when a straggler
-/// (a descendant `signal_process_group` also reached) is still dying.
 fn wait_for_process_group_to_die(pid: u32) {
     #[cfg(unix)]
     {
         let deadline = Instant::now() + GROUP_KILL_GRACE;
         while Instant::now() < deadline {
-            // signal 0 is an existence probe: killpg returns an error (ESRCH)
-            // once nothing in the group is left to signal.
             let anything_left = unsafe { libc::killpg(pid as libc::pid_t, 0) } == 0;
             if !anything_left {
                 break;
@@ -325,10 +294,6 @@ mod tests {
 
     #[test]
     fn exit_peek_does_not_reap_the_child() {
-        // The primitive `supervise` relies on to signal the process group
-        // before reaping the leader: it must observe the exit without
-        // consuming it, or a real `wait()` afterward would find nothing
-        // left to reap.
         let mut child = Command::new("sh").args(["-c", "exit 0"]).spawn().unwrap();
         let pid = child.id();
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -356,8 +321,7 @@ mod tests {
         assert_eq!(outcome.exit_code, Some(0));
 
         let pid = *pid.lock().unwrap();
-        // SAFETY: a signal-0 probe only checks whether the group exists; it
-        // sends nothing.
+        // SAFETY: a signal-0 probe only checks whether the group exists; it sends nothing.
         let probe = unsafe { libc::killpg(pid as libc::pid_t, 0) };
         assert_eq!(probe, -1);
         assert_eq!(

@@ -1,5 +1,5 @@
-// Roster-case execution: the run semantics `corpus/README.md` documents,
-// made real against a produced binary.
+//! Roster-case execution: the run semantics `corpus/README.md` documents,
+//! made real against a produced binary.
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -76,13 +76,6 @@ pub fn run_cases(
     }
 }
 
-/// Checks a passing case's `gap` against the manifest's evidence claim, independent
-/// of `expected`: a case that names a `[gaps]` entry carrying `evidence` is checked
-/// whether it is the gap's expected-fail case (an `unexpected-pass` candidate) or a
-/// case already flipped to `expected = "pass"` once the epic closed the gap (a
-/// `hand-rolled-pass` candidate otherwise reads as an ordinary pass). Returns `None`
-/// when the case names no gap, the gap carries no evidence claim, or the evidence is
-/// satisfied — the caller's own outcome for a bare pass then stands.
 fn evidence_override(
     case: &Case,
     gaps: &BTreeMap<String, GapEntry>,
@@ -228,10 +221,6 @@ fn execute(
     .into_iter()
     .flatten()
     .collect();
-    // `supervise` kills the case's whole process group before returning,
-    // whether the case exits on its own or hits its deadline, so nothing in
-    // it can still be writing into the sandbox by the time the one
-    // inventory read below runs.
     let supervised = exec::supervise(
         &mut child,
         Duration::from_secs(case.run.timeout_seconds),
@@ -349,32 +338,15 @@ fn normalize_lf(text: &str) -> String {
     text.replace("\r\n", "\n")
 }
 
-/// Bounds how many bytes a single call to `read_regular_file_no_follow` will
-/// read, and how many cumulative bytes `build_sandbox_inventory` will read
-/// across a whole sandbox. Exceeding it is a case error naming the size —
-/// the sandbox belongs to an untrusted produced app, so a `files`/
-/// `files_absent` assertion must never launch an unbounded read.
 pub(crate) const MAX_INVENTORIED_BYTES: u64 = 1024 * 1024;
 
-/// What a path in a `SandboxInventory` resolved to, without ever following
-/// a symlink.
 #[derive(Debug)]
 enum SandboxEntry {
     File(Vec<u8>),
     Directory,
-    /// A symlink, FIFO, socket, device, or anything else that isn't a
-    /// regular file or a directory.
     Other,
 }
 
-/// A snapshot of a case sandbox's directory tree, taken once by
-/// `build_sandbox_inventory` after `execute` confirms the case's whole
-/// process group is dead — nothing can still be writing into the sandbox by
-/// the time this exists. `files` and `files_absent` are lookups against it;
-/// neither touches the filesystem again. Keyed by the native relative
-/// `PathBuf`, not a lossily-converted string: a produced app is untrusted
-/// and could otherwise name a non-UTF-8 file whose lossy spelling collides
-/// with a legitimate expectation.
 #[derive(Debug, Default)]
 struct SandboxInventory {
     entries: BTreeMap<PathBuf, SandboxEntry>,
@@ -394,12 +366,6 @@ impl SandboxInventory {
     }
 }
 
-/// Walks `root` recursively, never following a symlink, and records every
-/// entry: a directory, a regular file (read in full and counted against
-/// `MAX_INVENTORIED_BYTES`), or `SandboxEntry::Other` for anything else
-/// (symlink, FIFO, socket, device). A symlinked directory is recorded as
-/// `Other` and not descended into, so a produced app cannot redirect the
-/// walk outside the sandbox by replacing a directory with a symlink.
 fn build_sandbox_inventory(root: &Path) -> Result<SandboxInventory, String> {
     let mut entries = BTreeMap::new();
     let mut total_bytes: u64 = 0;
@@ -412,10 +378,6 @@ fn build_sandbox_inventory(root: &Path) -> Result<SandboxInventory, String> {
             let entry = entry
                 .map_err(|err| format!("reading sandbox directory {}: {err}", rel_dir.display()))?;
             let rel = rel_dir.join(entry.file_name());
-            // `DirEntry::file_type` reads the directory-entry type directly
-            // (no extra syscall on most platforms) and, like
-            // `symlink_metadata`, never follows a final symlink — unlike
-            // `DirEntry::metadata`/`std::fs::metadata`, which do.
             let file_type = entry
                 .file_type()
                 .map_err(|err| format!("inspecting sandbox entry {}: {err}", rel.display()))?;
@@ -427,11 +389,6 @@ fn build_sandbox_inventory(root: &Path) -> Result<SandboxInventory, String> {
                     .metadata()
                     .map_err(|err| format!("inspecting sandbox entry {}: {err}", rel.display()))?;
                 let remaining = MAX_INVENTORIED_BYTES.saturating_sub(total_bytes);
-                // A cheap early exit for a grossly oversized file, before
-                // attempting to read it at all; the read below is the real
-                // enforcement (belt: nothing is still writing, by the time
-                // this runs, so `metadata.len()` is accurate; braces: the
-                // read itself is still bounded).
                 if metadata.len() > remaining {
                     return Err(format!(
                         "sandbox contents exceed the {MAX_INVENTORIED_BYTES}-byte inventory \
@@ -442,9 +399,6 @@ fn build_sandbox_inventory(root: &Path) -> Result<SandboxInventory, String> {
                 }
                 let bytes = read_regular_file_no_follow(&root.join(&rel), remaining)
                     .map_err(|err| format!("reading sandbox entry {}: {err}", rel.display()))?;
-                // The bytes actually read, not `metadata.len()`: the two
-                // can differ, and the cumulative budget must reflect what
-                // was truly consumed.
                 total_bytes = total_bytes.saturating_add(bytes.len() as u64);
                 entries.insert(rel, SandboxEntry::File(bytes));
             } else {
@@ -465,10 +419,6 @@ pub(crate) fn read_regular_file_no_follow(path: &Path, max_bytes: u64) -> Result
     }
     let file = open_no_follow(path).map_err(|err| err.to_string())?;
     let mut buf = Vec::new();
-    // Capped at the stream level, not just by the stat above: a file that
-    // grows between the stat and this read still can't make the read
-    // itself unbounded. The extra byte lets an oversized file be detected
-    // as a mismatch without reading past the cap.
     Read::take(file, max_bytes + 1)
         .read_to_end(&mut buf)
         .map_err(|err| err.to_string())?;

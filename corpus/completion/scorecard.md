@@ -37,16 +37,6 @@ python3 corpus/scorecard.py completion=corpus/completion/runs
 | kubelike | completion | 9.0.0 | 42/42 (100.0%) | 0 | 58/66 (87.9%) applicable; 150 planned: 58 pass, 8 fail, 84 N/A | 4 | 4 | 15m52s, 73,008 generated tokens | claude 2.1.252, claude-opus-5[1m] | single run |
 | pnpmlike | completion | 9.0.0 | 32/32 (100.0%) | 0 | 28/28 (100.0%) applicable; 60 planned: 28 pass, 32 N/A | 5 | 4 | 17m13s, 81,865 generated tokens | claude 2.1.252, claude-opus-5[1m] | single run |
 
-**Four of the six workaround and friction counts read 0 in the table this
-page first published.** The counter matched a line starting `1.`, `a)`, `-`,
-or a bold lead-in, but `brewlike`, `gcloudlike`, `kubelike` and `pnpmlike`
-all listed items as `(1)` or `(a)`, which none of those matched.
-`scorecard.py`'s counter now matches that form too, and the table above
-already reflects it: `brewlike` 4 workarounds and 6 frictions, `gcloudlike` 4
-and 5, `kubelike` 4 and 4, `pnpmlike` 5 and 4; `cargolike` (6 and 5) and
-`dockerlike` (5 and 5) were listed in a recognized form from the start and
-their cells were always right.
-
 ## What the first runs say
 
 **Two suites assert a help line standout does not write.** `dockerlike`'s two

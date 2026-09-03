@@ -94,9 +94,6 @@ fn batch_smoke_writes_both_scorecards_and_sanitized_evidence() {
     assert_eq!(rows[0]["archetype"], "smoke");
     assert_eq!(rows[0]["comparable"], "single run");
 
-    // One sanitized run directory landed directly under --out, beside the
-    // two scorecards and the batch's hidden scratch directory; its
-    // transcript never enters the checkout.
     let run_dirs: Vec<_> = std::fs::read_dir(&out_dir)
         .unwrap()
         .map(|entry| entry.unwrap().path())
@@ -130,9 +127,6 @@ fn batch_smoke_writes_both_scorecards_and_sanitized_evidence() {
     let report_text = std::fs::read_to_string(run_dir.join("report.json")).unwrap();
     assert!(!report_text.contains(scratch.path().to_str().unwrap()));
 
-    // The scratch run directory under --out/.scratch held only what
-    // sanitizing duplicated into --out; nothing survives there once the
-    // run completes.
     let scratch_runs: Vec<_> = std::fs::read_dir(out_dir.join(".scratch"))
         .unwrap()
         .map(|entry| entry.unwrap().path())
@@ -170,8 +164,6 @@ fn batch_rejects_an_out_dir_inside_the_source_checkout() {
     assert!(stderr.contains("inside source checkout"), "{stderr}");
 }
 
-/// Deletes `out_dir` on drop: `batch` creates it (via `create_dir_all`)
-/// before rejecting it as being inside the checkout.
 struct RemoveOnDrop(std::path::PathBuf);
 
 impl Drop for RemoveOnDrop {

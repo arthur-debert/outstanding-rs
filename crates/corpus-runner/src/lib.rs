@@ -287,7 +287,6 @@ pub fn reevaluate(config: &ReevaluationConfig) -> anyhow::Result<RunReport> {
         &config.workspace_root.join("app"),
     );
 
-    // Before schema 4 the recorded command is all that can be said about the agent.
     let provenance = match source.provenance {
         Some(stated) => stated,
         None => provenance::recorded(&source.session.agent_cmd),
@@ -406,10 +405,6 @@ fn evaluate_binary(
 ) -> Evaluation {
     match binary {
         Ok(binary) => {
-            // Read through the same no-follow, regular-file-only primitive
-            // the sandbox inventory reads case files with: a symlink,
-            // a non-regular file, or a read error is "evidence unknown",
-            // not "evidence absent".
             let app_cargo_toml = cases::read_regular_file_no_follow(
                 &app_dir.join("Cargo.toml"),
                 cases::MAX_INVENTORIED_BYTES,
@@ -509,10 +504,6 @@ pub fn print_summary(report: &RunReport) {
     }
 }
 
-/// The repository root that owns `docs_dir` (its canonical parent): the
-/// boundary a blind workspace's isolation is verified against, and the
-/// boundary [`require_outside_checkout`] rejects external paths for
-/// resolving inside.
 fn checkout_root(docs_dir: &Path) -> anyhow::Result<PathBuf> {
     docs_dir
         .canonicalize()
@@ -522,10 +513,6 @@ fn checkout_root(docs_dir: &Path) -> anyhow::Result<PathBuf> {
         .context("docs directory has no repository parent")
 }
 
-/// Rejects `path` when it resolves inside the source checkout that owns
-/// `docs_dir`: a workspace or scratch output living there would leak into
-/// the blind sandbox's exclusion boundary. `what` and `flag` name the
-/// rejected path and the CLI flag that set it, for the error.
 pub(crate) fn require_outside_checkout(
     path: &Path,
     docs_dir: &Path,

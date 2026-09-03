@@ -365,10 +365,6 @@ fn modern_schema5_report(archetype: &str) -> String {
     )
 }
 
-// A schema-5 source already carries a real, machine-verified record of its
-// own agent-phase isolation. Re-evaluation reruns only the check phase, so
-// that record is still true and must survive — not be replaced by the
-// historical-partial narrative a pre-instrumentation source falls back to.
 #[test]
 fn a_modern_source_keeps_its_own_blindness_record() {
     let fixture = fixture(&modern_schema5_report("fake"));
