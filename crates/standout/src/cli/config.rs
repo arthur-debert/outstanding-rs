@@ -2,6 +2,7 @@ use std::any::Any;
 use std::path::Path;
 
 use clap::{Arg, Command};
+use clapfig::runtime::{NamedField, Shape};
 use clapfig::value::Value;
 use clapfig::{
     ClapfigError, ConfigAction, ConfigCommand, ConfigResult, DocumentRoot, TypedBuilder,
@@ -92,6 +93,7 @@ const LINE_TEMPLATE: &str = "{{ line }}";
 pub(crate) fn config_result_output(
     result: ConfigResult,
     output_mode: OutputMode,
+    shape: &Shape,
 ) -> (Output<serde_json::Value>, TemplateRef) {
     let (line, structured) = match result {
         ConfigResult::Template(text) | ConfigResult::Schema(text) => {
@@ -100,13 +102,13 @@ pub(crate) fn config_result_output(
                 TemplateRef::Inline(LINE_TEMPLATE.to_string()),
             )
         }
-        ConfigResult::Listing { entries, rendered } => (rendered, nested_document(entries)),
+        ConfigResult::Listing { entries, rendered } => (rendered, nested_document(shape, entries)),
         ConfigResult::KeyValue {
             key,
             value,
             rendered,
             ..
-        } => (rendered, nested_document(vec![(key, value)])),
+        } => (rendered, nested_document(shape, vec![(key, value)])),
         ConfigResult::ValueSet {
             key,
             value,
@@ -133,26 +135,92 @@ pub(crate) fn config_result_output(
     )
 }
 
-fn nested_document(entries: Vec<(String, Value)>) -> serde_json::Value {
+fn nested_document(shape: &Shape, entries: Vec<(String, Value)>) -> serde_json::Value {
     let mut root = serde_json::Map::new();
     for (key, value) in entries {
-        let mut segments = key.split('.').peekable();
+        let segments = shape_segments(shape, &key).unwrap_or_else(|| dot_segments(&key));
+        let Some((leaf, parents)) = segments.split_last() else {
+            continue;
+        };
         let mut node = &mut root;
-        while let Some(segment) = segments.next() {
-            if segments.peek().is_none() {
-                node.insert(segment.to_string(), typed_value(&value));
-                break;
-            }
+        for segment in parents {
             let slot = node
-                .entry(segment)
+                .entry(segment.as_str())
                 .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
             if !slot.is_object() {
                 *slot = serde_json::Value::Object(serde_json::Map::new());
             }
             node = slot.as_object_mut().expect("just made an object");
         }
+        node.insert(leaf.clone(), typed_value(&value));
     }
     serde_json::Value::Object(root)
+}
+
+// clapfig flattens a map entry's own dots into the key it lists, so the
+// shape decides where a name ends: under a map the shortest prefix whose
+// tail the item shape accepts is the entry name.
+fn shape_segments(shape: &Shape, key: &str) -> Option<Vec<String>> {
+    if key.is_empty() {
+        return Some(Vec::new());
+    }
+    match shape {
+        Shape::Leaf(_) | Shape::Array(_) => Some(dot_segments(key)),
+        Shape::Object(schema) => field_segments(schema.fields.iter(), key),
+        Shape::Tagged(tagged) => {
+            let (head, rest) = split_head(key);
+            if same_key(&tagged.tag, head) {
+                return rest.is_empty().then(|| vec![head.to_string()]);
+            }
+            field_segments(
+                tagged.variants.iter().flat_map(|v| v.schema.fields.iter()),
+                key,
+            )
+        }
+        Shape::Map(map) => {
+            if listed_whole(&map.item) {
+                return Some(vec![key.to_string()]);
+            }
+            key.match_indices('.')
+                .map(|(at, _)| (&key[..at], &key[at + 1..]))
+                .chain(std::iter::once((key, "")))
+                .find_map(|(name, rest)| {
+                    shape_segments(&map.item, rest).map(|tail| prepend(name, tail))
+                })
+        }
+    }
+}
+
+fn field_segments<'a>(
+    fields: impl Iterator<Item = &'a NamedField>,
+    key: &str,
+) -> Option<Vec<String>> {
+    let (head, rest) = split_head(key);
+    fields
+        .filter(|field| same_key(&field.name, head))
+        .find_map(|field| shape_segments(&field.field, rest))
+        .map(|tail| prepend(head, tail))
+}
+
+fn listed_whole(shape: &Shape) -> bool {
+    matches!(shape, Shape::Leaf(_) | Shape::Array(_))
+}
+
+fn split_head(key: &str) -> (&str, &str) {
+    key.split_once('.').unwrap_or((key, ""))
+}
+
+fn prepend(head: &str, mut tail: Vec<String>) -> Vec<String> {
+    tail.insert(0, head.to_string());
+    tail
+}
+
+fn dot_segments(key: &str) -> Vec<String> {
+    key.split('.').map(str::to_string).collect()
+}
+
+fn same_key(declared: &str, typed: &str) -> bool {
+    declared.replace('-', "_") == typed.replace('-', "_")
 }
 
 fn typed_value(value: &Value) -> serde_json::Value {
@@ -222,6 +290,8 @@ pub(crate) type TermAccessor<C> = Box<dyn Fn(&C) -> &TermSettings>;
 pub(crate) trait ConfigSeam {
     fn attach_term_accessor(&mut self, accessor: Box<dyn Any>) -> Result<(), SetupError>;
 
+    fn shape(&self) -> Shape;
+
     fn resolve_at(
         &self,
         overrides: &[(String, String)],
@@ -284,12 +354,22 @@ impl<C: DocumentRoot + DeserializeOwned + 'static> ConfigSeam for TypedSeam<C> {
         Ok(ResolvedConfig::new(config, term))
     }
 
+    fn shape(&self) -> Shape {
+        C::shape()
+    }
+
     fn handle(
         &self,
         action: &ConfigAction,
         overrides: &[(String, String)],
     ) -> Result<ConfigResult, ClapfigError> {
-        self.builder_with(overrides).handle(action)
+        // clapfig validates a write candidate through every layer, so an
+        // override would vouch for a file the next run cannot load.
+        let builder = match action {
+            ConfigAction::List { .. } | ConfigAction::Get { .. } => self.builder_with(overrides),
+            _ => self.builder.clone(),
+        };
+        builder.handle(action)
     }
 }
 
@@ -389,6 +469,7 @@ pub(crate) fn parse_override_pair(raw: &str) -> Result<(String, String), String>
 mod tests {
     use super::*;
     use crate::cli::builder::OUTPUT_MODE_FLAG_VALUES;
+    use clapfig::Schema as _;
 
     #[test]
     fn term_output_spellings_are_the_output_flag_values() {
@@ -465,6 +546,20 @@ mod tests {
         );
     }
 
+    #[derive(Serialize, Deserialize, clapfig::Schema)]
+    struct Doc {
+        store: String,
+        term: TermSettings,
+        hosts: std::collections::HashMap<String, Host>,
+        labels: std::collections::HashMap<String, String>,
+        extra: Value,
+    }
+
+    #[derive(Serialize, Deserialize, clapfig::Schema)]
+    struct Host {
+        url: String,
+    }
+
     #[test]
     fn a_listing_nests_dotted_keys_into_one_object_tree() {
         let entries = vec![
@@ -473,8 +568,36 @@ mod tests {
             ("term.width".to_string(), Value::Integer(80)),
         ];
         assert_eq!(
-            nested_document(entries),
+            nested_document(&Doc::shape(), entries),
             json!({ "store": "todos.json", "term": { "output": "json", "width": 80 } })
+        );
+    }
+
+    #[test]
+    fn a_map_entry_keeps_its_own_dots_as_one_key() {
+        let entries = vec![
+            ("hosts.acme.prod.url".to_string(), Value::String("a".into())),
+            ("hosts.plain.url".to_string(), Value::String("p".into())),
+            ("labels.env.tier".to_string(), Value::String("t".into())),
+            ("extra.x.y".to_string(), Value::Integer(1)),
+            ("bogus.k".to_string(), Value::Integer(2)),
+        ];
+        assert_eq!(
+            nested_document(&Doc::shape(), entries),
+            json!({
+                "hosts": { "acme.prod": { "url": "a" }, "plain": { "url": "p" } },
+                "labels": { "env.tier": "t" },
+                "extra": { "x": { "y": 1 } },
+                "bogus": { "k": 2 }
+            })
+        );
+        let whole = vec![(
+            "hosts.acme.prod".to_string(),
+            Value::Map(Default::default()),
+        )];
+        assert_eq!(
+            nested_document(&Doc::shape(), whole),
+            json!({ "hosts": { "acme.prod": {} } })
         );
     }
 
@@ -483,7 +606,7 @@ mod tests {
         let result = ConfigResult::TemplateWritten {
             path: std::path::PathBuf::from("generated.toml"),
         };
-        let (output, _) = config_result_output(result, OutputMode::Json);
+        let (output, _) = config_result_output(result, OutputMode::Json, &Doc::shape());
         let Output::Render(data) = output else {
             panic!("a confirmation renders");
         };

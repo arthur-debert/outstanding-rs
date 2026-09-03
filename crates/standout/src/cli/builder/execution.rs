@@ -271,7 +271,7 @@ impl App {
             };
         ctx.extensions.insert(sources);
         let sub_matches = get_deepest_matches(matches);
-        let (output, template) = config_result_output(result, output_mode);
+        let (output, template) = config_result_output(result, output_mode, &seam.shape());
         let dispatch_output = match render_handler_output(
             Ok(output),
             sub_matches,
