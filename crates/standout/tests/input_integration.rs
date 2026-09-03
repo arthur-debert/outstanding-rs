@@ -6,6 +6,7 @@ use standout::input::{
     env::MockStdin, ArgSource, FlagSource, InputChain, InputSourceKind, InputSources,
     PromptResponse, ScriptedResponder, StdinSource, TextPromptSource,
 };
+use standout::ColorPolicy;
 use standout::EmbeddedTemplates;
 use standout::{AmbiguousWidth, ColorMode, IconMode, TargetProperties};
 use std::sync::Arc;
@@ -113,6 +114,7 @@ fn run_command_resolves_declared_input() {
                 Ok(Output::Render(json!({ "echo": body })))
             },
             standout::TemplateRef::Inline(("{{ echo }}").to_string()),
+            ColorPolicy::Auto,
             standout::cli::StreamSink::new(Vec::new()),
         )
         .expect("run_command should resolve the declared input");

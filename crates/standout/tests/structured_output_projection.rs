@@ -6,8 +6,9 @@ use standout::cli::{
     App, DispatchResult, ExitStatus, Output, RenderedOutput, RunErrorKind, SuccessKind,
 };
 use standout::tabular::{Column, Width};
+use standout::ColorPolicy;
 use standout::EmbeddedTemplates;
-use standout::{CsvProjection, OutputMode, StructuredOutputProjection};
+use standout::{CsvProjection, Representation, StructuredOutputProjection};
 
 const TEMPLATES: &[(&str, &str)] = &[
     ("summary", "unused"),
@@ -103,7 +104,7 @@ fn app() -> App {
         .unwrap()
 }
 
-fn direct_dispatch(app: &App, mode: OutputMode) -> String {
+fn direct_dispatch(app: &App, mode: Representation) -> String {
     let matches = command()
         .try_get_matches_from(["rustloc", "summary"])
         .unwrap();
@@ -128,30 +129,31 @@ fn run_command_and_dispatch_agree_on_csv_projection() {
             standout::TemplateRef::Inline(
                 ("{{ totals.files }} files / {{ totals.code }} lines").to_string(),
             ),
+            ColorPolicy::Auto,
             standout::cli::StreamSink::new(Vec::new()),
         )
         .expect("run_command should render csv");
 
     assert_eq!(via_run_command.as_text(), Some(EXPECTED_CSV));
     assert_eq!(via_run_command.as_raw_text(), Some(EXPECTED_CSV));
-    assert_eq!(direct_dispatch(&app, OutputMode::Csv), EXPECTED_CSV);
+    assert_eq!(direct_dispatch(&app, Representation::Csv), EXPECTED_CSV);
 }
 
 #[test]
 fn csv_projection_preserves_canonical_output_in_other_modes() {
     let app = app();
 
-    assert_eq!(direct_dispatch(&app, OutputMode::Csv), EXPECTED_CSV);
+    assert_eq!(direct_dispatch(&app, Representation::Csv), EXPECTED_CSV);
     assert_eq!(
-        direct_dispatch(&app, OutputMode::Text),
+        direct_dispatch(&app, Representation::Human),
         "5 files / 190 lines"
     );
 
-    let json: Value = serde_json::from_str(&direct_dispatch(&app, OutputMode::Json)).unwrap();
+    let json: Value = serde_json::from_str(&direct_dispatch(&app, Representation::Json)).unwrap();
     assert_eq!(json, response());
 
     // The declared order is not alphabetical, so a sort would show.
-    let yaml = direct_dispatch(&app, OutputMode::Yaml);
+    let yaml = direct_dispatch(&app, Representation::Yaml);
     assert!(yaml.contains("report:"));
     assert!(yaml.contains("paths:"));
     assert!(yaml.find("report:") < yaml.find("totals:"));
@@ -171,7 +173,7 @@ fn commands_without_a_projection_take_flat_records() {
         .build()
         .unwrap();
 
-    assert_eq!(direct_dispatch(&app, OutputMode::Csv), "name\nalpha\n");
+    assert_eq!(direct_dispatch(&app, Representation::Csv), "name\nalpha\n");
 }
 
 #[test]
@@ -271,7 +273,7 @@ fn projection_runs_between_post_dispatch_and_post_output() {
         .build()
         .unwrap();
 
-    let csv = direct_dispatch(&app, OutputMode::Csv);
+    let csv = direct_dispatch(&app, Representation::Csv);
     assert!(csv.starts_with("LANGUAGE,FILES,CODE,NET\nRust (hooked),"));
     assert!(csv.ends_with("POST-OUTPUT\n"));
 }

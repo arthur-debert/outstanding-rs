@@ -1,6 +1,6 @@
 use clap::{Arg, Command};
 use standout::cli::{render_help, HelpConfig, HelpLength, HelpResult};
-use standout::OutputMode;
+use standout::Representation;
 use standout_fixtures::{downstream, Fixture};
 
 fn page(fixture: &Fixture, args: &[&str]) -> String {
@@ -89,7 +89,7 @@ fn short_names_keep_the_floor_width() {
         .arg(Arg::new("out").long("out").help("Output"));
 
     let config = HelpConfig {
-        output_mode: Some(OutputMode::Text),
+        output_mode: Some(Representation::Human),
         ..Default::default()
     };
     let output = render_help(&cmd, Some(config)).unwrap();
@@ -133,7 +133,7 @@ fn long_help_falls_back_to_about_when_no_long_about() {
         .about("Only terse");
 
     let config = HelpConfig {
-        output_mode: Some(OutputMode::Text),
+        output_mode: Some(Representation::Human),
         length: HelpLength::Long,
         ..Default::default()
     };
@@ -145,9 +145,8 @@ fn long_help_falls_back_to_about_when_no_long_about() {
 fn option_rows_carry_defaults_and_possible_values() {
     let output = help_for(&["lookma", "--help"]);
 
-    assert!(output.contains("default: auto"), "{output}");
     assert!(
-        output.contains("possible values: auto, term, text, term-debug, json, yaml, csv"),
+        output.contains("possible values: json, yaml, csv, ndjson, term-debug"),
         "{output}"
     );
 }
@@ -194,7 +193,7 @@ fn presence_flags_do_not_render_bool_values() {
 fn default_and_values_lines_align_with_descriptions() {
     let output = help_for(&["lookma", "--help"]);
 
-    let description = description_column(&output, "--output", "Output format");
+    let description = description_column(&output, "--output", "Structured output encoding");
     let default = row(&output, "default:").find("default:").unwrap();
     let values = row(&output, "possible values:")
         .find("possible values:")
@@ -318,7 +317,7 @@ fn the_version_flag_clap_generates_gets_a_row() {
     let output = render_help(
         &cmd,
         Some(HelpConfig {
-            output_mode: Some(OutputMode::Text),
+            output_mode: Some(Representation::Human),
             ..Default::default()
         }),
     )

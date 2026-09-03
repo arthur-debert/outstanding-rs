@@ -1,10 +1,12 @@
-//! [`OutputMode`] controls how rendering behaves, from terminal colors to
-//! structured serialization (JSON/YAML/CSV/NDJSON, which skip template
-//! rendering entirely). `Ndjson` is the one stream mode: stdout is a sequence
-//! of one-line JSON entries rather than a single document. `Auto` is resolved
-//! from the request ([`crate::ColorPolicy::Auto`] plus stdout capability on
-//! [`crate::TargetProperties`]) by callers at the edge — this module never
-//! probes the process itself while applying styles.
+//! [`Representation`] is what a run puts on stdout: the human template, its
+//! style-tag diagnostic view, or one of the structured encodings, which skip
+//! template rendering entirely. `Ndjson` is the one representation whose
+//! stdout is a sequence of one-line JSON entries rather than a single
+//! document. [`StyleMode`] is the separate decision of whether rendered human
+//! text carries escape sequences; [`crate::request`] resolves it from the
+//! representation, the [`crate::ColorPolicy`] and stdout capability on
+//! [`crate::TargetProperties`], and this module never probes the process
+//! itself while applying styles.
 
 use std::io::Write;
 
@@ -60,12 +62,12 @@ pub fn write_binary_output(content: &[u8], dest: &OutputDestination) -> std::io:
     }
 }
 
+/// What the run produces on stdout. The human template has no `--output`
+/// spelling; `term-debug` is the diagnostic view of its style tags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum OutputMode {
+pub enum Representation {
     #[default]
-    Auto,
-    Term,
-    Text,
+    Human,
     TermDebug,
     Json,
     Yaml,
@@ -73,25 +75,49 @@ pub enum OutputMode {
     Ndjson,
 }
 
-impl OutputMode {
-    pub fn should_use_color(&self) -> bool {
-        matches!(self, OutputMode::Term)
+impl Representation {
+    pub fn is_human(&self) -> bool {
+        matches!(self, Representation::Human | Representation::TermDebug)
     }
 
     pub fn is_debug(&self) -> bool {
-        matches!(self, OutputMode::TermDebug)
+        matches!(self, Representation::TermDebug)
     }
 
     pub fn is_structured(&self) -> bool {
         matches!(
             self,
-            OutputMode::Json | OutputMode::Yaml | OutputMode::Csv | OutputMode::Ndjson
+            Representation::Json
+                | Representation::Yaml
+                | Representation::Csv
+                | Representation::Ndjson
         )
     }
 
-    /// True only for `Ndjson`, the one mode whose stdout is a stream of entries.
+    /// True only for `Ndjson`, the one representation whose stdout is a stream of entries.
     pub fn is_stream(&self) -> bool {
-        matches!(self, OutputMode::Ndjson)
+        matches!(self, Representation::Ndjson)
+    }
+}
+
+/// Whether rendered human text carries escape sequences. Resolved per run from
+/// the representation, the color policy and the destination; a structured
+/// encoding never reaches a style decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StyleMode {
+    Ansi,
+    #[default]
+    Plain,
+    Debug,
+}
+
+impl StyleMode {
+    pub fn should_use_color(&self) -> bool {
+        matches!(self, StyleMode::Ansi)
+    }
+
+    pub fn is_debug(&self) -> bool {
+        matches!(self, StyleMode::Debug)
     }
 }
 
@@ -100,74 +126,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_output_mode_term_should_use_color() {
-        assert!(OutputMode::Term.should_use_color());
+    fn the_default_representation_is_the_human_template() {
+        assert_eq!(Representation::default(), Representation::Human);
+        assert!(Representation::Human.is_human());
+        assert!(!Representation::Human.is_structured());
+        assert!(!Representation::Human.is_debug());
     }
 
     #[test]
-    fn test_output_mode_text_should_not_use_color() {
-        assert!(!OutputMode::Text.should_use_color());
+    fn term_debug_is_a_human_representation_with_a_debug_style() {
+        assert!(Representation::TermDebug.is_human());
+        assert!(Representation::TermDebug.is_debug());
+        assert!(!Representation::TermDebug.is_structured());
+        assert!(StyleMode::Debug.is_debug());
+        assert!(!StyleMode::Debug.should_use_color());
     }
 
     #[test]
-    fn test_output_mode_default_is_auto() {
-        assert_eq!(OutputMode::default(), OutputMode::Auto);
-    }
-
-    #[test]
-    fn test_output_mode_term_debug_is_debug() {
-        assert!(OutputMode::TermDebug.is_debug());
-        assert!(!OutputMode::Auto.is_debug());
-        assert!(!OutputMode::Term.is_debug());
-        assert!(!OutputMode::Text.is_debug());
-        assert!(!OutputMode::Json.is_debug());
-    }
-
-    #[test]
-    fn test_output_mode_term_debug_should_not_use_color() {
-        assert!(!OutputMode::TermDebug.should_use_color());
-    }
-
-    #[test]
-    fn test_output_mode_json_should_not_use_color() {
-        assert!(!OutputMode::Json.should_use_color());
-    }
-
-    #[test]
-    fn test_output_mode_json_is_structured() {
-        assert!(OutputMode::Json.is_structured());
-    }
-
-    #[test]
-    fn ndjson_is_the_one_structured_stream_mode() {
-        assert!(OutputMode::Ndjson.is_structured());
-        assert!(OutputMode::Ndjson.is_stream());
-        assert!(!OutputMode::Ndjson.should_use_color());
-        assert!(!OutputMode::Ndjson.is_debug());
-        for mode in [
-            OutputMode::Auto,
-            OutputMode::Term,
-            OutputMode::Text,
-            OutputMode::TermDebug,
-            OutputMode::Json,
-            OutputMode::Yaml,
-            OutputMode::Csv,
+    fn ndjson_is_the_one_structured_stream_representation() {
+        assert!(Representation::Ndjson.is_structured());
+        assert!(Representation::Ndjson.is_stream());
+        for representation in [
+            Representation::Human,
+            Representation::TermDebug,
+            Representation::Json,
+            Representation::Yaml,
+            Representation::Csv,
         ] {
-            assert!(!mode.is_stream(), "{mode:?}");
+            assert!(!representation.is_stream(), "{representation:?}");
         }
     }
 
     #[test]
-    fn test_output_mode_non_json_not_structured() {
-        assert!(!OutputMode::Auto.is_structured());
-        assert!(!OutputMode::Term.is_structured());
-        assert!(!OutputMode::Text.is_structured());
-        assert!(!OutputMode::TermDebug.is_structured());
-    }
-
-    #[test]
-    fn test_output_mode_json_not_debug() {
-        assert!(!OutputMode::Json.is_debug());
+    fn only_the_ansi_style_mode_colors() {
+        assert!(StyleMode::Ansi.should_use_color());
+        assert!(!StyleMode::Plain.should_use_color());
+        assert_eq!(StyleMode::default(), StyleMode::Plain);
     }
 
     #[test]

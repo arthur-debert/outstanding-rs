@@ -49,8 +49,10 @@ concept beyond the seam itself.
 - **Output mode is app-selectable** (#356): `AppBuilder` gains the configured fallback
   ROB04 stubbed — the mode used when the flag is absent. Precedence stays the ROB04
   composition contract, `flag > later config > App fallback`: an explicit `--output`
-  always wins, which is what systemdlike's suite asserts (`--output text`/`term`
-  outranks `SYSTEMDLIKE_COLORS`, `NO_COLOR` and detection). The env-driven case the
+  always wins, which is what systemdlike's suite asserted (`--output text`/`term`
+  outranks `SYSTEMDLIKE_COLORS`, `NO_COLOR` and detection); TERM01-WS02 retires those
+  two flag values, so those cases and the suite's `text`/`term` invariant cells are
+  gone until WS08 (#519) re-accepts the member against `--color`. The env-driven case the
   pilot hit is a fallback computed by the app at build time, not an override; forcing
   color regardless of mode is ANSI presentation (`docs/spec/typed-command-output.md`),
   which has its own precedence contract. Appending the app's own `--output` to the

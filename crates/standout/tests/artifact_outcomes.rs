@@ -7,6 +7,7 @@ use standout::cli::{
     OutputKind, RunErrorKind,
 };
 use standout::cli::{Artifact, RenderedOutput};
+use standout::ColorPolicy;
 use standout::EmbeddedTemplates;
 
 const BYTES: &[u8] = b"id,title\n1,buy milk\n";
@@ -565,6 +566,7 @@ fn run_command_hands_back_the_pending_artifact_without_writing() {
                 ))
             },
             standout::TemplateRef::Inline((TEMPLATE).to_string()),
+            ColorPolicy::Auto,
             standout::cli::StreamSink::new(Vec::new()),
         )
         .unwrap();

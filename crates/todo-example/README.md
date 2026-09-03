@@ -247,7 +247,7 @@ echo "write tests" | TDOO__STORE=/tmp/tdoo.json cargo run -p tdoo -- add
 # Standout output modes.
 TDOO__STORE=/tmp/tdoo.json cargo run -p tdoo -- list --output json
 TDOO__STORE=/tmp/tdoo.json cargo run -p tdoo -- list --output yaml
-TDOO__STORE=/tmp/tdoo.json cargo run -p tdoo -- list --output text
+TDOO__STORE=/tmp/tdoo.json cargo run -p tdoo -- list
 
 # Compound artifact: Standout owns the destination and the write.
 TDOO__STORE=/tmp/tdoo.json cargo run -p tdoo -- export                 # writes ./todos.csv

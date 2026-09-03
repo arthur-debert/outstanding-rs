@@ -9,40 +9,32 @@ use std::collections::HashMap;
 use super::engine::{MiniJinjaEngine, TemplateEngine};
 use crate::context::{ContextRegistry, RenderContext};
 use crate::error::RenderError;
-use crate::output::OutputMode;
-use crate::request::{convenience_request, TargetProperties};
+use crate::output::{Representation, StyleMode};
+use crate::request::{convenience_request, ColorPolicy, TargetProperties};
 use crate::style::Styles;
 use crate::tabular::FlatDataSpec;
 use crate::theme::{ColorMode, IconMode, Theme};
 use crate::{render_request, TemplateRef};
 
-// OutputMode::Auto must already be resolved by the request (format +
-// ColorPolicy + stdout capability); unresolved Auto strips tags rather than
-// probing a detector.
-fn output_mode_to_transform(mode: OutputMode) -> TagTransform {
-    match mode {
-        OutputMode::Term => TagTransform::Apply,
-        OutputMode::TermDebug => TagTransform::Keep,
-        OutputMode::Auto
-        | OutputMode::Text
-        | OutputMode::Json
-        | OutputMode::Yaml
-        | OutputMode::Csv
-        | OutputMode::Ndjson => TagTransform::Remove,
+fn style_to_transform(style: StyleMode) -> TagTransform {
+    match style {
+        StyleMode::Ansi => TagTransform::Apply,
+        StyleMode::Debug => TagTransform::Keep,
+        StyleMode::Plain => TagTransform::Remove,
     }
 }
 
-pub fn apply_style_tags(output: &str, styles: &Styles, mode: OutputMode) -> String {
-    apply_style_tags_with(output, styles, mode, None)
+pub fn apply_style_tags(output: &str, styles: &Styles, style: StyleMode) -> String {
+    apply_style_tags_with(output, styles, style, None)
 }
 
 pub fn apply_style_tags_with(
     output: &str,
     styles: &Styles,
-    mode: OutputMode,
+    style: StyleMode,
     warnings: Option<&crate::warnings::WarningBuffer>,
 ) -> String {
-    let transform = output_mode_to_transform(mode);
+    let transform = style_to_transform(style);
     let mut resolved = styles.to_resolved_map();
     if transform == TagTransform::Apply {
         // Forces ANSI regardless of console::colors_enabled(), so a non-TTY
@@ -103,14 +95,21 @@ pub fn render<T: Serialize>(
     data: &T,
     theme: &Theme,
 ) -> Result<String, RenderError> {
-    render_with_output(template, data, theme, OutputMode::Auto)
+    render_with_output(
+        template,
+        data,
+        theme,
+        Representation::Human,
+        ColorPolicy::Auto,
+    )
 }
 
 fn detect_then_render<T: Serialize>(
     template: &str,
     data: &T,
     theme: &Theme,
-    format: OutputMode,
+    format: Representation,
+    color_policy: ColorPolicy,
     overlay: impl FnOnce(&mut TargetProperties),
 ) -> Result<String, RenderError> {
     let mut target = TargetProperties::detect();
@@ -120,6 +119,7 @@ fn detect_then_render<T: Serialize>(
         serde_json::to_value(data)?,
         theme.clone(),
         format,
+        color_policy,
         target,
         None,
         None,
@@ -132,28 +132,38 @@ pub fn render_with_output<T: Serialize>(
     template: &str,
     data: &T,
     theme: &Theme,
-    mode: OutputMode,
+    representation: Representation,
+    color_policy: ColorPolicy,
 ) -> Result<String, RenderError> {
-    detect_then_render(template, data, theme, mode, |_| {})
+    detect_then_render(template, data, theme, representation, color_policy, |_| {})
 }
 
 pub fn render_with_mode<T: Serialize>(
     template: &str,
     data: &T,
     theme: &Theme,
-    output_mode: OutputMode,
+    representation: Representation,
+    color_policy: ColorPolicy,
     color_mode: ColorMode,
 ) -> Result<String, RenderError> {
-    detect_then_render(template, data, theme, output_mode, |target| {
-        target.color_scheme = color_mode;
-    })
+    detect_then_render(
+        template,
+        data,
+        theme,
+        representation,
+        color_policy,
+        |target| {
+            target.color_scheme = color_mode;
+        },
+    )
 }
 
 pub fn render_with_vars<T, K, V, I>(
     template: &str,
     data: &T,
     theme: &Theme,
-    mode: OutputMode,
+    representation: Representation,
+    color_policy: ColorPolicy,
     vars: I,
 ) -> Result<String, RenderError>
 where
@@ -170,7 +180,8 @@ where
         TemplateRef::Inline(template.to_string()),
         serde_json::to_value(data)?,
         theme.clone(),
-        mode,
+        representation,
+        color_policy,
         TargetProperties::detect(),
         Some(registry),
         None,
@@ -183,19 +194,21 @@ pub fn render_auto<T: Serialize>(
     template: &str,
     data: &T,
     theme: &Theme,
-    mode: OutputMode,
+    representation: Representation,
+    color_policy: ColorPolicy,
 ) -> Result<String, RenderError> {
-    detect_then_render(template, data, theme, mode, |_| {})
+    detect_then_render(template, data, theme, representation, color_policy, |_| {})
 }
 
 pub fn render_auto_with_spec<T: Serialize>(
     template: &str,
     data: &T,
     theme: &Theme,
-    mode: OutputMode,
+    representation: Representation,
+    color_policy: ColorPolicy,
     spec: Option<&FlatDataSpec>,
 ) -> Result<String, RenderError> {
-    if mode == OutputMode::Csv {
+    if representation == Representation::Csv {
         if let Some(s) = spec {
             let value = serde_json::to_value(data)?;
             let headers = s.extract_header();
@@ -214,14 +227,16 @@ pub fn render_auto_with_spec<T: Serialize>(
             return Ok(String::from_utf8(bytes)?);
         }
     }
-    detect_then_render(template, data, theme, mode, |_| {})
+    detect_then_render(template, data, theme, representation, color_policy, |_| {})
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn render_with_context<T: Serialize>(
     template: &str,
     data: &T,
     theme: &Theme,
-    mode: OutputMode,
+    representation: Representation,
+    color_policy: ColorPolicy,
     context_registry: &ContextRegistry,
     render_context: &RenderContext,
     template_registry: Option<&super::TemplateRegistry>,
@@ -239,7 +254,8 @@ pub fn render_with_context<T: Serialize>(
         template_ref,
         serde_json::to_value(data)?,
         theme.clone(),
-        mode,
+        representation,
+        color_policy,
         target,
         Some(context_registry.clone()),
         template_registry.map(|registry| std::rc::Rc::new(registry.clone())),
@@ -249,11 +265,13 @@ pub fn render_with_context<T: Serialize>(
     render_request(&request)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn render_auto_with_context<T: Serialize>(
     template: &str,
     data: &T,
     theme: &Theme,
-    mode: OutputMode,
+    representation: Representation,
+    color_policy: ColorPolicy,
     context_registry: &ContextRegistry,
     render_context: &RenderContext,
     template_registry: Option<&super::TemplateRegistry>,
@@ -262,7 +280,8 @@ pub fn render_auto_with_context<T: Serialize>(
         template,
         data,
         theme,
-        mode,
+        representation,
+        color_policy,
         context_registry,
         render_context,
         template_registry,
@@ -311,7 +330,7 @@ pub fn render_auto_with_engine(
     template: &str,
     data: &serde_json::Value,
     theme: &Theme,
-    mode: OutputMode,
+    style: StyleMode,
     context_registry: &ContextRegistry,
     render_context: &RenderContext,
 ) -> Result<String, RenderError> {
@@ -320,7 +339,7 @@ pub fn render_auto_with_engine(
         template,
         data,
         theme,
-        mode,
+        style,
         context_registry,
         render_context,
     )?
@@ -332,7 +351,7 @@ pub fn render_auto_with_engine_split(
     template: &str,
     data: &serde_json::Value,
     theme: &Theme,
-    mode: OutputMode,
+    style: StyleMode,
     context_registry: &ContextRegistry,
     render_context: &RenderContext,
 ) -> Result<RenderResult, RenderError> {
@@ -342,7 +361,7 @@ pub fn render_auto_with_engine_split(
         TemplateIdentity::Auto(template),
         data,
         theme,
-        mode,
+        style,
         context_registry,
         render_context,
         detected.color_scheme,
@@ -355,7 +374,7 @@ pub fn render_auto_with_engine_split_inline(
     template: &str,
     data: &serde_json::Value,
     theme: &Theme,
-    mode: OutputMode,
+    style: StyleMode,
     context_registry: &ContextRegistry,
     render_context: &RenderContext,
 ) -> Result<RenderResult, RenderError> {
@@ -365,7 +384,7 @@ pub fn render_auto_with_engine_split_inline(
         template,
         data,
         theme,
-        mode,
+        style,
         context_registry,
         render_context,
         detected.color_scheme,
@@ -379,7 +398,7 @@ pub(crate) fn render_engine_split_inline(
     template: &str,
     data: &serde_json::Value,
     theme: &Theme,
-    mode: OutputMode,
+    style: StyleMode,
     context_registry: &ContextRegistry,
     render_context: &RenderContext,
     color_mode: ColorMode,
@@ -390,7 +409,7 @@ pub(crate) fn render_engine_split_inline(
         TemplateIdentity::Inline(template),
         data,
         theme,
-        mode,
+        style,
         context_registry,
         render_context,
         color_mode,
@@ -403,7 +422,7 @@ pub fn render_auto_with_engine_split_named(
     name: &str,
     data: &serde_json::Value,
     theme: &Theme,
-    mode: OutputMode,
+    style: StyleMode,
     context_registry: &ContextRegistry,
     render_context: &RenderContext,
 ) -> Result<RenderResult, RenderError> {
@@ -413,7 +432,7 @@ pub fn render_auto_with_engine_split_named(
         name,
         data,
         theme,
-        mode,
+        style,
         context_registry,
         render_context,
         detected.color_scheme,
@@ -427,7 +446,7 @@ pub(crate) fn render_engine_split_named(
     name: &str,
     data: &serde_json::Value,
     theme: &Theme,
-    mode: OutputMode,
+    style: StyleMode,
     context_registry: &ContextRegistry,
     render_context: &RenderContext,
     color_mode: ColorMode,
@@ -438,7 +457,7 @@ pub(crate) fn render_engine_split_named(
         TemplateIdentity::Named(name),
         data,
         theme,
-        mode,
+        style,
         context_registry,
         render_context,
         color_mode,
@@ -458,22 +477,13 @@ fn render_auto_with_engine_split_kind(
     template: TemplateIdentity<'_>,
     data: &serde_json::Value,
     theme: &Theme,
-    mode: OutputMode,
+    style: StyleMode,
     context_registry: &ContextRegistry,
     render_context: &RenderContext,
     color_mode: ColorMode,
     icon_mode: IconMode,
 ) -> Result<RenderResult, RenderError> {
-    if mode.is_structured() {
-        let output = match mode {
-            OutputMode::Json => serde_json::to_string_pretty(data)?,
-            OutputMode::Yaml => serde_yaml::to_string(data)?,
-            OutputMode::Csv => crate::util::write_csv(data)?,
-            OutputMode::Ndjson => crate::document::result_entry(data)?,
-            _ => unreachable!("is_structured() returned true for non-structured mode"),
-        };
-        Ok(RenderResult::plain(output))
-    } else {
+    {
         let styles = theme.resolve_styles(Some(color_mode));
 
         styles
@@ -510,10 +520,14 @@ fn render_auto_with_engine_split_kind(
         };
 
         // Unresolved-tag warnings are recorded once, on this formatted pass.
-        let formatted_output =
-            apply_style_tags_with(&raw_output, &styles, mode, render_context.warnings.as_ref());
+        let formatted_output = apply_style_tags_with(
+            &raw_output,
+            &styles,
+            style,
+            render_context.warnings.as_ref(),
+        );
 
-        let stripped_output = apply_style_tags(&raw_output, &styles, OutputMode::Text);
+        let stripped_output = apply_style_tags(&raw_output, &styles, StyleMode::Plain);
 
         Ok(RenderResult::new(formatted_output, stripped_output))
     }
@@ -551,7 +565,8 @@ mod tests {
             r#"[red]{{ message }}[/red]"#,
             &data,
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
         )
         .unwrap();
 
@@ -570,7 +585,8 @@ mod tests {
             r#"[green]{{ message }}[/green]"#,
             &data,
             &theme,
-            OutputMode::Term,
+            Representation::Human,
+            ColorPolicy::Always,
         )
         .unwrap();
 
@@ -589,7 +605,8 @@ mod tests {
             r#"[unknown]{{ message }}[/unknown]"#,
             &data,
             &theme,
-            OutputMode::Term,
+            Representation::Human,
+            ColorPolicy::Always,
         )
         .unwrap();
 
@@ -607,7 +624,8 @@ mod tests {
             r#"[unknown]{{ message }}[/unknown]"#,
             &data,
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
         )
         .unwrap();
 
@@ -625,7 +643,14 @@ mod tests {
         let template = r#"{% for item in items %}[item]{{ item }}[/item]
 {% endfor %}"#;
 
-        let output = render_with_output(template, &data, &theme, OutputMode::Text).unwrap();
+        let output = render_with_output(
+            template,
+            &data,
+            &theme,
+            Representation::Human,
+            ColorPolicy::Never,
+        )
+        .unwrap();
         assert_eq!(output, "one\ntwo\n");
     }
 
@@ -638,7 +663,14 @@ mod tests {
         };
 
         let template = r#"Total: [count]{{ count }}[/count] items"#;
-        let output = render_with_output(template, &data, &theme, OutputMode::Text).unwrap();
+        let output = render_with_output(
+            template,
+            &data,
+            &theme,
+            Representation::Human,
+            ColorPolicy::Never,
+        )
+        .unwrap();
 
         assert_eq!(output, "Total: 42 items");
     }
@@ -654,7 +686,8 @@ mod tests {
             r#"[header]Header[/header]"#,
             &Empty {},
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
         )
         .unwrap();
 
@@ -668,7 +701,14 @@ mod tests {
         #[derive(Serialize)]
         struct Empty {}
 
-        let output = render_with_output("", &Empty {}, &theme, OutputMode::Text).unwrap();
+        let output = render_with_output(
+            "",
+            &Empty {},
+            &theme,
+            Representation::Human,
+            ColorPolicy::Never,
+        )
+        .unwrap();
         assert_eq!(output, "");
     }
 
@@ -679,7 +719,13 @@ mod tests {
         #[derive(Serialize)]
         struct Empty {}
 
-        let result = render_with_output("{{ unclosed", &Empty {}, &theme, OutputMode::Text);
+        let result = render_with_output(
+            "{{ unclosed",
+            &Empty {},
+            &theme,
+            Representation::Human,
+            ColorPolicy::Never,
+        );
         assert!(result.is_err());
     }
 
@@ -713,7 +759,14 @@ mod tests {
         let template = r#"{% for item in items %}[name]{{ item.name }}[/name]={{ item.value }}
 {% endfor %}"#;
 
-        let output = render_with_output(template, &data, &theme, OutputMode::Text).unwrap();
+        let output = render_with_output(
+            template,
+            &data,
+            &theme,
+            Representation::Human,
+            ColorPolicy::Never,
+        )
+        .unwrap();
         assert_eq!(output, "foo=1\nbar=2\n");
     }
 
@@ -738,7 +791,8 @@ mod tests {
             r#"[title]{{ name }}[/title]: [count]{{ value }}[/count]"#,
             &data,
             &theme,
-            OutputMode::TermDebug,
+            Representation::TermDebug,
+            ColorPolicy::Auto,
         )
         .unwrap();
 
@@ -762,7 +816,8 @@ mod tests {
             r#"[unknown]{{ message }}[/unknown]"#,
             &data,
             &theme,
-            OutputMode::TermDebug,
+            Representation::TermDebug,
+            ColorPolicy::Auto,
         )
         .unwrap();
 
@@ -772,7 +827,8 @@ mod tests {
             r#"[known]{{ message }}[/known]"#,
             &data,
             &theme,
-            OutputMode::TermDebug,
+            Representation::TermDebug,
+            ColorPolicy::Auto,
         )
         .unwrap();
 
@@ -786,7 +842,14 @@ mod tests {
         let theme = Theme::new();
         let data = json!({"name": "test", "count": 42});
 
-        let output = render_auto("unused template", &data, &theme, OutputMode::Json).unwrap();
+        let output = render_auto(
+            "unused template",
+            &data,
+            &theme,
+            Representation::Json,
+            ColorPolicy::Auto,
+        )
+        .unwrap();
 
         assert!(output.contains("\"name\": \"test\""));
         assert!(output.contains("\"count\": 42"));
@@ -799,7 +862,14 @@ mod tests {
         let theme = Theme::new();
         let data = json!({"name": "test"});
 
-        let output = render_auto("Name: {{ name }}", &data, &theme, OutputMode::Text).unwrap();
+        let output = render_auto(
+            "Name: {{ name }}",
+            &data,
+            &theme,
+            Representation::Human,
+            ColorPolicy::Never,
+        )
+        .unwrap();
 
         assert_eq!(output, "Name: test");
     }
@@ -815,7 +885,8 @@ mod tests {
             r#"[bold]{{ name }}[/bold]"#,
             &data,
             &theme,
-            OutputMode::Term,
+            Representation::Human,
+            ColorPolicy::Always,
         )
         .unwrap();
 
@@ -837,7 +908,14 @@ mod tests {
             items: vec!["one".into(), "two".into()],
         };
 
-        let output = render_auto("unused", &data, &theme, OutputMode::Json).unwrap();
+        let output = render_auto(
+            "unused",
+            &data,
+            &theme,
+            Representation::Json,
+            ColorPolicy::Auto,
+        )
+        .unwrap();
 
         assert!(output.contains("\"title\": \"Summary\""));
         assert!(output.contains("\"items\""));
@@ -854,7 +932,8 @@ mod tests {
             r#"[alias]text[/alias]"#,
             &serde_json::json!({}),
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
         )
         .unwrap();
 
@@ -872,7 +951,8 @@ mod tests {
             r#"[timestamp]12:00[/timestamp]"#,
             &serde_json::json!({}),
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
         )
         .unwrap();
 
@@ -887,7 +967,8 @@ mod tests {
             r#"[orphan]text[/orphan]"#,
             &serde_json::json!({}),
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
         );
 
         assert!(result.is_err());
@@ -904,7 +985,8 @@ mod tests {
             r#"[a]text[/a]"#,
             &serde_json::json!({}),
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
         );
 
         assert!(result.is_err());
@@ -930,7 +1012,8 @@ mod tests {
             r#"[timestamp]{{ time }}[/timestamp] - [title]{{ name }}[/title]"#,
             &serde_json::json!({"time": "12:00", "name": "Report"}),
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
         )
         .unwrap();
 
@@ -944,7 +1027,14 @@ mod tests {
         let theme = Theme::new();
         let data = json!({"name": "test", "count": 42});
 
-        let output = render_auto("unused template", &data, &theme, OutputMode::Yaml).unwrap();
+        let output = render_auto(
+            "unused template",
+            &data,
+            &theme,
+            Representation::Yaml,
+            ColorPolicy::Auto,
+        )
+        .unwrap();
 
         assert!(output.contains("name: test"));
         assert!(output.contains("count: 42"));
@@ -960,7 +1050,14 @@ mod tests {
             {"name": "Bob", "score": 20}
         ]);
 
-        let output = render_auto("unused", &data, &theme, OutputMode::Csv).unwrap();
+        let output = render_auto(
+            "unused",
+            &data,
+            &theme,
+            Representation::Csv,
+            ColorPolicy::Auto,
+        )
+        .unwrap();
 
         assert_eq!(output, "name,score\nAlice,10\nBob,20\n");
     }
@@ -975,7 +1072,14 @@ mod tests {
             {"name": "Bob", "stats": {"score": 20}}
         ]);
 
-        let error = render_auto("unused", &data, &theme, OutputMode::Csv).unwrap_err();
+        let error = render_auto(
+            "unused",
+            &data,
+            &theme,
+            Representation::Csv,
+            ColorPolicy::Auto,
+        )
+        .unwrap_err();
         let message = error.to_string();
         assert!(message.contains("`[0].stats` is an object"), "{message}");
         assert!(message.contains("CsvProjection"), "{message}");
@@ -998,8 +1102,15 @@ mod tests {
             )
             .build();
 
-        let output =
-            render_auto_with_spec("unused", &data, &theme, OutputMode::Csv, Some(&spec)).unwrap();
+        let output = render_auto_with_spec(
+            "unused",
+            &data,
+            &theme,
+            Representation::Csv,
+            ColorPolicy::Auto,
+            Some(&spec),
+        )
+        .unwrap();
 
         let lines: Vec<&str> = output.lines().collect();
         assert_eq!(lines[0], "name,Role");
@@ -1026,13 +1137,20 @@ mod tests {
         let mut registry = ContextRegistry::new();
         registry.add_static("version", Value::from("1.0.0"));
 
-        let render_ctx = RenderContext::new(OutputMode::Text, Some(80), &theme, &json_data);
+        let render_ctx = RenderContext::new(
+            Representation::Human,
+            StyleMode::Plain,
+            Some(80),
+            &theme,
+            &json_data,
+        );
 
         let output = render_with_context(
             "{{ name }} (v{{ version }})",
             &data,
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
             &registry,
             &render_ctx,
             None,
@@ -1052,13 +1170,20 @@ mod tests {
         registry.add_provider("label", |ctx: &RenderContext| {
             Value::from(ctx.get_extra("label").unwrap_or("missing"))
         });
-        let render_ctx = RenderContext::new(OutputMode::Text, Some(80), &theme, &data)
-            .with_extra("label", "from-extra");
+        let render_ctx = RenderContext::new(
+            Representation::Human,
+            StyleMode::Plain,
+            Some(80),
+            &theme,
+            &data,
+        )
+        .with_extra("label", "from-extra");
         let output = render_with_context(
             "{{ name }} {{ label }}",
             &data,
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
             &registry,
             &render_ctx,
             None,
@@ -1087,13 +1212,20 @@ mod tests {
             Value::from(ctx.terminal_width.unwrap_or(80))
         });
 
-        let render_ctx = RenderContext::new(OutputMode::Text, Some(120), &theme, &json_data);
+        let render_ctx = RenderContext::new(
+            Representation::Human,
+            StyleMode::Plain,
+            Some(120),
+            &theme,
+            &json_data,
+        );
 
         let output = render_with_context(
             "{{ message }} (width={{ terminal_width }})",
             &data,
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
             &registry,
             &render_ctx,
             None,
@@ -1121,13 +1253,20 @@ mod tests {
         let mut registry = ContextRegistry::new();
         registry.add_static("value", Value::from("from_context"));
 
-        let render_ctx = RenderContext::new(OutputMode::Text, None, &theme, &json_data);
+        let render_ctx = RenderContext::new(
+            Representation::Human,
+            StyleMode::Plain,
+            None,
+            &theme,
+            &json_data,
+        );
 
         let output = render_with_context(
             "{{ value }}",
             &data,
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
             &registry,
             &render_ctx,
             None,
@@ -1153,13 +1292,20 @@ mod tests {
         let json_data = serde_json::to_value(&data).unwrap();
 
         let registry = ContextRegistry::new();
-        let render_ctx = RenderContext::new(OutputMode::Text, None, &theme, &json_data);
+        let render_ctx = RenderContext::new(
+            Representation::Human,
+            StyleMode::Plain,
+            None,
+            &theme,
+            &json_data,
+        );
 
         let output = render_with_context(
             "{{ name }}",
             &data,
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
             &registry,
             &render_ctx,
             None,
@@ -1185,13 +1331,20 @@ mod tests {
         let mut registry = ContextRegistry::new();
         registry.add_static("extra", Value::from("ignored"));
 
-        let render_ctx = RenderContext::new(OutputMode::Json, None, &theme, &json_data);
+        let render_ctx = RenderContext::new(
+            Representation::Json,
+            StyleMode::Plain,
+            None,
+            &theme,
+            &json_data,
+        );
 
         let output = render_auto_with_context(
             "unused template {{ extra }}",
             &data,
             &theme,
-            OutputMode::Json,
+            Representation::Json,
+            ColorPolicy::Auto,
             &registry,
             &render_ctx,
             None,
@@ -1218,13 +1371,20 @@ mod tests {
         let mut registry = ContextRegistry::new();
         registry.add_static("label", Value::from("Items"));
 
-        let render_ctx = RenderContext::new(OutputMode::Text, None, &theme, &json_data);
+        let render_ctx = RenderContext::new(
+            Representation::Human,
+            StyleMode::Plain,
+            None,
+            &theme,
+            &json_data,
+        );
 
         let output = render_auto_with_context(
             "{{ label }}: {{ count }}",
             &data,
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
             &registry,
             &render_ctx,
             None,
@@ -1235,7 +1395,7 @@ mod tests {
     }
 
     #[test]
-    fn test_render_with_context_provider_uses_output_mode() {
+    fn test_render_with_context_provider_uses_the_representation() {
         use crate::context::{ContextRegistry, RenderContext};
 
         #[derive(Serialize)]
@@ -1247,23 +1407,30 @@ mod tests {
 
         let mut registry = ContextRegistry::new();
         registry.add_provider("mode", |ctx: &RenderContext| {
-            Value::from(format!("{:?}", ctx.output_mode))
+            Value::from(format!("{:?}", ctx.representation))
         });
 
-        let render_ctx = RenderContext::new(OutputMode::Term, None, &theme, &json_data);
+        let render_ctx = RenderContext::new(
+            Representation::Human,
+            StyleMode::Ansi,
+            None,
+            &theme,
+            &json_data,
+        );
 
         let output = render_with_context(
             "Mode: {{ mode }}",
             &data,
             &theme,
-            OutputMode::Term,
+            Representation::Human,
+            ColorPolicy::Always,
             &registry,
             &render_ctx,
             None,
         )
         .unwrap();
 
-        assert_eq!(output, "Mode: Term");
+        assert_eq!(output, "Mode: Human");
     }
 
     #[test]
@@ -1289,13 +1456,20 @@ mod tests {
         let mut registry = ContextRegistry::new();
         registry.add_static("prefix", Value::from("- "));
 
-        let render_ctx = RenderContext::new(OutputMode::Text, None, &theme, &json_data);
+        let render_ctx = RenderContext::new(
+            Representation::Human,
+            StyleMode::Plain,
+            None,
+            &theme,
+            &json_data,
+        );
 
         let output = render_with_context(
             "{% for item in items %}{{ prefix }}{{ item.name }}\n{% endfor %}",
             &data,
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
             &registry,
             &render_ctx,
             None,
@@ -1329,7 +1503,8 @@ mod tests {
             r#"[status]{{ status }}[/status]"#,
             &data,
             &theme,
-            OutputMode::Term,
+            Representation::Human,
+            ColorPolicy::Always,
             ColorMode::Dark,
         )
         .unwrap();
@@ -1338,7 +1513,8 @@ mod tests {
             r#"[status]{{ status }}[/status]"#,
             &data,
             &theme,
-            OutputMode::Term,
+            Representation::Human,
+            ColorPolicy::Always,
             ColorMode::Light,
         )
         .unwrap();
@@ -1371,7 +1547,8 @@ mod tests {
                 name: "Hello".into(),
             },
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
         )
         .unwrap();
 
@@ -1393,7 +1570,8 @@ mod tests {
                 name: "Hello".into(),
             },
             &theme,
-            OutputMode::Term,
+            Representation::Human,
+            ColorPolicy::Always,
         )
         .unwrap();
 
@@ -1416,7 +1594,8 @@ mod tests {
                 name: "Hello".into(),
             },
             &theme,
-            OutputMode::TermDebug,
+            Representation::TermDebug,
+            ColorPolicy::Auto,
         )
         .unwrap();
 
@@ -1438,7 +1617,8 @@ mod tests {
                 name: "Hello".into(),
             },
             &theme,
-            OutputMode::Term,
+            Representation::Human,
+            ColorPolicy::Always,
         )
         .unwrap();
 
@@ -1450,7 +1630,8 @@ mod tests {
                 name: "Hello".into(),
             },
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
         )
         .unwrap();
 
@@ -1474,7 +1655,8 @@ mod tests {
                 word: "test".into(),
             },
             &theme,
-            OutputMode::Term,
+            Representation::Human,
+            ColorPolicy::Always,
         )
         .unwrap();
 
@@ -1502,7 +1684,8 @@ mod tests {
                 num: 42,
             },
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
         )
         .unwrap();
 
@@ -1524,7 +1707,8 @@ mod tests {
                 items: vec!["one".into(), "two".into()],
             },
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
         )
         .unwrap();
 
@@ -1544,7 +1728,8 @@ mod tests {
             "Array: [1, 2, 3] and {{ msg }}",
             &Data { msg: "done".into() },
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
         )
         .unwrap();
 
@@ -1697,13 +1882,20 @@ mod tests {
         let data = json!({"name": "test", "count": 42});
 
         let registry = ContextRegistry::new();
-        let render_ctx = RenderContext::new(OutputMode::Yaml, Some(80), &theme, &data);
+        let render_ctx = RenderContext::new(
+            Representation::Yaml,
+            StyleMode::Plain,
+            Some(80),
+            &theme,
+            &data,
+        );
 
         let output = render_auto_with_context(
             "unused template",
             &data,
             &theme,
-            OutputMode::Yaml,
+            Representation::Yaml,
+            ColorPolicy::Auto,
             &registry,
             &render_ctx,
             None,
@@ -1735,8 +1927,8 @@ mod tests {
                 "{{ icons.check }} {{ message }} {{ icons.arrow }}".into(),
             ),
             theme,
-            format: OutputMode::Text,
-            color_policy: ColorPolicy::Auto,
+            format: Representation::Human,
+            color_policy: ColorPolicy::Never,
             target: TargetProperties {
                 width: Some(80),
                 stdout_is_terminal: false,
@@ -1774,8 +1966,8 @@ mod tests {
             .unwrap(),
             template: TemplateRef::Inline("{{ icons.check }} {{ message }}".into()),
             theme,
-            format: OutputMode::Text,
-            color_policy: ColorPolicy::Auto,
+            format: Representation::Human,
+            color_policy: ColorPolicy::Never,
             target: TargetProperties {
                 width: Some(80),
                 stdout_is_terminal: false,
@@ -1803,7 +1995,14 @@ mod tests {
             message: "hello".into(),
         };
 
-        let output = render_with_output("{{ message }}", &data, &theme, OutputMode::Text).unwrap();
+        let output = render_with_output(
+            "{{ message }}",
+            &data,
+            &theme,
+            Representation::Human,
+            ColorPolicy::Never,
+        )
+        .unwrap();
 
         assert_eq!(output, "hello");
     }
@@ -1824,7 +2023,8 @@ mod tests {
             "{{ icons.bullet }} [title]{{ message }}[/title]",
             &data,
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
         )
         .unwrap();
 
@@ -1847,7 +2047,8 @@ mod tests {
             "{{ icons.star }} {{ message }} v{{ version }}",
             &data,
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
             vars,
         )
         .unwrap();
@@ -1870,13 +2071,20 @@ mod tests {
         registry.add_static("extra", Value::from("ctx"));
 
         let json_data = serde_json::to_value(&data).unwrap();
-        let render_ctx = RenderContext::new(OutputMode::Text, Some(80), &theme, &json_data);
+        let render_ctx = RenderContext::new(
+            Representation::Human,
+            StyleMode::Plain,
+            Some(80),
+            &theme,
+            &json_data,
+        );
 
         let output = render_with_context(
             "{{ icons.dot }} {{ message }} {{ extra }}",
             &data,
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
             &registry,
             &render_ctx,
             None,
@@ -1909,7 +2117,8 @@ mod tests {
             "{{ icons.check }} [title]{{ message }}[/title]",
             &data,
             &theme,
-            OutputMode::Text,
+            Representation::Human,
+            ColorPolicy::Never,
         )
         .unwrap();
 

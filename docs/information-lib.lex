@@ -268,7 +268,8 @@ THEME: Handlers
 	CommandContext provides execution environment information to handlers.
 	It has exactly two fields:
 		pub struct CommandContext {
-		    pub output_mode: OutputMode,
+		    pub representation: Representation,
+		    pub style: StyleMode,
 		    pub command_path: Vec<String>,
 		}
 	:: rust ::
@@ -606,18 +607,18 @@ THEME: Rendering
 	  - Simplest form. Auto-detects terminal capabilities AND color mode.
 	  - Use when you want Standout to decide everything.
 
-	render_with_output(template, data, theme, mode) -> Result<String>
-	  - Explicit output mode (Term, Text, Auto), but auto-detects color mode.
+	render_with_output(template, data, theme, representation, color_policy) -> Result<String>
+	  - Explicit representation and color policy, but auto-detects color mode.
 	  - Use to honor the --output CLI flag.
 
-	render_with_mode(template, data, theme, output_mode, color_mode) -> Result<String>
-	  - Full control over both output mode AND color mode (Light/Dark).
+	render_with_mode(template, data, theme, representation, color_policy, color_mode) -> Result<String>
+	  - Adds control over the color mode (Light/Dark).
 	  - Use in tests or when forcing specific rendering behavior.
 
-	render_auto(template, data, theme, mode) -> Result<String>
-	  - Smart dispatch: structured modes skip templating entirely.
+	render_auto(template, data, theme, representation, color_policy) -> Result<String>
+	  - Smart dispatch: structured encodings skip templating entirely.
 	  - JSON/YAML/CSV: serializes data directly, template ignored.
-	  - Term/Text/Auto: normal two-pass rendering.
+	  - Human: normal two-pass rendering.
 	  - Use as the default for CLI commands with --output support.
 
 	The "auto" in render_auto refers to automatic template-vs-serialization
@@ -662,11 +663,11 @@ THEME: Rendering
 	  - Span multiple lines
 	  - Contain template logic: [title]{% if x %}{{ x }}{% endif %}[/title]
 
-	What happens based on OutputMode:
-	  - Term: Tags replaced with ANSI escape codes
-	  - Text: Tags stripped, plain text remains
-	  - TermDebug: Tags kept as literals for debugging
-	  - Structured (JSON, etc.): Tags stripped (template not used anyway)
+	What happens based on the resolved StyleMode:
+	  - Ansi: Tags replaced with ANSI escape codes
+	  - Plain: Tags stripped, plain text remains
+	  - Debug: Tags kept as literals for debugging
+	  - Structured encodings never reach a style decision
 
 
 26. What happens with unknown style tags?
@@ -806,14 +807,14 @@ THEME: Rendering
 
 32. How do structured output modes work?
 
-	Structured modes (Json, Yaml, Csv) bypass template rendering entirely.
-	The handler's data is serialized directly.
+	Structured encodings (Json, Yaml, Csv, Ndjson) bypass template rendering
+	entirely. The handler's data is serialized directly.
 
 	render_auto() implements this dispatch:
-		OutputMode::Json  -> serde_json::to_string_pretty(data)
-		OutputMode::Yaml  -> serde_yaml::to_string(data)
-		OutputMode::Csv   -> one row per flat record; a nested value is a
-		                     render error naming CsvProjection
+		Representation::Json  -> serde_json::to_string_pretty(data)
+		Representation::Yaml  -> serde_yaml::to_string(data)
+		Representation::Csv   -> one row per flat record; a nested value is a
+		                         render error naming CsvProjection
 	:: text ::
 
 	This means:
@@ -1099,49 +1100,47 @@ THEME: Output Modes
 ================================================================================
 
 
-45. What OutputMode variants exist?
+45. What Representation variants exist?
 
-	OutputMode controls how output is formatted. Eight variants total:
-		pub enum OutputMode {
-		    Auto,       // Auto-detect terminal capabilities
-		    Term,       // Always use ANSI escape codes
-		    Text,       // Never use ANSI codes (plain text)
+	Representation is what the run produces. Six variants total:
+		pub enum Representation {
+		    Human,      // Render the command's template
 		    TermDebug,  // Keep style tags as [name]...[/name]
 		    Json,       // Serialize as JSON (skip template)
 		    Yaml,       // Serialize as YAML (skip template)
 		    Csv,        // Serialize as CSV (skip template)
+		    Ndjson,     // One JSON object per line
 		}
 	:: rust ::
 
-	Three categories:
-	  - Templated: Auto, Term, Text (render template, vary ANSI handling)
-	  - Debug: TermDebug (template rendered, tags kept as literals)
-	  - Structured: Json, Yaml, Csv (skip template, serialize directly)
+	Whether the human text carries escape sequences is a separate type:
+		pub enum StyleMode { Ansi, Plain, Debug }
+	:: rust ::
 
 
-46. How does Auto mode resolve?
+46. How does the style decision resolve?
 
-	Auto mode queries the terminal for color support using the console crate:
+	Under ColorPolicy::Auto the run queries the terminal for color support
+	using the console crate:
 		Term::stdout().features().colors_supported()
 	:: rust ::
 
-	If colors are supported, Auto behaves like Term (ANSI codes applied).
-	If not supported, Auto behaves like Text (tags stripped).
+	If colors are supported the page carries ANSI; if not, tags are stripped.
+	ColorPolicy::Always and ColorPolicy::Never answer without asking.
 
 	This detection happens at render time, not at startup. Piping output
 	to a file or another process typically disables color support.
 
 
-47. What CLI flag values map to OutputMode?
+47. What CLI flag values map to Representation?
 
-	The --output flag accepts these values (case-sensitive):
-		--output=auto        -> OutputMode::Auto (default)
-		--output=term        -> OutputMode::Term
-		--output=text        -> OutputMode::Text
-		--output=term-debug  -> OutputMode::TermDebug
-		--output=json        -> OutputMode::Json
-		--output=yaml        -> OutputMode::Yaml
-		--output=csv         -> OutputMode::Csv
+	The --output flag names a structured encoding (case-sensitive); the human
+	representation has no spelling and is what a bare invocation renders:
+		--output=json        -> Representation::Json
+		--output=yaml        -> Representation::Yaml
+		--output=csv         -> Representation::Csv
+		--output=ndjson      -> Representation::Ndjson
+		--output=term-debug  -> Representation::TermDebug
 	:: text ::
 
 	The flag is global - it applies to all subcommands. Standout adds
@@ -1186,7 +1185,7 @@ THEME: Output Modes
 
 	1. App struct stores the default:
 		pub struct App {
-		    pub(crate) output_mode: OutputMode,  // Default: Auto
+		    pub(crate) output_mode_fallback: Representation,  // Default: Human
 		}
 	:: rust ::
 
@@ -1194,7 +1193,8 @@ THEME: Output Modes
 
 	3. CommandContext carries it to handlers:
 		pub struct CommandContext {
-		    pub output_mode: OutputMode,
+		    pub representation: Representation,
+		    pub style: StyleMode,
 		    pub command_path: Vec<String>,
 		}
 	:: rust ::
@@ -1207,19 +1207,15 @@ THEME: Output Modes
 
 51. What do should_use_color() and is_structured() do?
 
-	Helper methods on OutputMode for conditional logic:
-
-	should_use_color() - Returns true if ANSI codes should be applied:
-		Auto  -> depends on terminal detection
-		Term  -> true
-		Text  -> false
-		TermDebug -> false (tags kept, not converted)
-		Structured modes -> false
+	should_use_color() is on StyleMode - true when ANSI codes are applied:
+		Ansi  -> true
+		Plain -> false
+		Debug -> false (tags kept, not converted)
 	:: text ::
 
-	is_structured() - Returns true if template should be skipped:
-		Json, Yaml, Csv -> true
-		All others -> false
+	is_structured() is on Representation - true when the template is skipped:
+		Json, Yaml, Csv, Ndjson -> true
+		Human, TermDebug -> false
 	:: text ::
 
 	Use these in render logic to branch behavior without matching all variants.
@@ -1557,7 +1553,7 @@ THEME: Partial Adoption
 		    "{{ items | length }} items",
 		    &data,
 		    &theme,
-		    OutputMode::Json,  // Will serialize, not render
+		    Representation::Json,  // Will serialize, not render
 		)?;
 	:: rust ::
 
@@ -1630,7 +1626,7 @@ THEME: Partial Adoption
 
 		    // Try Standout first
 		    let matches = cmd.clone().get_matches();
-		    match app.dispatch(matches.clone(), OutputMode::Auto).into_outcome() {
+		    match app.dispatch(matches.clone(), Representation::Human).into_outcome() {
 		        DispatchResult::Handled(output) => {
 		            println!("{}", output);
 		            return;
@@ -1687,7 +1683,7 @@ THEME: Partial Adoption
 
 		    // Standout handles "new-feature" and others
 		    let app = build_standout_app();
-		    match app.dispatch(matches, OutputMode::Auto).into_outcome() {
+		    match app.dispatch(matches, Representation::Human).into_outcome() {
 		        DispatchResult::Handled(output) => println!("{}", output),
 		        DispatchResult::Binary(bytes, filename) => {
 		             std::fs::write(filename, bytes).ok();
@@ -1956,7 +1952,7 @@ THEME: Tables
 		    "unused template",
 		    &data,
 		    &theme,
-		    OutputMode::Csv,
+		    Representation::Csv,
 		    Some(&spec),
 		)?;
 	:: rust ::

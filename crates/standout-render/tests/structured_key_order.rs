@@ -10,10 +10,10 @@ use std::collections::HashMap;
 use serde_json::json;
 use standout_render::{
     default_template_engine, render_request_split, AmbiguousWidth, ColorMode, ColorPolicy,
-    IconMode, OutputMode, RenderRequest, TargetProperties, TemplateRef, Theme,
+    IconMode, RenderRequest, Representation, TargetProperties, TemplateRef, Theme,
 };
 
-fn request(format: OutputMode) -> RenderRequest {
+fn request(format: Representation) -> RenderRequest {
     RenderRequest {
         // Declared out of alphabetical order (alphabetical would be
         // machine_type, name, status, zone) so a sort would be visible.
@@ -63,7 +63,7 @@ fn assert_ascending(output: &str, needles: &[&str]) {
 
 #[test]
 fn json_keeps_declaration_order() {
-    let result = render_request_split(&request(OutputMode::Json)).unwrap();
+    let result = render_request_split(&request(Representation::Json)).unwrap();
     assert_ascending(
         &result.formatted,
         &["\"name\"", "\"zone\"", "\"machine_type\"", "\"status\""],
@@ -72,7 +72,7 @@ fn json_keeps_declaration_order() {
 
 #[test]
 fn yaml_keeps_declaration_order() {
-    let result = render_request_split(&request(OutputMode::Yaml)).unwrap();
+    let result = render_request_split(&request(Representation::Yaml)).unwrap();
     assert_ascending(
         &result.formatted,
         &["name:", "zone:", "machine_type:", "status:"],
@@ -81,7 +81,7 @@ fn yaml_keeps_declaration_order() {
 
 #[test]
 fn csv_keeps_declaration_order() {
-    let result = render_request_split(&request(OutputMode::Csv)).unwrap();
+    let result = render_request_split(&request(Representation::Csv)).unwrap();
     assert_eq!(
         result.formatted,
         "name,zone,machine_type,status\nweb-1,us-east1-b,n2-standard-2,RUNNING\n"

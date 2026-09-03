@@ -1,14 +1,9 @@
 use serial_test::serial;
 use standout_fixtures::{downstream, Fixture};
-use standout_render::OutputMode;
+use standout_render::Representation;
 use standout_test::{assert_page_snapshot, matrix};
 const ENTRY_POINTS: [&str; 3] = ["-h", "--help", "help"];
-const MODES: [OutputMode; 4] = [
-    OutputMode::Auto,
-    OutputMode::Term,
-    OutputMode::Text,
-    OutputMode::TermDebug,
-];
+const MODES: [Representation; 2] = [Representation::Human, Representation::TermDebug];
 fn fixture_for(theme_name: &str) -> Fixture {
     match theme_name {
         "downstream" => downstream().build(),

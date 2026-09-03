@@ -57,7 +57,7 @@ fn app_builder_wide_policy_reaches_dispatch_rendering() {
 
     let cmd = Command::new("test").subcommand(Command::new("width"));
     let matches = cmd.try_get_matches_from(["test", "width"]).unwrap();
-    let result = app.dispatch(matches, standout::OutputMode::Text);
+    let result = app.dispatch(matches, standout::Representation::Human);
     assert_eq!(result.output(), Some("5"));
 }
 
@@ -103,12 +103,14 @@ fn test_struct_handler_with_state() {
     }
 
     impl standout::cli::Handler for StatefulHandler {
+        type Event = standout::cli::NoEvents;
         type Output = serde_json::Value;
 
         fn handle(
             &mut self,
             _m: &clap::ArgMatches,
             _ctx: &standout::cli::CommandContext,
+            _results: &mut standout::cli::Results<Self::Event>,
         ) -> HandlerResult<serde_json::Value> {
             self.count += 10;
             Ok(Output::Render(json!({"val": self.count})))

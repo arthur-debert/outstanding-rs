@@ -16,7 +16,7 @@ Settings from files, environment and flags through clapfig. Covers the precedenc
 
 ### [Output Modes](output-modes.md)
 
-The `--output` flag and `OutputMode` enum. Covers auto/term/text modes for terminal output, structured modes (JSON, YAML, CSV, NDJSON), file output, and why the mode stays out of handlers.
+The `--output` flag, the `Representation` enum and the separate style decision. Covers the human page, the structured encodings (JSON, YAML, CSV, NDJSON), file output, and why the representation stays out of handlers.
 
 ### [Topics System](topics-system.md)
 

@@ -1,5 +1,5 @@
 use crate::output_mode_flag;
-use standout_render::OutputMode;
+use standout_render::Representation;
 use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SnapshotCase {
@@ -17,8 +17,9 @@ impl SnapshotCase {
         self.axes.push((name.into(), value.into()));
         self
     }
-    pub fn output_mode(self, mode: OutputMode) -> Self {
-        self.axis("mode", output_mode_flag(mode))
+    /// The human representation has no `--output` spelling; the axis names it `human`.
+    pub fn output_mode(self, representation: Representation) -> Self {
+        self.axis("mode", output_mode_flag(representation).unwrap_or("human"))
     }
     pub fn tty(self, is_tty: bool) -> Self {
         self.axis("tty", if is_tty { "on" } else { "off" })
@@ -99,16 +100,16 @@ mod tests {
     #[test]
     fn key_appends_axes_in_declaration_order() {
         let case = SnapshotCase::new("help")
-            .output_mode(OutputMode::Text)
+            .output_mode(Representation::Human)
             .tty(false)
             .theme("default");
-        assert_eq!(case.key(), "help__mode_text__tty_off__theme_default");
+        assert_eq!(case.key(), "help__mode_human__tty_off__theme_default");
     }
     #[test]
     fn key_slugifies_argv_shaped_values() {
         let case = SnapshotCase::new("Help Page")
             .entry_point("--help")
-            .output_mode(OutputMode::TermDebug);
+            .output_mode(Representation::TermDebug);
         assert_eq!(
             case.key(),
             "help-page--f5f24815__entry_help--7fb28c5c__mode_term-debug"
@@ -178,10 +179,10 @@ mod tests {
     #[test]
     fn a_canonical_value_keys_without_a_digest() {
         let case = SnapshotCase::new("help")
-            .output_mode(OutputMode::Text)
+            .output_mode(Representation::Human)
             .tty(true)
             .theme("solarized-dark");
-        assert_eq!(case.key(), "help__mode_text__tty_on__theme_solarized-dark");
+        assert_eq!(case.key(), "help__mode_human__tty_on__theme_solarized-dark");
     }
     #[test]
     fn an_axis_value_that_slugs_away_keeps_the_key_unambiguous() {

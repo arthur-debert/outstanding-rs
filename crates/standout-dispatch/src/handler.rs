@@ -1,6 +1,7 @@
 use crate::artifact::{Artifact, ArtifactRun};
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::hooks::HookPhase;
+use crate::results::{NoEvents, Results};
 use crate::stream::EntryStream;
 use crate::verify::ExpectedArg;
 use clap::ArgMatches;
@@ -649,9 +650,14 @@ impl DispatchResult {
     }
 }
 pub trait Handler {
+    type Event: Serialize;
     type Output: Serialize;
-    fn handle(&mut self, matches: &ArgMatches, ctx: &CommandContext)
-        -> HandlerResult<Self::Output>;
+    fn handle(
+        &mut self,
+        matches: &ArgMatches,
+        ctx: &CommandContext,
+        results: &mut Results<Self::Event>,
+    ) -> HandlerResult<Self::Output>;
     fn expected_args(&self) -> Vec<ExpectedArg> {
         Vec::new()
     }
@@ -682,8 +688,14 @@ where
     R: IntoHandlerResult<T>,
     T: Serialize,
 {
+    type Event = NoEvents;
     type Output = T;
-    fn handle(&mut self, matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<T> {
+    fn handle(
+        &mut self,
+        matches: &ArgMatches,
+        ctx: &CommandContext,
+        _results: &mut Results<NoEvents>,
+    ) -> HandlerResult<T> {
         (self.f)(matches, ctx).into_handler_result()
     }
 }
@@ -713,8 +725,14 @@ where
     R: IntoHandlerResult<T>,
     T: Serialize,
 {
+    type Event = NoEvents;
     type Output = T;
-    fn handle(&mut self, matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<T> {
+    fn handle(
+        &mut self,
+        matches: &ArgMatches,
+        _ctx: &CommandContext,
+        _results: &mut Results<NoEvents>,
+    ) -> HandlerResult<T> {
         (self.f)(matches).into_handler_result()
     }
 }
@@ -1089,7 +1107,7 @@ mod tests {
         });
         let ctx = CommandContext::default();
         let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
-        let result = handler.handle(&matches, &ctx);
+        let result = handler.handle(&matches, &ctx, &mut Results::discarding());
         assert!(result.is_ok());
     }
     #[test]
@@ -1101,9 +1119,9 @@ mod tests {
         });
         let ctx = CommandContext::default();
         let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
-        let _ = handler.handle(&matches, &ctx);
-        let _ = handler.handle(&matches, &ctx);
-        let result = handler.handle(&matches, &ctx);
+        let _ = handler.handle(&matches, &ctx, &mut Results::discarding());
+        let _ = handler.handle(&matches, &ctx, &mut Results::discarding());
+        let result = handler.handle(&matches, &ctx, &mut Results::discarding());
         assert!(result.is_ok());
         if let Ok(Output::Render(count)) = result {
             assert_eq!(count, 3);
@@ -1174,7 +1192,7 @@ mod tests {
         });
         let ctx = CommandContext::default();
         let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
-        let result = handler.handle(&matches, &ctx);
+        let result = handler.handle(&matches, &ctx, &mut Results::discarding());
         assert!(result.is_ok());
         match result.unwrap() {
             Output::Render(s) => assert_eq!(s, "auto-wrapped"),
@@ -1187,7 +1205,7 @@ mod tests {
             FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::<()>::Silent));
         let ctx = CommandContext::default();
         let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
-        let result = handler.handle(&matches, &ctx);
+        let result = handler.handle(&matches, &ctx, &mut Results::discarding());
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), Output::Silent));
     }
@@ -1206,7 +1224,7 @@ mod tests {
         });
         let ctx = CommandContext::default();
         let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
-        let result = handler.handle(&matches, &ctx);
+        let result = handler.handle(&matches, &ctx, &mut Results::discarding());
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -1221,7 +1239,7 @@ mod tests {
         });
         let ctx = CommandContext::default();
         let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
-        let result = handler.handle(&matches, &ctx);
+        let result = handler.handle(&matches, &ctx, &mut Results::discarding());
         assert!(result.is_ok());
         match result.unwrap() {
             Output::Render(s) => assert_eq!(s, "no context needed"),
@@ -1243,7 +1261,7 @@ mod tests {
                     .action(clap::ArgAction::SetTrue),
             )
             .get_matches_from(vec!["test", "-v"]);
-        let result = handler.handle(&matches, &ctx);
+        let result = handler.handle(&matches, &ctx, &mut Results::discarding());
         assert!(result.is_ok());
         match result.unwrap() {
             Output::Render(v) => assert!(v),
@@ -1256,7 +1274,7 @@ mod tests {
         let mut handler = SimpleFnHandler::new(|_m: &ArgMatches| Ok(Output::<()>::Silent));
         let ctx = CommandContext::default();
         let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
-        let result = handler.handle(&matches, &ctx);
+        let result = handler.handle(&matches, &ctx, &mut Results::discarding());
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), Output::Silent));
     }
@@ -1268,7 +1286,7 @@ mod tests {
         });
         let ctx = CommandContext::default();
         let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
-        let result = handler.handle(&matches, &ctx);
+        let result = handler.handle(&matches, &ctx, &mut Results::discarding());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("simple error"));
     }
@@ -1282,9 +1300,9 @@ mod tests {
         });
         let ctx = CommandContext::default();
         let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
-        let _ = handler.handle(&matches, &ctx);
-        let _ = handler.handle(&matches, &ctx);
-        let result = handler.handle(&matches, &ctx);
+        let _ = handler.handle(&matches, &ctx, &mut Results::discarding());
+        let _ = handler.handle(&matches, &ctx, &mut Results::discarding());
+        let result = handler.handle(&matches, &ctx, &mut Results::discarding());
         assert!(result.is_ok());
         match result.unwrap() {
             Output::Render(n) => assert_eq!(n, 3),

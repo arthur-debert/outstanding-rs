@@ -8,7 +8,9 @@ use std::rc::Rc;
 
 use super::builder::{SharedTemplateEngine, TemplateAbsence, TemplateRef};
 use super::dispatch::{render_handler_output, DispatchFn};
-use crate::cli::handler::{CommandContext, FnHandler, Handler, HandlerResult};
+use crate::cli::handler::{
+    CommandContext, FnHandler, Handler, HandlerResult, Results, RunRecorder,
+};
 use crate::cli::hooks::{Hooks, RenderedOutput, TextOutput};
 use crate::cli::questionnaire::{
     questionnaire_pre_dispatch, questionnaire_pre_dispatch_with,
@@ -70,15 +72,19 @@ where
     Rc::new(RefCell::new(
         move |matches: &ArgMatches,
               ctx: &CommandContext,
+              recorder: &RunRecorder,
               hooks: Option<&Hooks>,
-              output_mode: crate::OutputMode,
+              output_mode: crate::Representation,
+              color_policy: crate::ColorPolicy,
               theme: &crate::Theme,
               target: crate::TargetProperties| {
-            let result = handler.borrow_mut().handle(matches, ctx);
+            let mut results = Results::<H::Event>::recording(recorder.clone());
+            let result = handler.borrow_mut().handle(matches, ctx, &mut results);
             render_handler_output(
                 result,
                 matches,
                 ctx,
+                recorder,
                 hooks,
                 &template,
                 theme,
@@ -86,6 +92,7 @@ where
                 &template_engine,
                 template_registry.as_ref(),
                 output_mode,
+                color_policy,
                 structured_output_projection.as_ref(),
                 target,
             )
@@ -100,8 +107,10 @@ where
     Rc::new(RefCell::new(
         move |matches: &ArgMatches,
               ctx: &CommandContext,
+              _recorder: &RunRecorder,
               _hooks: Option<&Hooks>,
-              _output_mode: crate::OutputMode,
+              _output_mode: crate::Representation,
+              _color_policy: crate::ColorPolicy,
               _theme: &crate::Theme,
               _target: crate::TargetProperties| {
             match (handler.borrow_mut())(matches, ctx) {

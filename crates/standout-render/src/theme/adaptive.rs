@@ -23,7 +23,7 @@ mod tests {
     use super::*;
     use crate::template::MiniJinjaEngine;
     use crate::{
-        render_request, ColorPolicy, OutputMode, RenderRequest, SharedTemplateEngine,
+        render_request, ColorPolicy, RenderRequest, Representation, SharedTemplateEngine,
         TargetProperties, TemplateRef, Theme,
     };
     use console::Style;
@@ -71,8 +71,8 @@ mod tests {
             data: data.clone(),
             template: TemplateRef::Inline("[tone]{{ message }}[/tone]".into()),
             theme: theme.clone(),
-            format: OutputMode::Term,
-            color_policy: ColorPolicy::Auto,
+            format: Representation::Human,
+            color_policy: ColorPolicy::Always,
             target: target_with_scheme(ColorMode::Dark),
             engine: engine(),
             registry: None,

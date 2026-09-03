@@ -465,20 +465,21 @@ App::builder()
 
 ### Output Mode Fallback
 
-The mode used when the flag is absent from the command line. It defaults to
-`OutputMode::Auto`; an application that wants a different built-in default sets
-it here. A default the user keeps in a configuration file is `[term] output`
+The representation used when the flag is absent from the command line. It
+defaults to `Representation::Human`; an application that wants a structured
+encoding by default sets it here. A default the user keeps in a configuration file is `[term] output`
 ([Configuration Files](./config-files.md#the-term-section)), which fills this
 same slot once the file is resolved and outranks the value given here.
 
 ```rust
 App::builder()
-    .output_mode_fallback(OutputMode::Term)
+    .output_mode_fallback(Representation::Json)
 ```
 
 An explicit `--output` always
-wins, so this sets the default rather than overriding the user. Forcing color
-regardless of mode is a separate axis and is not what this call does.
+wins, so this sets the default rather than overriding the user. Whether the
+human page carries escape sequences is a separate axis and is not what this call
+does.
 
 `app --help` renders in the fallback even when the command line
 does carry an `--output` — the help flags never read the flag ([Help](./standout-help.md#output-modes)).
@@ -515,7 +516,7 @@ described in [Configuration Files](./config-files.md).
 pub struct App {
     registry: TopicRegistry,
     output_flag: Option<String>,
-    output_mode_fallback: OutputMode,
+    output_mode_fallback: Representation,
     output_file_flag: Option<String>,
     theme: Theme,
     command_hooks: HashMap<String, Hooks>,

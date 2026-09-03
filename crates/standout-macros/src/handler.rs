@@ -405,10 +405,15 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
         #fn_vis struct #handler_struct_name;
 
         impl #dispatch::Handler for #handler_struct_name {
+            type Event = #dispatch::NoEvents;
             type Output = #output_type;
 
-            fn handle(&mut self, matches: &::clap::ArgMatches, ctx: &#dispatch::CommandContext)
-                -> #dispatch::HandlerResult<Self::Output>
+            fn handle(
+                &mut self,
+                matches: &::clap::ArgMatches,
+                ctx: &#dispatch::CommandContext,
+                _results: &mut #dispatch::Results<Self::Event>,
+            ) -> #dispatch::HandlerResult<Self::Output>
             {
                 #dispatch::IntoHandlerResult::into_handler_result(#wrapper_name(matches, ctx))
             }

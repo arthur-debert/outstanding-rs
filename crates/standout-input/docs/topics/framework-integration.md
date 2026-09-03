@@ -170,6 +170,7 @@ For interactive sources (prompts, editor), validation failure re-prompts instead
 The framework path composes naturally with `standout-test`:
 
 ```rust
+use standout::ColorPolicy;
 use standout_test::TestHarness;
 
 #[test]
@@ -178,7 +179,7 @@ fn create_uses_arg_when_provided() {
     let cmd = my_clap_command();
 
     let result = TestHarness::new()
-        .text_output()
+        .color(ColorPolicy::Never)
         .run(&app, cmd, ["mycli", "create", "--body", "hello"]);
 
     result.assert_stdout_contains("hello");
@@ -191,7 +192,7 @@ fn create_falls_back_to_stdin() {
 
     let result = TestHarness::new()
         .piped_stdin("from pipe\n")
-        .text_output()
+        .color(ColorPolicy::Never)
         .run(&app, cmd, ["mycli", "create"]);
 
     result.assert_stdout_contains("from pipe");

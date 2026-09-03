@@ -5,8 +5,9 @@ use serial_test::serial;
 use standout::cli::FnHandler;
 use standout::cli::{App, Output};
 use standout::views::list_view;
+use standout::ColorPolicy;
 use standout::EmbeddedTemplates;
-use standout::{OutputMode, Theme};
+use standout::Theme;
 use standout_test::TestHarness;
 
 const TEMPLATES: &[(&str, &str)] = &[("say", "[missing_style]hello[/missing_style]")];
@@ -25,7 +26,7 @@ fn app_template_unknown_tag_degrades_to_text_and_warns() {
         .build()
         .unwrap();
 
-    let result = TestHarness::new().output_mode(OutputMode::Term).run(
+    let result = TestHarness::new().color(ColorPolicy::Always).run(
         &app,
         Command::new("app").subcommand(Command::new("say")),
         ["app", "say"],
@@ -99,7 +100,7 @@ fn app_theme_overlays_framework_styles_per_tag() {
         .build()
         .unwrap();
 
-    let result = TestHarness::new().output_mode(OutputMode::Term).run(
+    let result = TestHarness::new().color(ColorPolicy::Always).run(
         &app,
         Command::new("app").subcommand(Command::new("list")),
         ["app", "list"],

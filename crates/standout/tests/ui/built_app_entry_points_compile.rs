@@ -1,6 +1,6 @@
 use clap::Command;
 use standout::cli::App;
-use standout::{InputSources, OutputMode, TargetProperties, TemplateRef};
+use standout::{InputSources, Representation, TargetProperties, TemplateRef};
 
 fn main() {
     let app = App::builder().build().expect("empty app should build");
@@ -10,7 +10,7 @@ fn main() {
     let matches = Command::new("app")
         .try_get_matches_from(["app"])
         .expect("fixture arguments should parse");
-    let _result = app.dispatch(matches, OutputMode::Auto);
+    let _result = app.dispatch(matches, Representation::Human);
     let _result = app.run_with(
         Command::new("app"),
         ["app"],
@@ -22,13 +22,13 @@ fn main() {
     let _rendered = app.render_with(
         TemplateRef::Named("missing".to_string()),
         &(),
-        OutputMode::Text,
+        Representation::Human,
         TargetProperties::detect(),
     );
     let _rendered = app.render_with(
         TemplateRef::Inline("ok".to_string()),
         &(),
-        OutputMode::Text,
+        Representation::Human,
         TargetProperties::detect(),
     );
 }

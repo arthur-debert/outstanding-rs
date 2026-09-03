@@ -2,6 +2,7 @@ use clap::Command;
 use console::Style;
 use standout::cli::FnHandler;
 use standout::cli::{App, Output};
+use standout::ColorPolicy;
 use standout::EmbeddedTemplates;
 use standout::Theme;
 
@@ -26,10 +27,11 @@ fn test_theme_preservation_bug() {
 
     let cmd = Command::new("app").subcommand(Command::new("test"));
 
-    let result = app.run_with(
+    let result = app.run_with_color(
         cmd,
-        ["app", "--output=term", "test"],
+        ["app", "test"],
         standout::TargetProperties::detect(),
+        ColorPolicy::Always,
         standout::InputSources::from_process(),
     );
 

@@ -213,14 +213,23 @@ cannot exist before clap; and a broken config file must not take `--help` down w
 it. Cost: `term.output` never applies to pre-parse outcomes, which take the
 argv-scanned `--output` (PAR02 D6) or the builder's static `output_mode_fallback`.
 
+As built after TERM01-WS02: unchanged.
+
 **D14. `[term]` is an opt-in accessor, not a reserved name.** `standout::TermSettings`
 derives `clapfig::Schema`; the app embeds it under any field and hands standout an
-accessor. In this epic it holds `output: Option<OutputMode>`, consumed by
+accessor. In this epic it holds `output: Option<TermOutput>`, consumed by
 `extract_output_mode`'s fallback arm when the flag was not typed. Reason: clapfig has
 no reserved-section concept, and standout has no business finding a field by name in
 someone else's struct. Theme is not a key: the theme is resolved at `build()`
 (ADR-0020) and there is no post-parse seam to change it. Cost: an app that forgets the
 accessor gets no `[term]`, which is explicit.
+
+As built after TERM01-WS02: `TermOutput` spells the four structured encodings —
+`json`, `yaml`, `csv` and `ndjson` — and nothing else. `auto`, `term` and `text` are
+retired with the flag values of the same names, and `term-debug` is a diagnostic view
+with no configuration spelling, so a file naming any of the four fails the way any
+unknown configuration value fails
+([Typed Command Output](../typed-command-output.md)).
 
 **D15. Override flag is opt-in and app-named.** `config_override_flag("set")`
 installs a global `--set key=value` (repeatable) that lands on clapfig's override

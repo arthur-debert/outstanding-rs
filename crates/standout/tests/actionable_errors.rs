@@ -23,7 +23,7 @@ fn render_named_without_registry_names_the_builder_calls() {
     let error = app.render_with(
         standout::TemplateRef::Named(("missing").to_string()),
         &json!({}),
-        standout::OutputMode::Text,
+        standout::Representation::Human,
         standout::TargetProperties::detect(),
     );
     let message = error
@@ -49,7 +49,7 @@ fn render_named_structured_without_registry_serializes() {
         .render_with(
             standout::TemplateRef::Named(("unused").to_string()),
             &data,
-            standout::OutputMode::Json,
+            standout::Representation::Json,
             standout::TargetProperties::detect(),
         )
         .expect("structured render does not need a registry");
@@ -59,7 +59,7 @@ fn render_named_structured_without_registry_serializes() {
         .render_with(
             standout::TemplateRef::Named(("unused").to_string()),
             &data,
-            standout::OutputMode::Yaml,
+            standout::Representation::Yaml,
             standout::TargetProperties::detect(),
         )
         .expect("structured render does not need a registry");
@@ -69,7 +69,7 @@ fn render_named_structured_without_registry_serializes() {
         .render_with(
             standout::TemplateRef::Named(("unused").to_string()),
             &data,
-            standout::OutputMode::Csv,
+            standout::Representation::Csv,
             standout::TargetProperties::detect(),
         )
         .expect("structured render does not need a registry");
@@ -89,9 +89,9 @@ fn render_named_structured_with_unregistered_name_serializes() {
     let data = json!({"name": "Ada"});
 
     for mode in [
-        standout::OutputMode::Json,
-        standout::OutputMode::Yaml,
-        standout::OutputMode::Csv,
+        standout::Representation::Json,
+        standout::Representation::Yaml,
+        standout::Representation::Csv,
     ] {
         app.render_with(
             standout::TemplateRef::Named(("not-registered").to_string()),
@@ -120,7 +120,7 @@ fn render_named_file_refresh_error_keeps_read_context() {
         .render_with(
             standout::TemplateRef::Named(("show").to_string()),
             &json!({"name": "Ada"}),
-            standout::OutputMode::Text,
+            standout::Representation::Human,
             standout::TargetProperties::detect(),
         )
         .expect_err("deleted template should fail during render refresh")

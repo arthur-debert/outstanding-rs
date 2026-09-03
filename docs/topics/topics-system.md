@@ -159,6 +159,7 @@ For custom topic rendering outside the help system:
 
 ```rust
 use standout::topics::{render_topic, render_topics_list, TopicRenderConfig};
+use standout::ColorPolicy;
 
 // Render single topic
 let output = render_topic(&topic, None)?;
@@ -169,7 +170,7 @@ let list = render_topics_list(&registry, "myapp help <topic>", None)?;
 // With custom config
 let config = TopicRenderConfig {
     theme: Some(my_theme),
-    output_mode: Some(OutputMode::Text),
+    color: ColorPolicy::Never,
     ..Default::default()
 };
 let output = render_topic(&topic, Some(config))?;

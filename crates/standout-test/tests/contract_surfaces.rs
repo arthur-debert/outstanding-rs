@@ -10,7 +10,7 @@ use standout::cli::{
     App, Diagnostic, DiagnosticKind, FnHandler, HandlerResult, Output, RunErrorKind, SuccessKind,
 };
 use standout::views::list_view;
-use standout::{ContractSurface, EmbeddedTemplates, OutputMode};
+use standout::{ContractSurface, EmbeddedTemplates, Representation};
 use standout_test::TestHarness;
 
 #[derive(Serialize, ContractSurface)]
@@ -108,7 +108,7 @@ fn app() -> App {
         .unwrap()
 }
 
-fn run(mode: OutputMode, args: &[&str]) -> standout_test::TestResult {
+fn run(mode: Representation, args: &[&str]) -> standout_test::TestResult {
     TestHarness::new()
         .output_mode(mode)
         .run(&app(), command(), args)
@@ -127,7 +127,7 @@ fn yaml_of(result: &standout_test::TestResult) -> Value {
 #[test]
 #[serial]
 fn an_enveloped_view_stamps_its_version_beside_the_data() {
-    let result = run(OutputMode::Json, &["app", "list"]);
+    let result = run(Representation::Json, &["app", "list"]);
     result.assert_success();
     assert_eq!(
         json_of(&result),
@@ -146,7 +146,7 @@ fn an_enveloped_view_stamps_its_version_beside_the_data() {
 #[test]
 #[serial]
 fn a_template_reads_the_envelope_through_its_data_key() {
-    let result = run(OutputMode::Text, &["app", "list"]);
+    let result = run(Representation::Human, &["app", "list"]);
     result.assert_success();
     assert_eq!(result.stdout().trim_end(), "a\nb");
 }
@@ -154,7 +154,7 @@ fn a_template_reads_the_envelope_through_its_data_key() {
 #[test]
 #[serial]
 fn the_list_view_document_carries_the_key_under_json_and_yaml() {
-    let json = run(OutputMode::Json, &["app", "tasks"]);
+    let json = run(Representation::Json, &["app", "tasks"]);
     json.assert_success();
     assert_eq!(
         json_of(&json),
@@ -168,7 +168,7 @@ fn the_list_view_document_carries_the_key_under_json_and_yaml() {
     );
     drop(json);
 
-    let yaml = run(OutputMode::Yaml, &["app", "tasks"]);
+    let yaml = run(Representation::Yaml, &["app", "tasks"]);
     yaml.assert_success();
     assert!(
         yaml.stdout().starts_with("schema_version: 1\nitems:\n"),
@@ -184,7 +184,7 @@ fn the_list_view_document_carries_the_key_under_json_and_yaml() {
 #[test]
 #[serial]
 fn the_root_help_document_under_json_and_yaml() {
-    let json = run(OutputMode::Json, &["app", "--help"]);
+    let json = run(Representation::Json, &["app", "--help"]);
     json.assert_success();
     assert_eq!(json.success_kind(), Some(SuccessKind::ClapHelp));
     let document = json_of(&json);
@@ -211,7 +211,11 @@ fn the_root_help_document_under_json_and_yaml() {
         .find(|arg| arg["long"] == "--output")
         .expect("the framework's own flag is documented");
     assert_eq!(output_flag["value_name"], "MODE");
-    assert_eq!(output_flag["default"], "auto");
+    assert_eq!(
+        output_flag["default"],
+        serde_json::Value::Null,
+        "the human representation the flag falls back to has no spelling"
+    );
     assert!(output_flag["possible_values"]
         .as_array()
         .unwrap()
@@ -220,7 +224,7 @@ fn the_root_help_document_under_json_and_yaml() {
     json.assert_stderr_empty();
     drop(json);
 
-    let yaml = run(OutputMode::Yaml, &["app", "help"]);
+    let yaml = run(Representation::Yaml, &["app", "help"]);
     yaml.assert_success();
     assert_eq!(yaml_of(&yaml), document);
 }
@@ -228,7 +232,7 @@ fn the_root_help_document_under_json_and_yaml() {
 #[test]
 #[serial]
 fn a_nested_help_document_names_its_path_by_flag_and_by_word() {
-    let flag = run(OutputMode::Json, &["app", "nest", "leaf", "--help"]);
+    let flag = run(Representation::Json, &["app", "nest", "leaf", "--help"]);
     flag.assert_success();
     let document = json_of(&flag);
     assert_eq!(document["schema_version"], 1);
@@ -253,7 +257,7 @@ fn a_nested_help_document_names_its_path_by_flag_and_by_word() {
     );
     drop(flag);
 
-    let word = run(OutputMode::Yaml, &["app", "help", "nest", "leaf"]);
+    let word = run(Representation::Yaml, &["app", "help", "nest", "leaf"]);
     word.assert_success();
     assert_eq!(yaml_of(&word), document);
 }
@@ -261,7 +265,7 @@ fn a_nested_help_document_names_its_path_by_flag_and_by_word() {
 #[test]
 #[serial]
 fn help_under_csv_is_a_render_diagnostic() {
-    let result = run(OutputMode::Csv, &["app", "nest", "leaf", "--help"]);
+    let result = run(Representation::Csv, &["app", "nest", "leaf", "--help"]);
     result.assert_error_kind(RunErrorKind::Render);
     let diagnostic = result.expect_diagnostic();
     assert_eq!(diagnostic.kind, DiagnosticKind::Render);
@@ -275,7 +279,7 @@ fn help_under_csv_is_a_render_diagnostic() {
 #[test]
 #[serial]
 fn the_diagnostic_carries_the_version_its_trait_declares() {
-    let result = run(OutputMode::Json, &["app", "fail"]);
+    let result = run(Representation::Json, &["app", "fail"]);
     result.assert_error_kind(RunErrorKind::Handler);
     let diagnostic = result.expect_diagnostic();
     assert_eq!(

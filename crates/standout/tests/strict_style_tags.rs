@@ -5,6 +5,7 @@ use clap::Command;
 use serde_json::json;
 use standout::cli::handler::{DispatchResult, ExitStatus, RunErrorKind};
 use standout::cli::{App, Artifact, FnHandler, Output};
+use standout::ColorPolicy;
 use standout::{embed_styles, EmbeddedTemplates};
 use standout_test::TestHarness;
 
@@ -49,7 +50,7 @@ fn command() -> Command {
 
 fn run(strict: bool, subcommand: &str) -> standout_test::TestResult {
     TestHarness::new()
-        .text_output()
+        .color(ColorPolicy::Never)
         .run(&app(strict), command(), ["app", subcommand])
 }
 
@@ -195,7 +196,7 @@ fn strict_failure_leaves_a_preexisting_output_file_untouched() {
     let output_file = tempdir.path().join("out.txt");
     std::fs::write(&output_file, "original contents").unwrap();
 
-    let result = TestHarness::new().text_output().run(
+    let result = TestHarness::new().color(ColorPolicy::Never).run(
         &app(true),
         command(),
         [
@@ -217,10 +218,11 @@ fn strict_failure_leaves_a_preexisting_output_file_untouched() {
 
 #[test]
 fn strict_on_fails_on_an_unresolved_tag_in_the_help_page() {
-    let result =
-        TestHarness::new()
-            .text_output()
-            .run(&help_app(true), help_command(), ["app", "--help"]);
+    let result = TestHarness::new().color(ColorPolicy::Never).run(
+        &help_app(true),
+        help_command(),
+        ["app", "--help"],
+    );
     result.assert_exit_status(ExitStatus::FAILURE);
     result.assert_error_kind(RunErrorKind::Render);
     result.assert_stdout_eq("");
@@ -234,10 +236,11 @@ fn strict_on_fails_on_an_unresolved_tag_in_the_help_page() {
 #[test]
 fn strict_on_fails_on_an_unresolved_tag_in_the_help_word_page() {
     // The `help` word takes a different interception path than `--help`.
-    let result =
-        TestHarness::new()
-            .text_output()
-            .run(&help_app(true), help_command(), ["app", "help"]);
+    let result = TestHarness::new().color(ColorPolicy::Never).run(
+        &help_app(true),
+        help_command(),
+        ["app", "help"],
+    );
     result.assert_exit_status(ExitStatus::FAILURE);
     result.assert_error_kind(RunErrorKind::Render);
     result.assert_stdout_eq("");
@@ -250,10 +253,11 @@ fn strict_on_fails_on_an_unresolved_tag_in_the_help_word_page() {
 
 #[test]
 fn strict_off_still_renders_the_help_page() {
-    let result =
-        TestHarness::new()
-            .text_output()
-            .run(&help_app(false), help_command(), ["app", "--help"]);
+    let result = TestHarness::new().color(ColorPolicy::Never).run(
+        &help_app(false),
+        help_command(),
+        ["app", "--help"],
+    );
     result.assert_success();
     assert!(
         result.stdout().contains("summary"),

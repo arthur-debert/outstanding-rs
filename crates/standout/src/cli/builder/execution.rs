@@ -1,6 +1,6 @@
 use crate::{
-    open_output_file, write_binary_output, write_output, InputSources, OutputDestination,
-    OutputMode, RenderRequest, TargetProperties,
+    open_output_file, write_binary_output, write_output, ColorPolicy, InputSources,
+    OutputDestination, RenderRequest, Representation, TargetProperties,
 };
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use standout_render::warnings::WarningBuffer;
@@ -20,9 +20,9 @@ use crate::cli::dispatch::{
 };
 use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
 use crate::cli::handler::{
-    ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, DispatchResult, EntryStream,
-    ExitStatus, OutputKind, RunError, RunErrorKind, RunOutput, StreamCapture, StreamSink,
-    SuccessKind,
+    ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, Delivery, DispatchResult,
+    EntryStream, ExitStatus, OutputKind, RunError, RunErrorKind, RunOutput, RunRecorder,
+    StreamCapture, StreamSink, SuccessKind,
 };
 use crate::cli::hooks::{ArtifactOutput, Hooks, RenderedOutput, TextOutput};
 use crate::cli::questionnaire::{
@@ -103,10 +103,11 @@ impl App {
     pub fn dispatch(
         &self,
         matches: ArgMatches,
-        output_mode: OutputMode,
+        output_mode: Representation,
     ) -> crate::cli::CompletedRun {
         let capture = StreamCapture::default();
-        let run = self.collect_run_warnings(|warnings| {
+        let recorder = RunRecorder::new();
+        let run = self.collect_run_warnings(ColorPolicy::Auto, &recorder, |warnings| {
             let config = match self.resolve_config_for(&matches) {
                 Ok(config) => config,
                 Err(error) => return (DispatchResult::Error(error), output_mode),
@@ -116,19 +117,23 @@ impl App {
                 .and_then(|config| config.term.as_ref())
                 .and_then(|term| term.output);
             let output_mode = match term_output {
-                Some(term) if self.typed_output_mode(&matches).is_none() => OutputMode::from(term),
+                Some(term) if self.typed_output_mode(&matches).is_none() => {
+                    Representation::from(term)
+                }
                 _ => output_mode,
             };
             (
                 self.dispatch_with_target(
                     matches,
                     output_mode,
+                    ColorPolicy::Auto,
                     self.process_edge_target(),
                     ContextInputs {
                         sources: InputSources::from_process(),
                         config,
                     },
                     StreamSink::new(capture.clone()),
+                    recorder.clone(),
                     warnings,
                 ),
                 output_mode,
@@ -143,13 +148,16 @@ impl App {
         target
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn dispatch_with_target(
         &self,
         matches: ArgMatches,
-        output_mode: OutputMode,
+        output_mode: Representation,
+        color_policy: ColorPolicy,
         target: TargetProperties,
         inputs: ContextInputs,
         sink: StreamSink,
+        recorder: RunRecorder,
         warnings: WarningBuffer,
     ) -> DispatchResult {
         self.ensure_commands_finalized();
@@ -163,9 +171,11 @@ impl App {
                 path,
                 &matches,
                 output_mode,
+                color_policy,
                 target,
                 inputs.sources,
                 &sink,
+                &recorder,
                 &warnings,
             );
         }
@@ -180,6 +190,7 @@ impl App {
             output_mode,
             override_path.as_deref(),
             &sink,
+            &recorder,
             &warnings,
         ) {
             Ok(ctx) => ctx,
@@ -206,8 +217,10 @@ impl App {
             dispatch_fn,
             sub_matches,
             &ctx,
+            &recorder,
             hooks,
             output_mode,
+            color_policy,
             &self.theme,
             target,
         ) {
@@ -244,10 +257,12 @@ impl App {
         action: Result<clapfig::ConfigAction, clapfig::ClapfigError>,
         path: Vec<String>,
         matches: &ArgMatches,
-        output_mode: OutputMode,
+        output_mode: Representation,
+        color_policy: ColorPolicy,
         target: TargetProperties,
         sources: InputSources,
         sink: &StreamSink,
+        recorder: &RunRecorder,
         warnings: &WarningBuffer,
     ) -> DispatchResult {
         let seam = self
@@ -263,12 +278,17 @@ impl App {
             Err(error) => return DispatchResult::Error(config_run_error(&error)),
         };
         let override_path = self.output_file_override(matches);
-        let mut ctx =
-            match self.command_context(path, output_mode, override_path.as_deref(), sink, warnings)
-            {
-                Ok(ctx) => ctx,
-                Err(error) => return DispatchResult::Error(error),
-            };
+        let mut ctx = match self.command_context(
+            path,
+            output_mode,
+            override_path.as_deref(),
+            sink,
+            recorder,
+            warnings,
+        ) {
+            Ok(ctx) => ctx,
+            Err(error) => return DispatchResult::Error(error),
+        };
         ctx.extensions.insert(sources);
         let sub_matches = get_deepest_matches(matches);
         let (output, template) = config_result_output(result, output_mode);
@@ -276,6 +296,7 @@ impl App {
             Ok(output),
             sub_matches,
             &ctx,
+            recorder,
             None,
             &template,
             &self.theme,
@@ -283,6 +304,7 @@ impl App {
             &self.template_engine,
             self.template_registry.as_ref(),
             output_mode,
+            color_policy,
             None,
             target,
         ) {
@@ -310,14 +332,20 @@ impl App {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn command_context(
         &self,
         path: Vec<String>,
-        output_mode: OutputMode,
+        output_mode: Representation,
         override_path: Option<&std::path::Path>,
         sink: &StreamSink,
+        recorder: &RunRecorder,
         warnings: &WarningBuffer,
     ) -> Result<CommandContext, RunError> {
+        recorder.set_delivery(match override_path {
+            Some(path) => Delivery::File(path.to_path_buf()),
+            None => Delivery::Stdout,
+        });
         // The file override takes the entries too, so the sink is retargeted first.
         let stream = if output_mode.is_stream() {
             if let Some(path) = override_path {
@@ -345,7 +373,7 @@ impl App {
         hooks: Option<&Hooks>,
         sub_matches: &ArgMatches,
         ctx: &CommandContext,
-        output_mode: OutputMode,
+        output_mode: Representation,
         override_path: Option<PathBuf>,
         sink: &StreamSink,
         warnings: &WarningBuffer,
@@ -461,15 +489,18 @@ impl App {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn dispatch_from_with_target<I, T>(
         &self,
         cmd: Command,
         args: I,
         target: TargetProperties,
+        color_policy: ColorPolicy,
         sources: InputSources,
         sink: StreamSink,
+        recorder: RunRecorder,
         warnings: WarningBuffer,
-    ) -> (DispatchResult, OutputMode)
+    ) -> (DispatchResult, Representation)
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
@@ -517,6 +548,7 @@ impl App {
                     &args,
                     &e,
                     Some(target),
+                    color_policy,
                     Some(warnings.clone()),
                 ) {
                     return (display.into(), output_mode);
@@ -546,6 +578,7 @@ impl App {
             &mut augmented_cmd,
             &matches,
             Some(target),
+            color_policy,
             Some(warnings.clone()),
         ) {
             return (display.into(), output_mode);
@@ -592,9 +625,11 @@ impl App {
             self.dispatch_with_target(
                 matches,
                 output_mode,
+                color_policy,
                 target,
                 ContextInputs { sources, config },
                 sink,
+                recorder,
                 warnings,
             ),
             output_mode,
@@ -677,7 +712,8 @@ impl App {
         target.ambiguous_width = self.ambiguous_width;
         let sources = InputSources::from_process();
         let sink = StreamSink::process_stdout();
-        let result = self.run_with_sink(cmd, args, target, sources, sink.clone());
+        let result =
+            self.run_with_sink(cmd, args, target, ColorPolicy::Auto, sources, sink.clone());
         let primary_status = result.exit_status();
         let warnings = result.warnings().to_vec();
         let output_mode = result.output_mode();
@@ -728,7 +764,7 @@ impl App {
         if !crate::cli::carries_warning_entries(result.outcome(), output_mode) {
             standout_render::warnings::flush_to_stderr(
                 &self.theme,
-                result.output_mode(),
+                result.color_policy(),
                 target,
                 &warnings,
             );
@@ -753,7 +789,9 @@ impl App {
     /// return before the pre-commit strict check, are checked here instead.
     fn collect_run_warnings(
         &self,
-        inner: impl FnOnce(WarningBuffer) -> (DispatchResult, OutputMode),
+        color_policy: ColorPolicy,
+        recorder: &RunRecorder,
+        inner: impl FnOnce(WarningBuffer) -> (DispatchResult, Representation),
     ) -> crate::cli::CompletedRun {
         let warnings = WarningBuffer::new();
         self.seed_startup_warnings(&warnings);
@@ -764,7 +802,13 @@ impl App {
                 outcome = DispatchResult::Error(error);
             }
         }
-        crate::cli::CompletedRun::from_dispatch(outcome, warnings.take(), output_mode)
+        crate::cli::CompletedRun::from_dispatch(
+            outcome,
+            warnings.take(),
+            output_mode,
+            color_policy,
+            recorder,
+        )
     }
 
     /// Call before any byte is written; `Some` replaces the output and drops the
@@ -810,17 +854,43 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
+        self.run_with_color(cmd, args, target, ColorPolicy::Auto, sources)
+    }
+
+    /// `run_with` with the run's color policy named instead of resolved from the destination.
+    pub fn run_with_color<I, T>(
+        &self,
+        cmd: Command,
+        args: I,
+        target: TargetProperties,
+        color_policy: ColorPolicy,
+        sources: InputSources,
+    ) -> crate::cli::CompletedRun
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
         let capture = StreamCapture::default();
-        let run = self.run_with_sink(cmd, args, target, sources, StreamSink::new(capture.clone()));
+        let run = self.run_with_sink(
+            cmd,
+            args,
+            target,
+            color_policy,
+            sources,
+            StreamSink::new(capture.clone()),
+        );
         run.with_entries(String::from_utf8_lossy(&capture.take()).into_owned())
     }
 
-    /// `run_with` with the destination of `ctx.stream()` entries; written only under `ndjson`.
+    /// `run_with` with the run's color policy and the destination of
+    /// `ctx.stream()` entries; entries are written only under `ndjson`.
+    #[allow(clippy::too_many_arguments)]
     pub fn run_with_sink<I, T>(
         &self,
         cmd: Command,
         args: I,
         target: TargetProperties,
+        color_policy: ColorPolicy,
         sources: InputSources,
         sink: StreamSink,
     ) -> crate::cli::CompletedRun
@@ -828,8 +898,18 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        self.collect_run_warnings(|warnings| {
-            self.dispatch_from_with_target(cmd, args, target, sources, sink, warnings)
+        let recorder = RunRecorder::new();
+        self.collect_run_warnings(color_policy, &recorder, |warnings| {
+            self.dispatch_from_with_target(
+                cmd,
+                args,
+                target,
+                color_policy,
+                sources,
+                sink,
+                recorder.clone(),
+                warnings,
+            )
         })
     }
 
@@ -841,15 +921,18 @@ impl App {
         }
 
         if let Some(ref flag_name) = self.output_flag {
-            cmd = cmd.arg(
-                Arg::new("_output_mode")
-                    .long(flag_name.clone())
-                    .value_name("MODE")
-                    .global(true)
-                    .value_parser(OUTPUT_MODE_FLAG_VALUES)
-                    .default_value(output_mode_flag_spelling(self.output_mode_fallback))
-                    .help("Output format"),
-            );
+            let mut arg = Arg::new("_output_mode")
+                .long(flag_name.clone())
+                .value_name("MODE")
+                .global(true)
+                .value_parser(OUTPUT_MODE_FLAG_VALUES)
+                .help("Structured output encoding");
+            // The human representation has no spelling, so an application that
+            // falls back to it leaves the flag with no default at all.
+            if let Some(spelling) = output_mode_flag_spelling(self.output_mode_fallback) {
+                arg = arg.default_value(spelling);
+            }
+            cmd = cmd.arg(arg);
         }
 
         if let Some(ref flag_name) = self.output_file_flag {
@@ -1215,7 +1298,10 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Json);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Json);
 
         assert!(result.is_handled());
         let output = result.output().unwrap();
@@ -1263,7 +1349,10 @@ mod tests {
             .clone()
             .try_get_matches_from(["app", "db", "migrate"])
             .unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Json);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Json);
         assert!(result.is_handled());
         assert!(result.output().unwrap().contains("migrated"));
     }
@@ -1288,7 +1377,10 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Count: 42"));
@@ -1320,7 +1412,10 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert!(hook_called.load(Ordering::SeqCst));
@@ -1365,7 +1460,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Count: 42"));
@@ -1389,7 +1487,10 @@ mod tests {
             .subcommand(Command::new("other"));
 
         let matches = cmd.try_get_matches_from(["app", "other"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(!result.is_handled());
         assert!(result.matches().is_some());
@@ -1413,7 +1514,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Json);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Json);
 
         assert!(result.is_handled());
         let output = result.output().unwrap();
@@ -1438,7 +1542,10 @@ mod tests {
             Command::new("app").subcommand(Command::new("config").subcommand(Command::new("get")));
 
         let matches = cmd.try_get_matches_from(["app", "config", "get"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("value"));
@@ -1458,7 +1565,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("quiet"));
 
         let matches = cmd.try_get_matches_from(["app", "quiet"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some(""));
@@ -1480,7 +1590,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("fail"));
 
         let matches = cmd.try_get_matches_from(["app", "fail"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_error(), "expected Error, got {:?}", result);
         let msg = result.error().unwrap();
@@ -1596,7 +1709,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert!(hook_called.load(Ordering::SeqCst));
@@ -1623,7 +1739,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_error(), "expected Error, got {:?}", result);
         let msg = result.error().unwrap();
@@ -1659,7 +1778,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("HELLO"));
@@ -1705,7 +1827,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("[TEST]"));
@@ -1733,7 +1858,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_error(), "expected Error, got {:?}", result);
         let msg = result.error().unwrap();
@@ -1770,7 +1898,10 @@ mod tests {
             Command::new("app").subcommand(Command::new("config").subcommand(Command::new("get")));
 
         let matches = cmd.try_get_matches_from(["app", "config", "get"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("***"));
@@ -1806,7 +1937,10 @@ mod tests {
             .subcommand(Command::new("other"));
 
         let matches = cmd.try_get_matches_from(["app", "other"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("other"));
@@ -1841,7 +1975,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("export"));
 
         let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_binary());
         let (bytes, filename) = result.binary().unwrap();
@@ -1897,6 +2034,7 @@ mod tests {
             sub_matches,
             |_m, _ctx| Ok(HandlerOutput::Render(Data { value: 42 })),
             crate::TemplateRef::Inline(("{{ value }}").to_string()),
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -1927,6 +2065,7 @@ mod tests {
                 panic!("Handler should not be called");
             },
             crate::TemplateRef::Absent,
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -1961,6 +2100,7 @@ mod tests {
                 }))
             },
             crate::TemplateRef::Inline(("{{ msg }}").to_string()),
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -1984,6 +2124,7 @@ mod tests {
             sub_matches,
             |_m, _ctx| Ok(HandlerOutput::Silent),
             crate::TemplateRef::Absent,
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -2019,6 +2160,7 @@ mod tests {
                 })
             },
             crate::TemplateRef::Absent,
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -2057,6 +2199,7 @@ mod tests {
                 .with_exit_status(ExitStatus::from(2)))
             },
             crate::TemplateRef::Absent,
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -2089,6 +2232,7 @@ mod tests {
                 .with_exit_status(ExitStatus::SUCCESS))
             },
             crate::TemplateRef::Absent,
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -2120,6 +2264,7 @@ mod tests {
                 .with_exit_status(ExitStatus::SUCCESS))
             },
             crate::TemplateRef::Absent,
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -2151,6 +2296,7 @@ mod tests {
                 .with_exit_status(ExitStatus::from(2)))
             },
             crate::TemplateRef::Absent,
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -2190,6 +2336,7 @@ mod tests {
                     .with_exit_status(ExitStatus::from(2)))
             },
             crate::TemplateRef::Inline("{{ value }}".to_string()),
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -2219,6 +2366,7 @@ mod tests {
                     .with_exit_status(ExitStatus::from(2)))
             },
             crate::TemplateRef::Inline("{{ value }}".to_string()),
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -2250,7 +2398,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         let output = result.output().unwrap();
@@ -2288,7 +2439,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_error(), "expected Error, got {:?}", result);
         let msg = result.error().unwrap();
@@ -2330,7 +2484,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("12"));
@@ -2375,7 +2532,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(call_order.load(Ordering::SeqCst), 3);
@@ -2416,6 +2576,7 @@ mod tests {
             crate::TemplateRef::Inline(
                 ("value={{ value }}, added={{ added_by_hook }}").to_string(),
             ),
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -2457,6 +2618,7 @@ mod tests {
             sub_matches,
             |_m, _ctx| Ok(HandlerOutput::Render(Data { valid: false })),
             crate::TemplateRef::Inline(("{{ valid }}").to_string()),
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -2701,7 +2863,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dispatch_with_output_file_text_mode() {
+    fn test_dispatch_with_output_file_human_representation() {
         use serde_json::json;
         let temp_dir = tempfile::tempdir().unwrap();
         let file_path = temp_dir.path().join("output.txt");
@@ -2720,14 +2882,7 @@ mod tests {
 
         let result = builder.build().unwrap().run_with(
             cmd,
-            [
-                "app",
-                "--output",
-                "text",
-                "--output-file-path",
-                path_str,
-                "show",
-            ],
+            ["app", "--output-file-path", path_str, "show"],
             crate::TargetProperties::detect(),
             crate::InputSources::from_process(),
         );
@@ -2787,7 +2942,7 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let result = builder.build().unwrap().run_with(
             cmd,
-            ["app", "--output=term", "list"],
+            ["app", "list"],
             crate::TargetProperties::detect(),
             crate::InputSources::from_process(),
         );
@@ -2823,7 +2978,7 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let result = builder.build().unwrap().run_with(
             cmd,
-            ["app", "--output=term", "list"],
+            ["app", "list"],
             crate::TargetProperties::detect(),
             crate::InputSources::from_process(),
         );
@@ -2873,7 +3028,7 @@ header:
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let result = app.run_with(
             cmd,
-            ["app", "--output=term", "list"],
+            ["app", "list"],
             crate::TargetProperties::detect(),
             crate::InputSources::from_process(),
         );
@@ -2911,7 +3066,7 @@ header:
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let result = app.run_with(
             cmd,
-            ["app", "--output=term", "test"],
+            ["app", "test"],
             crate::TargetProperties::detect(),
             crate::InputSources::from_process(),
         );
@@ -2945,7 +3100,7 @@ header:
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let result = app.run_with(
             cmd,
-            ["app", "--output=term", "test"],
+            ["app", "test"],
             crate::TargetProperties::detect(),
             crate::InputSources::from_process(),
         );
@@ -2986,7 +3141,7 @@ header:
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let result = app.run_with(
             cmd,
-            ["app", "--output=term", "test"],
+            ["app", "test"],
             crate::TargetProperties::detect(),
             crate::InputSources::from_process(),
         );
@@ -3027,7 +3182,7 @@ header:
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let result = app.run_with(
             cmd,
-            ["app", "--output=term", "test"],
+            ["app", "test"],
             crate::TargetProperties::detect(),
             crate::InputSources::from_process(),
         );
@@ -3068,7 +3223,7 @@ header:
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let result = app.run_with(
             cmd,
-            ["app", "--output=term", "test"],
+            ["app", "test"],
             crate::TargetProperties::detect(),
             crate::InputSources::from_process(),
         );
@@ -3166,7 +3321,7 @@ header:
             let cmd = Command::new("app").subcommand(Command::new("test"));
             let result = app.run_with(
                 cmd,
-                ["app", "--output=term", "test"],
+                ["app", "test"],
                 crate::TargetProperties::detect(),
                 crate::InputSources::from_process(),
             );

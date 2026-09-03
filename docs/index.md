@@ -174,7 +174,7 @@ Run it:
 myapp list              # Rich terminal output with colors
 myapp list --output json    # JSON for scripting
 myapp list --output yaml    # YAML for config files
-myapp list --output text    # Plain text, no ANSI codes
+myapp list --output json    # Structured JSON
 ```
 
 ## Features

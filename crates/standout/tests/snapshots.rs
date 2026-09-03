@@ -3,8 +3,11 @@ use insta::{assert_json_snapshot, assert_snapshot};
 use serde_json::json;
 use standout::cli::FnHandler;
 use standout::cli::{App, Output};
+use standout::ColorPolicy;
 use standout::EmbeddedTemplates;
-use standout::{AmbiguousWidth, ColorMode, IconMode, InputSources, OutputMode, TargetProperties};
+use standout::{
+    AmbiguousWidth, ColorMode, IconMode, InputSources, Representation, TargetProperties,
+};
 
 const TEMPLATES: &[(&str, &str)] = &[("list", "Items: {{ items }}\nCount: {{ count }}")];
 
@@ -27,10 +30,11 @@ fn test_snapshots_term_output() {
         .unwrap();
 
     let cmd = Command::new("app").subcommand(Command::new("list"));
-    let result = app.run_with(
+    let result = app.run_with_color(
         cmd,
-        ["app", "list", "--output=term"],
+        ["app", "list"],
         snapshot_target(),
+        ColorPolicy::Always,
         InputSources::from_process(),
     );
     let output = result.output().unwrap();
@@ -87,7 +91,7 @@ fn test_snapshots_error_handling() {
     let cmd = Command::new("app").subcommand(Command::new("fail"));
     let matches = cmd.try_get_matches_from(["app", "fail"]).unwrap();
 
-    let result = app.dispatch(matches, OutputMode::Term);
+    let result = app.dispatch(matches, Representation::Human);
 
     assert!(
         result.is_error(),

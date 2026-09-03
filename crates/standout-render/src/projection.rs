@@ -1,7 +1,7 @@
 //! Declarative projections for machine-readable output.
 //!
 //! A projection is a presentation-layer view over a canonical serialized
-//! response. It never mutates the value used by other output modes. Its row
+//! response. It never mutates the value used by other representations. Its row
 //! source is a dot path into the response, or `.` for the response itself;
 //! an array there is one row per element, a record is one row.
 

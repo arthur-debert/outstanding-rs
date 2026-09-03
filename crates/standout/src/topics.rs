@@ -25,7 +25,7 @@ use crate::assets::{TOPICS_LIST_TEMPLATE_NAME, TOPIC_TEMPLATE_NAME};
 use crate::cli::help::data::{resolve_name_column, ASSUMED_TERMINAL_WIDTH};
 use crate::cli::help::{inline_template_ref, render_via_request};
 use crate::{
-    default_template_engine, OutputMode, RenderError, TargetProperties, TemplateRef, Theme,
+    default_template_engine, RenderError, Representation, TargetProperties, TemplateRef, Theme,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -193,7 +193,9 @@ pub struct TopicRenderConfig {
     pub topic_template: Option<String>,
     pub list_template: Option<String>,
     pub theme: Option<Theme>,
-    pub output_mode: Option<OutputMode>,
+    pub output_mode: Option<Representation>,
+    /// Whether the rendered page carries escape sequences; independent of `output_mode`.
+    pub color: crate::ColorPolicy,
 }
 
 pub fn default_topic_theme() -> Theme {
@@ -297,7 +299,8 @@ pub fn render_topic(
         &topic_data(topic),
         template,
         theme,
-        config.output_mode.unwrap_or(OutputMode::Auto),
+        config.output_mode.unwrap_or(Representation::Human),
+        config.color,
         TargetProperties::detect(),
         default_template_engine(),
         None,
@@ -324,7 +327,8 @@ pub fn render_topics_list(
         &topics_list_data(registry, usage_prefix, &target),
         template,
         theme,
-        config.output_mode.unwrap_or(OutputMode::Auto),
+        config.output_mode.unwrap_or(Representation::Human),
+        config.color,
         target,
         default_template_engine(),
         None,
@@ -506,7 +510,7 @@ mod tests {
         );
 
         let config = TopicRenderConfig {
-            output_mode: Some(crate::OutputMode::Text),
+            output_mode: Some(crate::Representation::Human),
             ..Default::default()
         };
 
@@ -532,7 +536,7 @@ mod tests {
         ));
 
         let config = TopicRenderConfig {
-            output_mode: Some(crate::OutputMode::Text),
+            output_mode: Some(crate::Representation::Human),
             ..Default::default()
         };
 
@@ -555,7 +559,7 @@ mod tests {
         registry.add_topic(Topic::new("Short", "content", TopicType::Text, None));
 
         let config = TopicRenderConfig {
-            output_mode: Some(crate::OutputMode::Text),
+            output_mode: Some(crate::Representation::Human),
             ..Default::default()
         };
 
@@ -600,10 +604,10 @@ mod tests {
             Some("storage".to_string()),
         );
         for mode in [
-            crate::OutputMode::Json,
-            crate::OutputMode::Yaml,
-            crate::OutputMode::Csv,
-            crate::OutputMode::Ndjson,
+            crate::Representation::Json,
+            crate::Representation::Yaml,
+            crate::Representation::Csv,
+            crate::Representation::Ndjson,
         ] {
             let output = render_topic(
                 &topic,
@@ -631,7 +635,7 @@ mod tests {
             &topic,
             Some(TopicRenderConfig {
                 topic_template: Some("[nope]x[/nope]".into()),
-                output_mode: Some(crate::OutputMode::Text),
+                output_mode: Some(crate::Representation::Human),
                 ..Default::default()
             }),
         )

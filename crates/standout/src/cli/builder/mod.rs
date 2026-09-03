@@ -21,7 +21,7 @@ use crate::topics::{
 };
 use crate::TemplateRegistry;
 use crate::{
-    render_request_split, ColorPolicy, InputSources, OutputMode, RenderError, RenderRequest,
+    render_request_split, ColorPolicy, InputSources, RenderError, RenderRequest, Representation,
     TargetProperties, Theme, TEMPLATE_EXTENSIONS,
 };
 use clap::parser::ValueSource;
@@ -349,7 +349,7 @@ fn strict_style_tags_from_env(value: Option<std::ffi::OsString>) -> bool {
 pub struct App {
     pub(crate) registry: TopicRegistry,
     pub(crate) output_flag: Option<String>,
-    pub(crate) output_mode_fallback: OutputMode,
+    pub(crate) output_mode_fallback: Representation,
     pub(crate) output_file_flag: Option<String>,
     pub(crate) theme: Theme,
     pub(crate) stylesheet_registry: Option<crate::StylesheetRegistry>,
@@ -384,7 +384,7 @@ impl App {
 pub struct AppBuilder {
     pub(crate) registry: TopicRegistry,
     pub(crate) output_flag: Option<String>,
-    pub(crate) output_mode_fallback: OutputMode,
+    pub(crate) output_mode_fallback: Representation,
     pub(crate) output_file_flag: Option<String>,
     pub(crate) theme: Option<Theme>,
     pub(crate) stylesheet_registry: Option<crate::StylesheetRegistry>,
@@ -433,7 +433,7 @@ impl AppBuilder {
         Self {
             registry: TopicRegistry::new(),
             output_flag: Some("output".to_string()),
-            output_mode_fallback: OutputMode::Auto,
+            output_mode_fallback: Representation::Human,
             output_file_flag: Some("output-file-path".to_string()),
             theme: None,
             stylesheet_registry: None,
@@ -869,14 +869,21 @@ impl App {
                 )
             }
             Err(ParseFailure::Clap(e)) => {
-                return match self.intercept_display_help(&mut cmd, &args, &e, None, None) {
+                return match self.intercept_display_help(
+                    &mut cmd,
+                    &args,
+                    &e,
+                    None,
+                    ColorPolicy::Auto,
+                    None,
+                ) {
                     Some(display) => display.into(),
                     None => HelpResult::Error(e),
                 }
             }
         };
 
-        match self.intercept_help_word(&mut cmd, &matches, None, None) {
+        match self.intercept_help_word(&mut cmd, &matches, None, ColorPolicy::Auto, None) {
             Some(display) => display.into(),
             None => HelpResult::Matches(matches),
         }
@@ -887,25 +894,31 @@ impl App {
         cmd: &mut Command,
         matches: &ArgMatches,
         target: Option<crate::TargetProperties>,
+        color_policy: ColorPolicy,
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> Option<HelpDisplay> {
         if !self.help_handling {
             return None;
         }
         let (name, sub_matches) = matches.subcommand()?;
-        (name == "help").then(|| self.render_help_word(cmd, matches, sub_matches, target, warnings))
+        (name == "help").then(|| {
+            self.render_help_word(cmd, matches, sub_matches, target, color_policy, warnings)
+        })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn intercept_display_help(
         &self,
         cmd: &mut Command,
         args: &[std::ffi::OsString],
         error: &clap::Error,
         target: Option<crate::TargetProperties>,
+        color_policy: ColorPolicy,
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> Option<HelpDisplay> {
-        (self.help_handling && error.kind() == clap::error::ErrorKind::DisplayHelp)
-            .then(|| self.render_help_for_display_help_error(cmd, args, target, warnings))
+        (self.help_handling && error.kind() == clap::error::ErrorKind::DisplayHelp).then(|| {
+            self.render_help_for_display_help_error(cmd, args, target, color_policy, warnings)
+        })
     }
 
     fn help_target_properties(
@@ -944,8 +957,9 @@ impl App {
         &self,
         data: &T,
         template: crate::TemplateRef,
-        format: OutputMode,
+        format: Representation,
         target: crate::TargetProperties,
+        color_policy: ColorPolicy,
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> Result<String, RenderError> {
         render_via_request(
@@ -953,6 +967,7 @@ impl App {
             template,
             self.help_theme(),
             format,
+            color_policy,
             target,
             self.template_engine.clone(),
             self.template_registry.clone(),
@@ -976,12 +991,14 @@ impl App {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_help_word(
         &self,
         cmd: &mut Command,
         matches: &ArgMatches,
         sub_matches: &ArgMatches,
         target: Option<crate::TargetProperties>,
+        color_policy: ColorPolicy,
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
         let format = self.extract_output_mode(matches);
@@ -997,12 +1014,27 @@ impl App {
             let keywords: Vec<_> = topic_args.map(|s| s.as_str()).collect();
             if !keywords.is_empty() {
                 return self.handle_help_request(
-                    cmd, &keywords, use_pager, config, format, target, warnings,
+                    cmd,
+                    &keywords,
+                    use_pager,
+                    config,
+                    format,
+                    target,
+                    color_policy,
+                    warnings,
                 );
             }
         }
 
-        self.render_root_help(cmd, config, format, target, warnings, use_pager)
+        self.render_root_help(
+            cmd,
+            config,
+            format,
+            target,
+            color_policy,
+            warnings,
+            use_pager,
+        )
     }
 
     fn render_failure(cmd: &Command, error: impl std::fmt::Display) -> HelpDisplay {
@@ -1017,8 +1049,9 @@ impl App {
         &self,
         cmd: &Command,
         config: HelpConfig,
-        format: OutputMode,
+        format: Representation,
         target: crate::TargetProperties,
+        color_policy: ColorPolicy,
         warnings: Option<standout_render::warnings::WarningBuffer>,
         use_pager: bool,
     ) -> HelpDisplay {
@@ -1044,7 +1077,14 @@ impl App {
         .expect("the root is always at the empty path");
         self.help_display(
             cmd,
-            self.render_help_surface(&data, template, human_help_format(format), target, warnings),
+            self.render_help_surface(
+                &data,
+                template,
+                human_help_format(format),
+                target,
+                color_policy,
+                warnings,
+            ),
             use_pager,
         )
     }
@@ -1055,7 +1095,7 @@ impl App {
         cmd: &Command,
         path: &[&str],
         length: HelpLength,
-        format: OutputMode,
+        format: Representation,
     ) -> HelpDisplay {
         match render_help_document(cmd, path, length, format) {
             Ok(Some(text)) => HelpDisplay::Rendered { text, paged: false },
@@ -1072,6 +1112,7 @@ impl App {
         cmd: &mut Command,
         args: &[std::ffi::OsString],
         target: Option<crate::TargetProperties>,
+        color_policy: ColorPolicy,
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
         let request = Self::help_request(cmd, args);
@@ -1084,11 +1125,28 @@ impl App {
         };
 
         if request.target.is_empty() {
-            return self.render_root_help(cmd, config, format, target, warnings, false);
+            return self.render_root_help(
+                cmd,
+                config,
+                format,
+                target,
+                color_policy,
+                warnings,
+                false,
+            );
         }
 
         let keywords: Vec<&str> = request.target.iter().map(|s| s.as_str()).collect();
-        self.handle_help_request(cmd, &keywords, false, config, format, target, warnings)
+        self.handle_help_request(
+            cmd,
+            &keywords,
+            false,
+            config,
+            format,
+            target,
+            color_policy,
+            warnings,
+        )
     }
 
     fn help_request(cmd: &Command, args: &[std::ffi::OsString]) -> HelpRequest {
@@ -1150,8 +1208,9 @@ impl App {
         keywords: &[&str],
         use_pager: bool,
         config: HelpConfig,
-        format: OutputMode,
+        format: Representation,
         target: crate::TargetProperties,
+        color_policy: ColorPolicy,
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
         let sub_name = keywords[0];
@@ -1170,7 +1229,14 @@ impl App {
                 topics_list_data(&self.registry, &format!("{} help", cmd.get_name()), &target);
             return self.help_display(
                 cmd,
-                self.render_help_surface(&data, template, page_format, target, warnings),
+                self.render_help_surface(
+                    &data,
+                    template,
+                    page_format,
+                    target,
+                    color_policy,
+                    warnings,
+                ),
                 use_pager,
             );
         }
@@ -1196,7 +1262,14 @@ impl App {
             ) {
                 return self.help_display(
                     cmd,
-                    self.render_help_surface(&data, template, page_format, target, warnings),
+                    self.render_help_surface(
+                        &data,
+                        template,
+                        page_format,
+                        target,
+                        color_policy,
+                        warnings,
+                    ),
                     use_pager,
                 );
             }
@@ -1218,6 +1291,7 @@ impl App {
                     template,
                     page_format,
                     target,
+                    color_policy,
                     warnings,
                 ),
                 use_pager,
@@ -1290,7 +1364,7 @@ impl App {
             || cmd.get_positionals().next().is_none()
     }
 
-    pub fn extract_output_mode(&self, matches: &ArgMatches) -> OutputMode {
+    pub fn extract_output_mode(&self, matches: &ArgMatches) -> Representation {
         self.extract_output_mode_over(matches, None)
     }
 
@@ -1298,14 +1372,14 @@ impl App {
         &self,
         matches: &ArgMatches,
         term: Option<&crate::TermSettings>,
-    ) -> OutputMode {
+    ) -> Representation {
         self.typed_output_mode(matches).unwrap_or_else(|| {
             term.and_then(|term| term.output)
-                .map_or(self.output_mode_fallback, OutputMode::from)
+                .map_or(self.output_mode_fallback, Representation::from)
         })
     }
 
-    pub(crate) fn typed_output_mode(&self, matches: &ArgMatches) -> Option<OutputMode> {
+    pub(crate) fn typed_output_mode(&self, matches: &ArgMatches) -> Option<Representation> {
         self.output_flag.as_ref()?;
         match matches.try_get_one::<String>("_output_mode") {
             // A `DefaultValue` source means the user never typed `--output`.
@@ -1321,7 +1395,7 @@ impl App {
     pub(crate) fn extract_output_mode_from_unparsed(
         &self,
         args: &[std::ffi::OsString],
-    ) -> OutputMode {
+    ) -> Representation {
         let Some(flag) = self.output_flag.as_deref() else {
             return self.output_mode_fallback;
         };
@@ -1330,13 +1404,17 @@ impl App {
             .unwrap_or(self.output_mode_fallback)
     }
 
-    /// One handler, hooks and render included; `sink` takes `ctx.stream()` entries under `ndjson`.
+    /// One handler, hooks and render included; `color_policy` decides whether the
+    /// rendered human text carries escape sequences, and `sink` takes
+    /// `ctx.stream()` entries under `ndjson`.
+    #[allow(clippy::too_many_arguments)]
     pub fn run_command<F, T>(
         &self,
         path: &str,
         matches: &ArgMatches,
         handler: F,
         template: crate::TemplateRef,
+        color_policy: ColorPolicy,
         sink: StreamSink,
     ) -> Result<RenderedOutput, HookError>
     where
@@ -1400,7 +1478,7 @@ impl App {
                     template: template.clone(),
                     theme: self.theme.clone(),
                     format: output_mode,
-                    color_policy: ColorPolicy::Auto,
+                    color_policy,
                     target,
                     engine: self.template_engine.clone(),
                     registry: self.template_registry.clone(),
@@ -1507,36 +1585,28 @@ fn duplicate_help_word(claim: &str) -> SetupError {
 const HELP_PROBE_SHORT: &str = "__standout_help_short";
 const HELP_PROBE_LONG: &str = "__standout_help_long";
 
-pub(crate) const OUTPUT_MODE_FLAG_VALUES: [&str; 8] = [
-    "auto",
-    "term",
-    "text",
-    "term-debug",
-    "json",
-    "yaml",
-    "csv",
-    "ndjson",
-];
+/// `--output` names a structured encoding and nothing else; the human
+/// representation is what a bare invocation renders and has no spelling.
+/// `term-debug` stays as the diagnostic view of the template's style tags.
+pub(crate) const OUTPUT_MODE_FLAG_VALUES: [&str; 5] =
+    ["json", "yaml", "csv", "ndjson", "term-debug"];
 
-fn parse_output_mode_flag(value: &str) -> Option<OutputMode> {
+fn parse_output_mode_flag(value: &str) -> Option<Representation> {
     match value {
-        "auto" => Some(OutputMode::Auto),
-        "term" => Some(OutputMode::Term),
-        "text" => Some(OutputMode::Text),
-        "term-debug" => Some(OutputMode::TermDebug),
-        "json" => Some(OutputMode::Json),
-        "yaml" => Some(OutputMode::Yaml),
-        "csv" => Some(OutputMode::Csv),
-        "ndjson" => Some(OutputMode::Ndjson),
+        "json" => Some(Representation::Json),
+        "yaml" => Some(Representation::Yaml),
+        "csv" => Some(Representation::Csv),
+        "ndjson" => Some(Representation::Ndjson),
+        "term-debug" => Some(Representation::TermDebug),
         _ => None,
     }
 }
 
-pub(crate) fn output_mode_flag_spelling(mode: OutputMode) -> &'static str {
+/// `None` for the human representation, which the flag cannot name.
+pub(crate) fn output_mode_flag_spelling(representation: Representation) -> Option<&'static str> {
     OUTPUT_MODE_FLAG_VALUES
         .into_iter()
-        .find(|value| parse_output_mode_flag(value) == Some(mode))
-        .unwrap_or("auto")
+        .find(|value| parse_output_mode_flag(value) == Some(representation))
 }
 
 fn last_unparsed_flag_value<'a>(flag: &str, args: &'a [std::ffi::OsString]) -> Option<&'a str> {

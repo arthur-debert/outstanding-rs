@@ -9,7 +9,7 @@ use standout::cli::{
     SuccessKind,
 };
 use standout::views::{list_view, ListViewResult};
-use standout::{EmbeddedTemplates, OutputMode};
+use standout::{EmbeddedTemplates, Representation};
 use standout_test::TestHarness;
 
 const TEMPLATES: &[(&str, &str)] = &[
@@ -85,13 +85,17 @@ fn app() -> App {
         .unwrap()
 }
 
-fn run(mode: OutputMode, args: &[&str]) -> standout_test::TestResult {
+fn run(mode: Representation, args: &[&str]) -> standout_test::TestResult {
     TestHarness::new()
         .output_mode(mode)
         .run(&app(), command(), args)
 }
 
-const MODES: [OutputMode; 3] = [OutputMode::Text, OutputMode::Json, OutputMode::Csv];
+const MODES: [Representation; 3] = [
+    Representation::Human,
+    Representation::Json,
+    Representation::Csv,
+];
 
 #[test]
 #[serial]
@@ -135,8 +139,8 @@ fn a_plan_with_changes_exits_two_and_is_still_a_success() {
             result.stdout()
         );
         match mode {
-            OutputMode::Text => result.assert_stdout_eq("2 to add"),
-            OutputMode::Json => assert_eq!(
+            Representation::Human => result.assert_stdout_eq("2 to add"),
+            Representation::Json => assert_eq!(
                 serde_json::from_str::<serde_json::Value>(result.stdout()).unwrap(),
                 json!({ "changes": 2 })
             ),
@@ -144,7 +148,7 @@ fn a_plan_with_changes_exits_two_and_is_still_a_success() {
         }
     }
 
-    let undeclared = run(OutputMode::Text, &["app", "plan", "--config", "two"]);
+    let undeclared = run(Representation::Human, &["app", "plan", "--config", "two"]);
     undeclared.assert_exit_status(ExitStatus::SUCCESS);
     undeclared.assert_stdout_eq("2 to add");
 }
@@ -159,7 +163,7 @@ fn a_failed_plan_exits_one() {
         );
         result.assert_error_kind(RunErrorKind::Handler);
         result.assert_exit_status(ExitStatus::FAILURE);
-        if mode == OutputMode::Text {
+        if mode == Representation::Human {
             result.assert_stderr_contains("main.tfl:2:1: config line 2 does not parse");
         } else {
             result.assert_stderr_empty();
@@ -173,7 +177,7 @@ fn a_failed_plan_exits_one() {
 #[test]
 #[serial]
 fn a_list_declares_its_empty_status_only_when_empty() {
-    let empty = run(OutputMode::Json, &["app", "list", "--empty"]);
+    let empty = run(Representation::Json, &["app", "list", "--empty"]);
     empty.assert_success();
     empty.assert_exit_status(ExitStatus::from(3));
     assert_eq!(
@@ -181,7 +185,7 @@ fn a_list_declares_its_empty_status_only_when_empty() {
         json!({ "schema_version": 1, "items": [] })
     );
 
-    let filled = run(OutputMode::Text, &["app", "list"]);
+    let filled = run(Representation::Human, &["app", "list"]);
     filled.assert_exit_status(ExitStatus::SUCCESS);
     filled.assert_stdout_eq("2 items");
 }
@@ -189,7 +193,7 @@ fn a_list_declares_its_empty_status_only_when_empty() {
 #[test]
 #[serial]
 fn a_status_on_binary_output_is_a_render_error() {
-    let result = run(OutputMode::Text, &["app", "binary-signal"]);
+    let result = run(Representation::Human, &["app", "binary-signal"]);
     result.assert_error_kind(RunErrorKind::Render);
     result.assert_exit_status(ExitStatus::FAILURE);
     result.assert_error_contains("exit status 2 was declared on binary output");

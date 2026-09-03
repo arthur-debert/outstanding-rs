@@ -23,7 +23,7 @@ With help handling on, standout:
 2. **Keeps** clap's native `--help`/`-h` flag, on purpose: clap's flag short-circuits argument validation, so `myapp build --help` renders even when required arguments are missing
 3. Intercepts all help requests and renders them through a MiniJinja template with style tags — the `help` word, which clap routes like any other subcommand, and clap's `DisplayHelp` (from `--help`/`-h`, at root and subcommand level)
 
-Every form that is available renders the same help, through the same template and theme, and `--output` reaches every form alike: `myapp help --output text` and `myapp --help --output text` both render in text mode. The two are answered differently — the word is a subcommand, so clap parses its line in full, globals included, while `--help` short-circuits inside clap before the parse completes — so the flags take their mode from the [argv scan](./execution-outcomes.md#failures-under-a-structured-mode) every pre-parse outcome uses. A value that is not a mode (`--output txt`) is a clap usage error, exit 2, wherever clap reaches it: after the word, or before `--help` on the line. After `--help` it is never reached, so `myapp --help --output txt` renders the page in the fallback mode.
+Every form that is available renders the same help, through the same template and theme, and `--output` reaches every form alike: `myapp help --output json` and `myapp --help --output json` both render the help document. The two are answered differently — the word is a subcommand, so clap parses its line in full, globals included, while `--help` short-circuits inside clap before the parse completes — so the flags take their mode from the [argv scan](./execution-outcomes.md#failures-under-a-structured-mode) every pre-parse outcome uses. A value the flag does not accept (`--output txt`) is a clap usage error, exit 2, wherever clap reaches it: after the word, or before `--help` on the line. After `--help` it is never reached, so `myapp --help --output txt` renders the page in the fallback representation.
 
 Subcommand-level help (e.g. `myapp build --help`) also works, rendering that subcommand's help through standout.
 
@@ -105,7 +105,7 @@ Unaffected: a `help` deeper in the tree (`myapp db help` is yours, at a path the
 
 On a flat CLI whose root arguments are required, clap validates those requirements before routing, so an injected `help` subcommand alone would be advertised and impossible to run: `myapp help` would fail with "the following required arguments were not provided".
 
-The answer is a declaration, not a parser of standout's own. Where standout installs the word, it also sets clap's `subcommand_negates_reqs`, which suspends the root's requirements once a command is named — so `myapp help` routes to the word, while `myapp` on its own still reports its missing arguments and `myapp <RANGE>` still parses as data. The word's arguments (`myapp help topics`, `myapp help --page`, `myapp help --output text`) are clap's to parse, like any other subcommand's.
+The answer is a declaration, not a parser of standout's own. Where standout installs the word, it also sets clap's `subcommand_negates_reqs`, which suspends the root's requirements once a command is named — so `myapp help` routes to the word, while `myapp` on its own still reports its missing arguments and `myapp <RANGE>` still parses as data. The word's arguments (`myapp help topics`, `myapp help --page`, `myapp help --output json`) are clap's to parse, like any other subcommand's.
 
 The cost is worth naming: `subcommand_negates_reqs` applies to *your* subcommands too, so a root that declares required arguments stops requiring them once any command is named. That is why standout sets it only where it installs the word, and never on a CLI that did not get one. See [ADR-0018](../adr/0018-let-the-parser-classify-the-command-line.md).
 
@@ -336,10 +336,10 @@ You can render help without `App` using `render_help` directly:
 
 ```rust
 use standout::cli::{render_help, CommandGroup, HelpConfig};
-use standout::OutputMode;
+use standout::ColorPolicy;
 
 let config = HelpConfig {
-    output_mode: Some(OutputMode::Text),
+    color: ColorPolicy::Never,
     command_groups: Some(vec![
         CommandGroup {
             title: "Main".into(),
@@ -518,14 +518,14 @@ Style tags like `[header]...[/header]` are resolved against the theme; a tag it 
 
 ## Output Modes
 
-The `help` word, `--help` and `-h` all respect the `--output` flag. In the human modes help is the rendered template, and the mode decides what happens to its style tags — applied in `Term`, stripped in `Text`, left visible as `[header]…[/header]` in `TermDebug`:
+The `help` word, `--help` and `-h` all respect the `--output` flag. With no flag help is the rendered template, and the run's style mode decides what happens to its style tags — applied under `Ansi`, stripped under `Plain`, left visible as `[header]…[/header]` under `term-debug`:
 
 ```bash
-myapp help --output text
-myapp --help --output text
+myapp help --output json
+myapp --help --output json
 ```
 
-Without the flag, every form renders in the app's [output-mode fallback](./app-configuration.md#output-mode-fallback), which is `Auto` — styling for the terminal it finds — unless the app set another one.
+Without the flag, every form renders in the app's [output-mode fallback](./app-configuration.md#output-mode-fallback), which is the human page — styled for the terminal it finds — unless the app set another one.
 
 ### Help as data
 
