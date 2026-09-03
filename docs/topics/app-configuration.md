@@ -466,9 +466,10 @@ App::builder()
 ### Output Mode Fallback
 
 The mode used when the flag is absent from the command line. It defaults to
-`OutputMode::Auto`; an application that decides its own default — from its own
-environment variable, a config file, or anything else it reads at build time —
-sets it here:
+`OutputMode::Auto`; an application that wants a different built-in default sets
+it here. A default the user keeps in a configuration file is `[term] output`
+([Configuration Files](./config-files.md#the-term-section)), which fills this
+same slot once the file is resolved and outranks the value given here.
 
 ```rust
 App::builder()
@@ -482,6 +483,9 @@ regardless of mode is a separate axis and is not what this call does.
 `app --help` renders in the fallback even when the command line
 does carry an `--output` — the help flags never read the flag ([Help](./standout-help.md#output-modes)).
 
+For the same reason the `[default: ...]` that `--help` shows for `--output` is
+this fallback, never the configured `[term] output`.
+
 ### File Output Flag
 
 ```rust
@@ -493,6 +497,14 @@ App::builder()
 App::builder()
     .no_output_file_flag()  // Disable entirely
 ```
+
+### Configuration
+
+`config(clapfig_builder)` registers the application's settings struct;
+`term_settings(accessor)` tells the framework where its own `[term]` section
+lives; `config_override_flag("set")` installs an opt-in `--set key=value`;
+`no_config_command()` removes the injected `config` command. All four are
+described in [Configuration Files](./config-files.md).
 
 ## The App Struct
 

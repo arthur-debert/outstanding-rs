@@ -60,6 +60,7 @@
 - [Error Handling](./topics/error-handling.md)
 - [Output Modes](./topics/output-modes.md)
 - [App Configuration](./topics/app-configuration.md)
+- [Configuration Files](./topics/config-files.md)
 - [Testing](./topics/testing.md)
 - [Themed Help](./topics/standout-help.md)
 - [Topics System](./topics/topics-system.md)

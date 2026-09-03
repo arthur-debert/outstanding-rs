@@ -161,6 +161,13 @@ let source = ClipboardSource::with_reader(MockClipboard::with_content("text"));
 let source = ClipboardSource::with_reader(MockClipboard::empty());
 ```
 
+### ConfigSource
+
+`ConfigSource::new(Option<T>)` carries a value the handler read from its typed
+configuration. `None` skips the source; `Some(value)` yields it and reports
+`InputSourceKind::Config`. It carries a value rather than a key because the
+handler already holds the resolved struct.
+
 ### DefaultSource
 
 Provides a fallback value. Always available, always returns its value.

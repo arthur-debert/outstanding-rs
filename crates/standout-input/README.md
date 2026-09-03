@@ -91,14 +91,15 @@ let source = EnvSource::with_reader("TOKEN", env);
 
 ### Non-Interactive (always available)
 
-| Source             | Type     | Description                       |
-| ------------------ | -------- | --------------------------------- |
-| `ArgSource`        | `String` | CLI argument                      |
-| `FlagSource`       | `bool`   | CLI flag                          |
-| `StdinSource`      | `String` | Piped stdin (skipped if terminal) |
-| `EnvSource`        | `String` | Environment variable              |
-| `ClipboardSource`  | `String` | System clipboard                  |
-| `DefaultSource<T>` | `T`      | Fallback value                    |
+| Source             | Type     | Description                                                                      |
+| ------------------ | -------- | -------------------------------------------------------------------------------- |
+| `ArgSource`        | `String` | CLI argument                                                                     |
+| `FlagSource`       | `bool`   | CLI flag                                                                         |
+| `StdinSource`      | `String` | Piped stdin (skipped if terminal)                                                |
+| `EnvSource`        | `String` | Environment variable                                                             |
+| `ClipboardSource`  | `String` | System clipboard                                                                 |
+| `ConfigSource<T>`  | `T`      | A value the handler already resolved from its configuration; skipped when `None` |
+| `DefaultSource<T>` | `T`      | Fallback value                                                                   |
 
 ### Editor (`editor` feature, default)
 
