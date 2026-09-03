@@ -10,15 +10,22 @@
 //! - line framing writes the value as the handler produced it, compact JSON on
 //!   its own line, with the discriminator the application gave it.
 //!
+//! A representation that carries a command's results as one document has no
+//! incremental form, so it has no third branch here: an event under one is
+//! refused. A declared emitting command never reaches this, because dispatch
+//! entry refuses it before the handler runs; the refusal here is what catches
+//! a hand-written `Handler` whose `EMITS_EVENTS` says it emits nothing.
+//!
 //! Every reason an event does not reach the destination — a missing event
 //! template, a render failure, an unresolved style tag under strict mode, a
-//! framing failure, a write that fails — is returned from `deliver`, so the
+//! framing failure, an encoding that carries no events, a write that fails —
+//! is returned from `deliver`, so the
 //! handler stops at the `emit` that failed. The destination also remembers the
 //! first of them; the dispatch closure takes it with
 //! [`EventDestination::take_failure`] once the handler returns and reports a
 //! render error whether or not the handler propagated the `emit`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -75,6 +82,11 @@ pub(crate) struct EventDestination {
     /// varies only the value bound to `event`.
     request: Option<RefCell<RenderRequest>>,
     failure: RefCell<Option<RunError>>,
+    /// One event reached the destination, whatever the command declared. A
+    /// hand-written `Handler` that left `EMITS_EVENTS` at its default is an
+    /// emitting command from here on, so the rules that read the declaration
+    /// read this too.
+    emitted: Cell<bool>,
 }
 
 impl EventDestination {
@@ -106,7 +118,13 @@ impl EventDestination {
             warnings: context.warnings,
             request,
             failure: RefCell::new(None),
+            emitted: Cell::new(false),
         }
+    }
+
+    /// Whether an event actually reached the destination on this run.
+    pub(crate) fn emitted(&self) -> bool {
+        self.emitted.get()
     }
 
     /// The framework's own reason the run cannot stand, if an event met one.
@@ -150,6 +168,15 @@ impl EventDestination {
             let text = self.render(event)?;
             return Ok(self.sink.write_line(text.as_bytes())?);
         }
+        if !self.representation.is_stream() {
+            return Err(EmitError::Render(
+                crate::cli::dispatch::events_under_a_document_encoding(
+                    &self.command_path,
+                    self.representation,
+                )
+                .to_string(),
+            ));
+        }
         let line = standout_render::serialize_document(event, self.representation)
             .map_err(|error| EmitError::Render(error.to_string()))?;
         Ok(self.sink.with_writer(|writer| {
@@ -162,6 +189,7 @@ impl EventDestination {
 impl EventSink for EventDestination {
     fn deliver(&self, event: &serde_json::Value) -> Result<(), EmitError> {
         let Err(error) = self.write(event) else {
+            self.emitted.set(true);
             return Ok(());
         };
         let mut failure = self.failure.borrow_mut();

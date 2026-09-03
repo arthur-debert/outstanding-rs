@@ -141,7 +141,7 @@ where
                 target,
             )?;
             super::dispatch::reject_payload_from_an_emitting_command(
-                H::EMITS_EVENTS,
+                H::EMITS_EVENTS || destination.emitted(),
                 matches!(output, DispatchOutput::Binary(_, _)),
                 matches!(output, DispatchOutput::Artifact { .. }),
             )?;

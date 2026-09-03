@@ -643,10 +643,13 @@ pub trait Handler {
     /// True for a command that produces its result while it runs. It is the
     /// command's own declaration rather than a count of what one invocation
     /// emitted, so the framework refuses an output kind that cannot follow
-    /// events on the run that emits none too. The adapters set it; a
+    /// events on the run that emits none too. The adapters set it. A
     /// hand-written `Handler` with an inhabited `Event` that leaves it `false`
-    /// is still caught once it emits, but only after the first event's bytes
-    /// have gone out.
+    /// loses only that refusal-before-the-fact: the destination remembers the
+    /// events it carried, so a payload after one is still refused, and an
+    /// event under an encoding that carries a command's results as one
+    /// document is refused on the emit itself rather than before the handler
+    /// ran.
     const EMITS_EVENTS: bool = false;
     fn handle(
         &mut self,

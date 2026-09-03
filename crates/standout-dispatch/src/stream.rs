@@ -25,16 +25,33 @@ type OpenWriter = Box<dyn FnOnce() -> std::io::Result<Box<dyn Write>>>;
 struct Destination {
     writer: Box<dyn Write>,
     pending: Option<OpenWriter>,
+    /// A deferred destination that could not be opened. The redirect replaced
+    /// the writer the run would otherwise have used, so once opening fails the
+    /// run has nowhere to write: every later write reports the same reason
+    /// rather than sending its bytes to the writer the redirect was meant to
+    /// take the place of.
+    unopened: Option<(ErrorKind, String)>,
     open: bool,
 }
 
 impl Destination {
     fn ready(&mut self) -> std::io::Result<()> {
+        if let Some((kind, message)) = &self.unopened {
+            return Err(std::io::Error::new(*kind, message.clone()));
+        }
         let Some(open) = self.pending.take() else {
             return Ok(());
         };
-        self.writer = open()?;
-        Ok(())
+        match open() {
+            Ok(writer) => {
+                self.writer = writer;
+                Ok(())
+            }
+            Err(error) => {
+                self.unopened = Some((error.kind(), error.to_string()));
+                Err(error)
+            }
+        }
     }
 }
 
@@ -54,7 +71,13 @@ impl Write for Destination {
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        if !self.open || self.pending.is_some() {
+        if !self.open {
+            return Ok(());
+        }
+        if let Some((kind, message)) = &self.unopened {
+            return Err(std::io::Error::new(*kind, message.clone()));
+        }
+        if self.pending.is_some() {
             return Ok(());
         }
         match self.writer.flush() {
@@ -75,6 +98,7 @@ impl StreamSink {
         Self(Rc::new(RefCell::new(Destination {
             writer: Box::new(writer),
             pending: None,
+            unopened: None,
             open: true,
         })))
     }
@@ -88,12 +112,13 @@ impl StreamSink {
         let mut destination = self.0.borrow_mut();
         destination.writer = Box::new(writer);
         destination.pending = None;
+        destination.unopened = None;
         destination.open = true;
     }
 
     /// Replace the destination when there is a first byte to write, so a run
     /// that writes none leaves the writer unopened; the failure to open it is
-    /// that write's failure.
+    /// that write's failure, and every later write's.
     pub fn redirect_on_first_write<W: Write + 'static>(
         &self,
         open: impl FnOnce() -> std::io::Result<W> + 'static,
@@ -102,6 +127,7 @@ impl StreamSink {
         destination.pending = Some(Box::new(move || {
             open().map(|w| Box::new(w) as Box<dyn Write>)
         }));
+        destination.unopened = None;
         destination.open = true;
     }
 
@@ -233,6 +259,31 @@ mod tests {
         });
         let error = sink.write_line(b"first").unwrap_err();
         assert_eq!(error.kind(), ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn a_deferred_destination_that_cannot_open_keeps_failing_and_writes_nowhere() {
+        let before = StreamCapture::default();
+        let sink = StreamSink::new(before.clone());
+        sink.redirect_on_first_write(|| -> std::io::Result<Vec<u8>> {
+            Err(std::io::Error::new(
+                ErrorKind::NotFound,
+                "no such directory",
+            ))
+        });
+        assert_eq!(
+            sink.write_line(b"first").unwrap_err().kind(),
+            ErrorKind::NotFound
+        );
+        assert_eq!(
+            sink.write_line(b"second").unwrap_err().kind(),
+            ErrorKind::NotFound
+        );
+        assert_eq!(
+            sink.with_writer(|w| w.flush()).unwrap_err().kind(),
+            ErrorKind::NotFound
+        );
+        assert!(before.take().is_empty());
     }
 
     #[test]

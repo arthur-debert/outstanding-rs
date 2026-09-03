@@ -697,12 +697,15 @@ impl AppBuilder {
             };
             if pending.recipe.emits_events() {
                 let event_name = format!("{name}.event");
-                if registry.get_content(&event_name).is_err() {
-                    return Err(SetupError::Template(missing_event_template_message(
-                        path,
-                        &name,
-                        &event_name,
-                    )));
+                if let Err(error) = registry.get_content(&event_name) {
+                    let message = match error {
+                        standout_render::RegistryError::NotFound { .. } => {
+                            missing_event_template_message(path, &name, &event_name)
+                        }
+                        _ => TemplateRefreshError::new(&event_name, registry, error.to_string())
+                            .to_string(),
+                    };
+                    return Err(SetupError::Template(message));
                 }
                 // A handler that returns `Output::Silent` renders no summary,
                 // and which variant it returns is a value this build cannot
@@ -1521,7 +1524,7 @@ impl App {
         };
         let reject_payload_from_an_emitting_command = |is_binary: bool, is_artifact: bool| {
             super::dispatch::reject_payload_from_an_emitting_command(
-                H::EMITS_EVENTS,
+                H::EMITS_EVENTS || destination.emitted(),
                 is_binary,
                 is_artifact,
             )

@@ -78,9 +78,11 @@ pub(crate) fn payload_without_a_stream(output: &str) -> RunError {
 /// A command that produces its result while it runs writes it to the
 /// destination as it goes, so a payload cannot follow: it would be a second
 /// document sharing one file or one stdout. `emits_events` is the command's
-/// declaration, so the refusal is the same on an invocation that emitted
-/// nothing, and a caller can find it in its first test rather than on the run
-/// that finally emits.
+/// declaration or, for a hand-written `Handler` that left the declaration at
+/// its default, the destination's record of an event it actually carried. The
+/// declaration makes the refusal the same on an invocation that emitted
+/// nothing, so a caller finds it in its first test rather than on the run that
+/// finally emits.
 pub(crate) fn reject_payload_from_an_emitting_command(
     emits_events: bool,
     is_binary: bool,
@@ -106,10 +108,30 @@ pub(crate) fn reject_payload_from_an_emitting_command(
 }
 
 /// The encodings that carry a command's results as one document have no
-/// incremental form yet. An emitting command under one is refused at dispatch
-/// entry, from the handler's declaration and the representation, so a mutating
-/// run never happens for a reason known before it started and no byte is
-/// written first.
+/// incremental form yet, so an event under one is refused with this. The
+/// destination raises it on the emit itself, and dispatch entry raises it
+/// ahead of the handler when the command declares that it emits, so a mutating
+/// run never happens for a reason known before it started.
+pub(crate) fn events_under_a_document_encoding(
+    command_path: &str,
+    output_mode: crate::Representation,
+) -> RunError {
+    let encoding = crate::cli::builder::output_mode_flag_spelling(output_mode)
+        .map(|flag| format!("--output {flag}"))
+        .unwrap_or_else(|| format!("{output_mode:?}"));
+    RunError::new(
+        format!(
+            "command `{command_path}` emits events under {encoding}; that encoding carries a \
+             command's events as one document and standout does not build one yet"
+        ),
+        RunErrorKind::Render,
+    )
+}
+
+/// The refusal above, taken before the handler runs, so no byte is written
+/// first. It reads the command's declaration; a hand-written `Handler` that
+/// left it at its default reaches the same refusal from the destination, on
+/// its first emit.
 pub(crate) fn reject_events_under_a_document_encoding(
     emits_events: bool,
     command_path: &str,
@@ -118,16 +140,7 @@ pub(crate) fn reject_events_under_a_document_encoding(
     if !emits_events || output_mode.is_human() || output_mode.is_stream() {
         return Ok(());
     }
-    let encoding = crate::cli::builder::output_mode_flag_spelling(output_mode)
-        .map(|flag| format!("--output {flag}"))
-        .unwrap_or_else(|| format!("{output_mode:?}"));
-    Err(RunError::new(
-        format!(
-            "command `{command_path}` emits events under {encoding}; that encoding carries a \
-             command's events as one document and standout does not build one yet"
-        ),
-        RunErrorKind::Render,
-    ))
+    Err(events_under_a_document_encoding(command_path, output_mode))
 }
 
 pub(crate) fn reject_payload_under_stream(

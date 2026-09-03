@@ -530,7 +530,10 @@ needs its `<name>.event` template, and it refuses `Output::Binary` and
 too, and it refuses an incremental command under an encoding that carries a
 command's results as one document before the handler runs. `EventsFnHandler`
 and `#[handler]` set it; a hand-written `Handler` with an inhabited `Event` sets
-it alongside the associated type.
+it alongside the associated type. Leaving it `false` on a handler that emits
+loses only the refusals before the fact: the destination remembers the events it
+carried, so a payload after one is still refused, and an event under a document
+encoding is refused on the emit rather than before the handler ran.
 
 `Results::emit` takes the event by value, returns once the framework has
 retained it and written it, and fails when the value does not serialize

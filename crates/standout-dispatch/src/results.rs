@@ -21,7 +21,9 @@
 //! implements it, because the human representation of an event is a template
 //! render and this crate does not render.
 //!
-//! `emit` serializes once and hands the same [`serde_json::Value`] to both. It
+//! `emit` serializes once and hands the same [`serde_json::Value`] to both,
+//! the sink first: a value the destination refused fails the emit and is not
+//! retained, so what `results()` reports is what a reader could have seen. It
 //! skips serializing only when there is nothing to retain and nothing open to
 //! write to, which is what a sink whose reader went away reports.
 
@@ -188,8 +190,10 @@ impl<E: Serialize> Results<E> {
         }
     }
 
-    /// Returns once the value has been retained and written; fails when it
-    /// does not serialize, does not render, or cannot be written.
+    /// Returns once the value has been written and retained; fails when it
+    /// does not serialize, does not render, or cannot be written. The write
+    /// comes first, so a value the destination refused is not one `results()`
+    /// reports the run as having produced.
     pub fn emit(&mut self, event: E) -> Result<(), EmitError> {
         let retaining = self
             .recorder
@@ -200,11 +204,11 @@ impl<E: Serialize> Results<E> {
             return Ok(());
         }
         let value = serde_json::to_value(&event)?;
-        if let Some(recorder) = retaining {
-            recorder.record(value.clone());
-        }
         if let Some(sink) = open {
             sink.deliver(&value)?;
+        }
+        if let Some(recorder) = retaining {
+            recorder.record(value);
         }
         Ok(())
     }
@@ -340,5 +344,19 @@ mod tests {
         let mut results = Results::for_run(None, Rc::new(Refuses));
         let error = results.emit(serde_json::json!({"n": 1})).unwrap_err();
         assert!(matches!(error, EmitError::Write(_)), "{error}");
+    }
+
+    #[test]
+    fn an_event_the_destination_refused_is_not_retained() {
+        struct Refuses;
+        impl EventSink for Refuses {
+            fn deliver(&self, _: &serde_json::Value) -> Result<(), EmitError> {
+                Err(EmitError::Write(std::io::Error::other("no room")))
+            }
+        }
+        let recorder = RunRecorder::new();
+        let mut results = Results::for_run(Some(recorder.clone()), Rc::new(Refuses));
+        results.emit(serde_json::json!({"n": 1})).unwrap_err();
+        assert!(recorder.records().is_empty());
     }
 }

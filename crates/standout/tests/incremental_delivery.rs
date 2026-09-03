@@ -1,12 +1,12 @@
 //! When an emitted event reaches the destination, and what a reader that walks
 //! away does to the rest of the run.
 
-use clap::Command;
+use clap::{ArgMatches, Command};
 use serde::Serialize;
 use serde_json::json;
 use standout::cli::{
-    App, DispatchResult, EventsFnHandler, ExitStatus, HandlerResult, Output, Results, RunErrorKind,
-    StreamSink,
+    App, CommandContext, DispatchResult, EventsFnHandler, ExitStatus, Handler, HandlerResult,
+    Output, Results, RunErrorKind, StreamSink,
 };
 use standout::{
     AmbiguousWidth, ColorMode, ColorPolicy, EmbeddedTemplates, IconMode, InputSources,
@@ -445,4 +445,87 @@ fn an_emit_failure_the_handler_swallows_still_fails_the_run() {
 
     assert!(render_error(&outcome).contains("left 1 style tag unresolved: nope"));
     assert!(destination.0.borrow().is_empty());
+}
+
+/// A hand-written `Handler` that emits, with `EMITS_EVENTS` left at the
+/// default the adapters would have set: the framework knows it is an emitting
+/// command only from the event it carries.
+struct Misdeclared(fn() -> Output<serde_json::Value>);
+
+impl Handler for Misdeclared {
+    type Event = Event<'static>;
+    type Output = serde_json::Value;
+
+    fn handle(
+        &mut self,
+        _: &ArgMatches,
+        _: &CommandContext,
+        results: &mut Results<Self::Event>,
+    ) -> HandlerResult<serde_json::Value> {
+        let _ = results.emit(Event::ApplyStart { resource: "web" });
+        Ok((self.0)())
+    }
+}
+
+fn misdeclared_run(
+    args: &[&str],
+    payload: fn() -> Output<serde_json::Value>,
+    destination: Shared,
+) -> DispatchResult {
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with("apply", Misdeclared(payload), |cfg| cfg)
+        .unwrap()
+        .build()
+        .unwrap();
+
+    app.run_with_sink(
+        command(),
+        args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>(),
+        target(),
+        ColorPolicy::Never,
+        InputSources::from_process(),
+        StreamSink::new(destination),
+    )
+    .into_outcome()
+}
+
+#[test]
+fn an_undeclared_emitter_is_refused_by_an_encoding_that_cannot_carry_events() {
+    for representation in ["json", "yaml", "csv"] {
+        let destination = Shared::default();
+        let outcome = misdeclared_run(
+            &["app", &format!("--output={representation}"), "apply"],
+            || Output::Render(json!({ "add": 1 })),
+            destination.clone(),
+        );
+
+        assert!(
+            render_error(&outcome).contains("standout does not build one yet"),
+            "{representation}"
+        );
+        assert!(
+            destination.0.borrow().is_empty(),
+            "{representation}: the event the encoding cannot carry writes no document"
+        );
+    }
+}
+
+#[test]
+fn an_undeclared_emitter_cannot_return_a_payload_after_the_event_it_emitted() {
+    let destination = Shared::default();
+    let outcome = misdeclared_run(
+        &["app", "apply"],
+        || Output::Binary {
+            data: vec![0xDE, 0xAD],
+            filename: "apply.bin".into(),
+        },
+        destination.clone(),
+    );
+
+    assert!(render_error(&outcome).contains("binary output was produced by a command that emits"));
+    assert_eq!(
+        String::from_utf8_lossy(&destination.0.borrow()),
+        "starting web\n"
+    );
 }
