@@ -107,7 +107,8 @@ so they may not exist on `main` until that merge lands:
 - No pilot rerun and no validity-check work — that is #365.
 - No rewriting of committed pilot evidence (`corpus/pilot/`); historical reports
   stay byte-identical except where a sanitizer regression test finds a real leak.
-- No gap-capability work (PAR02/PAR03) and no Windows support.
+- No gap-capability work (the machine contract or typed command output) and no Windows
+  support.
 
 ## Proposed Shape
 

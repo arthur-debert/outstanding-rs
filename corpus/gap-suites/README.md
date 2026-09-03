@@ -16,8 +16,8 @@ epics close; `gaps.toml` records each gate's owning epic and status:
 
 - `tests/tflike_diagnostic.rs` — machine contract,
   `docs/spec/implemented/parity-machine-contract.md`.
-- `tests/tflike_progress.rs` — terminal citizenship,
-  `docs/spec/parity-terminal-citizenship.md`.
+- `tests/tflike_progress.rs` — typed incremental results,
+  `docs/spec/typed-command-output.md`.
 - `tests/jjlike.rs` — runtime templates, whose epic code is human-assigned and not
   yet minted (see the ownership note in `corpus/archetypes/jjlike/spec.md`).
 

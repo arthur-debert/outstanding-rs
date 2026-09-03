@@ -9,11 +9,11 @@ The explicit input to the pure entry `render_request`: data, template, theme, fo
 _Avoid_: RenderContext (that is the mid-render view for context providers)
 
 **TargetProperties**:
-Properties of the destination being rendered to for one invocation (width, stdout and stderr color capability independently, whether stdout and stderr are terminals, color-scheme, icon mode, and ambiguous-width policy). Width, stream facts, color-scheme, and icon mode are detected, with no App fallback. Ambiguous-width is App-owned policy on the type (`detect()` defaults `Narrow`; `App::run` overwrites). Primary render uses stdout facts; warnings and progress use stderr facts.
+Properties of the destination being rendered to for one invocation (width, stdout and stderr color capability independently, whether stdout and stderr are terminals, color-scheme, icon mode, and ambiguous-width policy). Width, stream facts, color-scheme, and icon mode are detected, with no App fallback. Ambiguous-width is App-owned policy on the type (`detect()` defaults `Narrow`; `App::run` overwrites). Primary render uses stdout facts; warnings use stderr facts.
 _Avoid_: RuntimeProperties, Capabilities, TargetFacts, environment globals, a single color capability for both streams
 
 **ColorPolicy**:
-Resolved color axis on a **RenderRequest** (`Auto` / `Always` / `Never`). Independent of format (`OutputMode`) and of per-stream color capability on **TargetProperties**. Later `--color` and the env ladder resolve into this field; they are not `--output`.
+The color setting on a **RenderRequest** (`Auto` / `Always` / `Never`). Independent of format (`OutputMode`) and of per-stream color capability on **TargetProperties**. Every production run sets `Auto`; the user's only ANSI control today is `--output term` versus `text`, which is a representation choice, not this field. `docs/spec/typed-command-output.md` separates ANSI presentation from representation.
 _Avoid_: folding color into `--output`, a single capability bool, detecting color policy inside the leaf
 
 **RenderContext**:

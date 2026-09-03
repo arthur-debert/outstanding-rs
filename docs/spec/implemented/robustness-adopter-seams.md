@@ -52,9 +52,9 @@ concept beyond the seam itself.
   always wins, which is what systemdlike's suite asserts (`--output text`/`term`
   outranks `SYSTEMDLIKE_COLORS`, `NO_COLOR` and detection). The env-driven case the
   pilot hit is a fallback computed by the app at build time, not an override; forcing
-  color regardless of mode is the color-policy axis (terminal citizenship), with its
-  own precedence contract. Appending the app's own `--output` to the user's argv is
-  no longer the way.
+  color regardless of mode is ANSI presentation (`docs/spec/typed-command-output.md`),
+  which has its own precedence contract. Appending the app's own `--output` to the
+  user's argv is no longer the way.
 - **An app-owned status and diagnostic** (#357): a handler can return a domain error
   carrying an exit status (any nonzero `u8`) and a verbatim stderr payload under a name
   that *means* app-owned. The emission path already exists — `ExternalFailure` carries
@@ -87,9 +87,9 @@ concept beyond the seam itself.
 
 - Choosing or pruning idioms (ROB05). Where this epic adds a builder method or an
   `Output` / error variant, it adds it to the blessed path only.
-- The machine-mode error envelope, `--color` tri-state, pager, progress, verbosity
-  (parity program). #356 gives the *app* a mode setter; the *user*-facing `--color` flag
-  is terminal citizenship's.
+- The machine-mode error envelope, ANSI presentation, the pager, incremental results and
+  operational verbosity (the parity program, `docs/spec/typed-command-output.md`). #356
+  gives the *app* a mode setter; the *user*-facing presentation setting is that Spec's.
 - Fixing the corpus archetype implementations produced by the pilot (they are not
   committed) or re-running the pilot (corpus completion).
 - #408/#409 (XML serializer) and #336 (lint hook) — ordinary maintenance, not adopter

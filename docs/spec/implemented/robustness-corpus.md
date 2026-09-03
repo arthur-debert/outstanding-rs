@@ -185,6 +185,7 @@ systemdlike, C6 cargolike, C7 gcloudlike, C8 dockerlike, C9 jjlike (gap), C10 br
 C11 pnpmlike, C12 formlike. C1/C6/C7 deliberately triangulate config layering ahead of
 the parity config epic. `tflike` (C4) is milestoned rather than all-or-nothing: its
 diagnostic criteria gate the machine-contract epic, its progress/lifecycle criteria gate
-terminal citizenship — the acceptance suite is authored in those two groups from the
+typed command output (`docs/spec/typed-command-output.md`) — the acceptance suite is
+authored in those two groups from the
 start. Expected ADRs: corpus/CI integration mechanics; blindness protocol; run-report
 schema. Links to be added by the grill.

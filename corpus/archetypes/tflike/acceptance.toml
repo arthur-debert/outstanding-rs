@@ -1,6 +1,7 @@
 # Acceptance suite for the `tflike` archetype. Format: corpus/README.md.
 # Written spec-first (ROB03-WS03). Gap-only archetype: every case is
-# expected-fail, owned by PAR02 (diagnostic group) or PAR03 (progress group).
+# expected-fail, owned by PAR02 (diagnostic group) or the typed command output
+# Spec (progress group).
 # The byte-precise form of these assertions — per-line NDJSON parseability,
 # lifecycle ordering, state-file rewrites — lives in `corpus/gap-suites`
 # (tests/tflike_diagnostic.rs, tests/tflike_progress.rs) and runs today under
@@ -125,15 +126,15 @@ exit_code = 1
 stdout_contains = ["diagnostic", "error"]
 stderr = ""
 
-# --- progress milestone (PAR03, terminal citizenship) ------------------------
+# --- progress milestone (typed command output) -------------------------------
 
 [[case]]
 name = "apply-lifecycle-events-ride-the-stream"
 group = "progress"
 stresses = "apply emits an apply_start/apply_complete pair per changed resource in the stream"
 expected = "fail"
-gap = "PAR03"
-reason = "no progress seam emits lifecycle events"
+gap = "typed-command-output"
+reason = "no typed incremental result carries the lifecycle events"
 [case.run]
 argv = ["apply", "--config", "main.tfl", "--output", "ndjson"]
 timeout_seconds = 10
@@ -148,8 +149,8 @@ name = "apply-deletion-emits-lifecycle-and-summary"
 group = "progress"
 stresses = "a deletion apply carries the same lifecycle events and terminal summary"
 expected = "fail"
-gap = "PAR03"
-reason = "no progress seam emits lifecycle events"
+gap = "typed-command-output"
+reason = "no typed incremental result carries the lifecycle events"
 [case.run]
 argv = ["apply", "--config", "main.tfl", "--output", "ndjson"]
 timeout_seconds = 10
@@ -165,8 +166,8 @@ name = "progress-silent-under-structured-mode"
 group = "progress"
 stresses = "structured mode suppresses progress entirely: no ANSI on stdout, nothing at all on stderr"
 expected = "fail"
-gap = "PAR03"
-reason = "no mode-aware progress suppression exists"
+gap = "typed-command-output"
+reason = "no representation-aware suppression of progress rendering exists"
 [case.run]
 argv = ["apply", "--config", "main.tfl", "--output", "ndjson"]
 timeout_seconds = 10
