@@ -1,3 +1,4 @@
+use clap::parser::ValueSource;
 use clap::ArgMatches;
 
 use crate::collector::{InputCollector, InputSourceKind, ResolvedInput};
@@ -66,26 +67,22 @@ impl InputCollector<bool> for FlagSource {
     }
 
     fn collect(&self, matches: &ArgMatches) -> Result<Option<bool>, InputError> {
-        let value = matches.get_flag(&self.name);
-        let result = if self.invert { !value } else { value };
-
-        if matches.get_flag(&self.name) {
-            Ok(Some(result))
-        } else {
-            Ok(None)
-        }
+        Ok(self.typed(matches))
     }
 }
 
 impl FlagSource {
     pub fn resolve(&self, matches: &ArgMatches) -> Result<ResolvedInput<bool>, InputError> {
-        let value = matches.get_flag(&self.name);
-        let result = if self.invert { !value } else { value };
-
         Ok(ResolvedInput {
-            value: result,
+            value: self.typed(matches).unwrap_or(self.invert),
             source: InputSourceKind::Flag,
         })
+    }
+
+    fn typed(&self, matches: &ArgMatches) -> Option<bool> {
+        let value = *matches.try_get_one::<bool>(&self.name).ok()??;
+        let typed = matches.value_source(&self.name) != Some(ValueSource::DefaultValue);
+        typed.then_some(if self.invert { !value } else { value })
     }
 }
 
@@ -162,5 +159,38 @@ mod tests {
         let source = FlagSource::new("no-editor").inverted();
 
         assert_eq!(source.collect(&matches).unwrap(), None);
+    }
+
+    fn tri_state_matches(args: &[&str]) -> ArgMatches {
+        Command::new("test")
+            .arg(
+                Arg::new("reverse")
+                    .long("reverse")
+                    .action(clap::ArgAction::Set)
+                    .value_parser(clap::value_parser!(bool))
+                    .num_args(0..=1)
+                    .default_missing_value("true"),
+            )
+            .try_get_matches_from(args)
+            .unwrap()
+    }
+
+    #[test]
+    fn a_tri_state_flag_counts_as_present_whichever_value_was_typed() {
+        let source = FlagSource::new("reverse");
+        assert_eq!(
+            source
+                .collect(&tri_state_matches(&["test", "--reverse"]))
+                .unwrap(),
+            Some(true)
+        );
+        assert_eq!(
+            source
+                .collect(&tri_state_matches(&["test", "--reverse=false"]))
+                .unwrap(),
+            Some(false)
+        );
+        assert_eq!(source.collect(&tri_state_matches(&["test"])).unwrap(), None);
+        assert!(!source.resolve(&tri_state_matches(&["test"])).unwrap().value);
     }
 }

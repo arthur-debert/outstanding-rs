@@ -121,11 +121,11 @@ pub(crate) fn config_result_output(
         ConfigResult::ValueUnset { key } => (format!("{key} unset"), json!({ "key": key })),
         ConfigResult::TemplateWritten { path } => (
             format!("template written to {}", path.display()),
-            json!({ "path": path }),
+            json!({ "path": path.display().to_string() }),
         ),
         ConfigResult::SchemaWritten { path } => (
             format!("schema written to {}", path.display()),
-            json!({ "path": path }),
+            json!({ "path": path.display().to_string() }),
         ),
     };
     let data = if output_mode.is_structured() {
@@ -212,7 +212,11 @@ pub(crate) trait ConfigSeam {
         dir: &Path,
     ) -> Result<ResolvedConfig, ClapfigError>;
 
-    fn handle(&self, action: &ConfigAction) -> Result<ConfigResult, ClapfigError>;
+    fn handle(
+        &self,
+        action: &ConfigAction,
+        overrides: &[(String, String)],
+    ) -> Result<ConfigResult, ClapfigError>;
 }
 
 pub(crate) struct TypedSeam<C: DocumentRoot> {
@@ -226,6 +230,14 @@ impl<C: DocumentRoot> TypedSeam<C> {
             builder,
             term: None,
         }
+    }
+
+    fn builder_with(&self, overrides: &[(String, String)]) -> TypedBuilder<C> {
+        let mut builder = self.builder.clone();
+        for (key, raw) in overrides {
+            builder = builder.cli_override_str(key, raw);
+        }
+        builder
     }
 }
 
@@ -248,19 +260,30 @@ impl<C: DocumentRoot + DeserializeOwned + 'static> ConfigSeam for TypedSeam<C> {
         overrides: &[(String, String)],
         dir: &Path,
     ) -> Result<ResolvedConfig, ClapfigError> {
-        let mut builder = self.builder.clone();
-        for (key, raw) in overrides {
-            builder = builder.cli_override_str(key, raw);
-        }
-        let config = builder.build_resolver()?.resolve_at(dir)?;
+        let config = self
+            .builder_with(overrides)
+            .build_resolver()?
+            .resolve_at(dir)?;
         let term = self.term.as_ref().map(|accessor| accessor(&config).clone());
         Ok(ResolvedConfig::new(config, term))
     }
 
-    fn handle(&self, action: &ConfigAction) -> Result<ConfigResult, ClapfigError> {
-        self.builder.clone().handle(action)
+    fn handle(
+        &self,
+        action: &ConfigAction,
+        overrides: &[(String, String)],
+    ) -> Result<ConfigResult, ClapfigError> {
+        // clapfig validates a write candidate through every layer, so an
+        // override would vouch for a file the next run cannot load.
+        let builder = match action {
+            ConfigAction::List { .. } | ConfigAction::Get { .. } => self.builder_with(overrides),
+            _ => self.builder.clone(),
+        };
+        builder.handle(action)
     }
 }
+
+pub(crate) struct ResolvedApp<C>(pub(crate) C);
 
 pub(crate) struct ResolvedConfig {
     value: Box<dyn Any>,
@@ -276,7 +299,7 @@ impl ResolvedConfig {
                 let value = value
                     .downcast::<C>()
                     .expect("a ResolvedConfig installs the type it was built from");
-                extensions.insert(*value);
+                extensions.insert(ResolvedApp(*value));
             },
             term,
         }
@@ -284,9 +307,6 @@ impl ResolvedConfig {
 
     pub(crate) fn install(self, extensions: &mut Extensions) {
         (self.install)(self.value, extensions);
-        if let Some(term) = self.term {
-            extensions.insert(term);
-        }
     }
 }
 
@@ -433,6 +453,18 @@ mod tests {
                 "s"
             ])
         );
+    }
+
+    #[test]
+    fn a_written_file_confirmation_carries_its_path_as_text() {
+        let result = ConfigResult::TemplateWritten {
+            path: std::path::PathBuf::from("generated.toml"),
+        };
+        let (output, _) = config_result_output(result, OutputMode::Json);
+        let Output::Render(data) = output else {
+            panic!("a confirmation renders");
+        };
+        assert_eq!(data, json!({ "path": "generated.toml" }));
     }
 
     #[test]

@@ -111,6 +111,14 @@ impl App {
                 Ok(config) => config,
                 Err(error) => return (DispatchResult::Error(error), output_mode),
             };
+            let term_output = config
+                .as_ref()
+                .and_then(|config| config.term.as_ref())
+                .and_then(|term| term.output);
+            let output_mode = match term_output {
+                Some(term) if self.typed_output_mode(&matches).is_none() => OutputMode::from(term),
+                _ => output_mode,
+            };
             (
                 self.dispatch_with_target(
                     matches,
@@ -246,7 +254,11 @@ impl App {
             .config
             .as_ref()
             .expect("the config command is installed only beside a config seam");
-        let result = match action.and_then(|action| seam.handle(&action)) {
+        let overrides = match self.config_overrides(matches) {
+            Ok(overrides) => overrides,
+            Err(error) => return DispatchResult::Error(error),
+        };
+        let result = match action.and_then(|action| seam.handle(&action, &overrides)) {
             Ok(result) => result,
             Err(error) => return DispatchResult::Error(config_run_error(&error)),
         };
@@ -590,25 +602,36 @@ impl App {
     }
 
     fn resolve_config_for(&self, matches: &ArgMatches) -> Result<Option<ResolvedConfig>, RunError> {
-        let Some(seam) = self.config.as_ref() else {
-            return Ok(None);
-        };
         let path = extract_command_path(matches).join(".");
         if !self.get_commands().contains_key(&path) {
             return Ok(None);
         }
-        let overrides = match matches.try_get_many::<String>(CONFIG_OVERRIDE_ARG) {
-            Ok(Some(pairs)) => pairs
-                .map(|pair| parse_override_pair(pair))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|message| RunError::new(message, RunErrorKind::ClapUsage))?,
-            _ => Vec::new(),
+        self.resolve_config(matches)
+    }
+
+    pub(crate) fn resolve_config(
+        &self,
+        matches: &ArgMatches,
+    ) -> Result<Option<ResolvedConfig>, RunError> {
+        let Some(seam) = self.config.as_ref() else {
+            return Ok(None);
         };
+        let overrides = self.config_overrides(matches)?;
         let dir = std::env::current_dir()
             .map_err(|error| RunError::new(error.to_string(), RunErrorKind::Config))?;
         seam.resolve_at(&overrides, &dir)
             .map(Some)
             .map_err(|error| config_run_error(&error))
+    }
+
+    fn config_overrides(&self, matches: &ArgMatches) -> Result<Vec<(String, String)>, RunError> {
+        match matches.try_get_many::<String>(CONFIG_OVERRIDE_ARG) {
+            Ok(Some(pairs)) => pairs
+                .map(|pair| parse_override_pair(pair))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|message| RunError::new(message, RunErrorKind::ClapUsage)),
+            _ => Ok(Vec::new()),
+        }
     }
 
     pub(crate) fn config_override_flag_collision(&self, cmd: &Command) -> Result<(), SetupError> {

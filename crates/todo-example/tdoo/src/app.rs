@@ -229,6 +229,22 @@ mod tests {
 
     #[test]
     #[serial]
+    fn a_typed_reverse_false_turns_off_a_configured_reverse() {
+        let tdoo = Tdoo::with_files("store = \"todos.json\"\nreverse = true\n", "");
+        tdoo.add("first");
+        tdoo.add("second");
+        assert_eq!(
+            tdoo.titles(["tdoo", "list", "--reverse=false", "--output", "json"]),
+            ["first", "second"]
+        );
+        assert_eq!(
+            tdoo.titles(["tdoo", "list", "--reverse", "--output", "json"]),
+            ["second", "first"]
+        );
+    }
+
+    #[test]
+    #[serial]
     fn a_project_file_and_a_user_file_both_feed_the_struct() {
         let tdoo = Tdoo::with_files(PROJECT, "reverse = true\n");
         tdoo.add("first");

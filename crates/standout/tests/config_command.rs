@@ -1,11 +1,13 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use clap::{Arg, Command};
-use clapfig::{Clapfig, SearchPath};
+use clapfig::{Clapfig, SearchPath, TypedBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use standout::cli::{
-    App, AppBuilder, CommandContextInput, FnHandler, HelpResult, Output, RunErrorKind, TermSettings,
+    App, AppBuilder, CommandContextInput, ExitStatus, FnHandler, HelpResult, Output, RunErrorKind,
+    TermSettings,
 };
 use standout::{EmbeddedTemplates, InputSources, SetupError};
 use standout_test::{serial, TestHarness, TestResult};
@@ -25,6 +27,12 @@ struct FixtureConfig {
     stamps: Vec<clapfig::value::Datetime>,
     ratio: Option<f64>,
     term: TermSettings,
+    hosts: HashMap<String, Host>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, clapfig::Schema)]
+struct Host {
+    url: String,
 }
 
 fn fixture_builder(global: &Path) -> clapfig::TypedBuilder<FixtureConfig> {
@@ -79,11 +87,21 @@ fn run_with(configure: impl FnOnce(AppBuilder) -> AppBuilder, args: &[&str]) -> 
 }
 
 fn run_file(file: &str, configure: impl FnOnce(AppBuilder) -> AppBuilder, args: &[&str]) -> Run {
+    run_seam(file, |seam| seam, configure, args)
+}
+
+fn run_seam(
+    file: &str,
+    seam: impl FnOnce(TypedBuilder<FixtureConfig>) -> TypedBuilder<FixtureConfig>,
+    configure: impl FnOnce(AppBuilder) -> AppBuilder,
+    args: &[&str],
+) -> Run {
     let harness = TestHarness::new()
         .fixture("cfgapp.toml", file)
         .fixture("global/.keep", "");
     let root = harness.tempdir().unwrap().to_path_buf();
-    let app = configure(configured_builder(&root)).build().unwrap();
+    let builder = show_command(App::builder()).config(seam(fixture_builder(&root.join("global"))));
+    let app = configure(builder).build().unwrap();
     let result = harness.run(&app, cfgapp(), args);
     Run { result, root }
 }
@@ -306,6 +324,99 @@ fn config_list_renders_the_same_entries_in_term_and_json() {
 
 #[test]
 #[serial]
+fn config_list_keeps_a_map_entrys_dots_as_one_key() {
+    const HOSTS: &str =
+        "index_dir = \"/from-file\"\n[hosts.\"acme.prod\"]\nurl = \"https://acme\"\n";
+
+    let merged = run_file(
+        HOSTS,
+        |b| b,
+        &["cfgapp", "config", "list", "--output", "json"],
+    )
+    .result;
+    merged.assert_success();
+    let document: serde_json::Value = serde_json::from_str(merged.stdout()).unwrap();
+    assert_eq!(
+        document["hosts.acme.prod.url"],
+        json!("https://acme"),
+        "{document}"
+    );
+
+    let scoped = run_file(
+        HOSTS,
+        |b| b,
+        &[
+            "cfgapp", "config", "list", "--scope", "local", "--output", "json",
+        ],
+    )
+    .result;
+    scoped.assert_success();
+    let document: serde_json::Value = serde_json::from_str(scoped.stdout()).unwrap();
+    assert_eq!(
+        document["hosts.acme.prod.url"],
+        json!("https://acme"),
+        "{document}"
+    );
+}
+
+#[test]
+#[serial]
+fn the_override_flag_reaches_the_config_command() {
+    let with_set = |args: &[&str]| run_with(|b| b.config_override_flag("set"), args);
+
+    for action in [
+        &["cfgapp", "config", "list", "--set", "garbage"][..],
+        &["cfgapp", "config", "set", "port", "1", "--set", "garbage"][..],
+    ] {
+        let malformed = with_set(action);
+        malformed.result.assert_error_kind(RunErrorKind::ClapUsage);
+        malformed.result.assert_exit_status(ExitStatus::USAGE_ERROR);
+        assert_eq!(malformed.local_file(), FILE);
+    }
+
+    let listed = with_set(&["cfgapp", "config", "list", "--set", "index_dir=/from-flag"]).result;
+    listed.assert_success();
+    listed.assert_stdout_contains("index_dir = /from-flag");
+}
+
+#[test]
+#[serial]
+fn a_write_is_validated_without_the_override_layer() {
+    let guarded = |args: &[&str]| {
+        run_seam(
+            FILE,
+            |seam| {
+                seam.post_validate(|config: &FixtureConfig| {
+                    (config.port >= 1024)
+                        .then_some(())
+                        .ok_or_else(|| "port must be 1024 or above".to_string())
+                })
+            },
+            |b| b.config_override_flag("set"),
+            args,
+        )
+    };
+
+    let masked = guarded(&[
+        "cfgapp",
+        "config",
+        "set",
+        "port",
+        "80",
+        "--set",
+        "port=9000",
+    ]);
+    masked.result.assert_error_kind(RunErrorKind::Config);
+    masked.result.assert_stderr_contains("1024");
+    assert_eq!(masked.local_file(), FILE);
+
+    let read = guarded(&["cfgapp", "config", "get", "port", "--set", "port=80"]).result;
+    read.assert_success();
+    read.assert_stdout_contains("port = 80");
+}
+
+#[test]
+#[serial]
 fn config_get_renders_one_typed_entry() {
     let term = run(&["cfgapp", "config", "get", "port"]).result;
     term.assert_success();
@@ -406,6 +517,20 @@ fn a_written_template_is_a_confirmation() {
     written.result.assert_success();
     written.result.assert_stdout_contains("generated.toml");
     assert!(written.root.join("generated.toml").is_file());
+
+    let json = run(&[
+        "cfgapp",
+        "config",
+        "schema",
+        "--file",
+        "schema.json",
+        "--output",
+        "json",
+    ])
+    .result;
+    json.assert_success();
+    let document: serde_json::Value = serde_json::from_str(json.stdout()).unwrap();
+    assert_eq!(document["path"], json!("schema.json"));
 }
 
 #[test]

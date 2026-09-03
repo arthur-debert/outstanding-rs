@@ -157,6 +157,7 @@ impl TestHarness {
         let path = path.into();
         if !path.is_absolute() {
             validate_relative_path("cwd", &path);
+            self.ensure_tempdir();
         }
         self.cwd = Some(path);
         self
@@ -314,6 +315,21 @@ impl TestHarness {
 impl Default for TestHarness {
     fn default() -> Self {
         Self::new()
+    }
+}
+#[cfg(test)]
+mod relative_cwd {
+    use super::*;
+    #[test]
+    fn a_relative_cwd_alone_creates_the_tempdir() {
+        let harness = TestHarness::new().cwd("proj");
+        assert!(harness.tempdir().is_some());
+    }
+    #[test]
+    fn an_absolute_cwd_needs_no_tempdir() {
+        let dir = TempDir::new().unwrap();
+        let harness = TestHarness::new().cwd(dir.path().to_path_buf());
+        assert!(harness.tempdir().is_none());
     }
 }
 #[cfg(test)]

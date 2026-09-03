@@ -1,4 +1,4 @@
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{ArgAction, CommandFactory, Parser, Subcommand};
 use standout::cli::Dispatch;
 
 #[derive(Parser)]
@@ -27,8 +27,14 @@ pub(crate) enum Commands {
         #[arg(short, long)]
         all: bool,
         /// Newest first; the `reverse` config key sets the default.
-        #[arg(short, long)]
-        reverse: bool,
+        #[arg(
+            short,
+            long,
+            action = ArgAction::Set,
+            num_args = 0..=1,
+            default_missing_value = "true"
+        )]
+        reverse: Option<bool>,
     },
     /// Mark a todo done.
     #[dispatch(pure, post_dispatch = crate::handlers::audit_hook)]

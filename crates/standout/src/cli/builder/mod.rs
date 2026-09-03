@@ -372,7 +372,6 @@ pub struct App {
     pub(crate) strict_style_tags: bool,
     pub(crate) config: Option<Rc<dyn ConfigSeam>>,
     pub(crate) config_override_flag: Option<String>,
-    #[allow(dead_code)]
     pub(crate) config_command: bool,
 }
 
@@ -1300,20 +1299,22 @@ impl App {
         matches: &ArgMatches,
         term: Option<&crate::TermSettings>,
     ) -> OutputMode {
-        let fallback = term
-            .and_then(|term| term.output)
-            .map_or(self.output_mode_fallback, OutputMode::from);
-        if self.output_flag.is_none() {
-            return fallback;
-        }
+        self.typed_output_mode(matches).unwrap_or_else(|| {
+            term.and_then(|term| term.output)
+                .map_or(self.output_mode_fallback, OutputMode::from)
+        })
+    }
+
+    pub(crate) fn typed_output_mode(&self, matches: &ArgMatches) -> Option<OutputMode> {
+        self.output_flag.as_ref()?;
         match matches.try_get_one::<String>("_output_mode") {
             // A `DefaultValue` source means the user never typed `--output`.
             Ok(Some(value))
                 if matches.value_source("_output_mode") != Some(ValueSource::DefaultValue) =>
             {
-                parse_output_mode_flag(value.as_str()).unwrap_or(fallback)
+                parse_output_mode_flag(value.as_str())
             }
-            _ => fallback,
+            _ => None,
         }
     }
 
@@ -1342,7 +1343,13 @@ impl App {
         F: FnOnce(&ArgMatches, &CommandContext) -> HandlerResult<T>,
         T: Serialize,
     {
-        let output_mode = self.extract_output_mode(matches);
+        let config = self
+            .resolve_config(matches)
+            .map_err(|error| HookError::pre_dispatch("Config error").with_source(error))?;
+        let output_mode = self.extract_output_mode_over(
+            matches,
+            config.as_ref().and_then(|config| config.term.as_ref()),
+        );
         let stream = if output_mode.is_stream() {
             EntryStream::writing_to(sink)
         } else {
@@ -1357,6 +1364,9 @@ impl App {
         self.seed_startup_warnings(&warnings);
         ctx.extensions.insert(InputSources::from_process());
         ctx.extensions.insert(warnings.clone());
+        if let Some(config) = config {
+            config.install(&mut ctx.extensions);
+        }
 
         let hooks = self.command_hooks.get(path);
 
