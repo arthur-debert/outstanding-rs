@@ -83,13 +83,10 @@ structured encoding never carries ANSI, whatever `--color` says.
 stdout, in a file the user names, or, for complete human output on a terminal, in an
 external pager. The application author declares which commands may page; the CLI user
 declines paging per run with `--no-pager`, which disables paging outright. That
-declaration only makes a command eligible. The pager command is executed, so it comes only
-from sources the user controls: `MYAPP__TERM__PAGER`, then the `[term] pager` key of the
-user-scope file, then `PAGER`, the platform's pager, read at the detection rung like
-`COLUMNS`. A project-scope file never supplies it: that is the project-file pager rule
-Config Layering delegates here, and enforcing it needs the key's scope, which Config
-Layering leaves to a clapfig follow-on. With nothing set, or the winning value empty,
-nothing pages. A named output file wins over paging. A pager that cannot start
+declaration only makes a command eligible. The pager command is executed, so it never
+comes from a configuration file, which a project may supply, and there is no `[term]`
+pager key: it is read from the environment, `MYAPP_PAGER` (the application's name in upper
+case), then `PAGER`. With neither set, or the winning value empty, nothing pages. A named output file wins over paging. A pager that cannot start
 delivers to stdout unpaged without changing the run's status; a pager that stops reading
 ends delivery without failing the run.
 Structured encodings, incremental human output and a stdout that is not a terminal never
