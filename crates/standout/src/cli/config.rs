@@ -1,13 +1,104 @@
 use std::any::Any;
 use std::path::Path;
 
-use clapfig::{ClapfigError, DocumentRoot, TypedBuilder};
+use clap::Command;
+use clapfig::{
+    ClapfigError, ConfigAction, ConfigCommand, ConfigResult, DocumentRoot, TypedBuilder,
+};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
-use crate::cli::handler::{Diagnostic, Extensions, RunError, RunErrorKind};
+use crate::cli::builder::TemplateRef;
+use crate::cli::handler::{Artifact, Diagnostic, Extensions, Output, RunError, RunErrorKind};
 use crate::setup::SetupError;
 use crate::OutputMode;
+
+pub(crate) const CONFIG_COMMAND: &str = "config";
+
+pub(crate) fn config_command() -> ConfigCommand {
+    ConfigCommand::new().output_long("file")
+}
+
+pub(crate) fn config_command_tree() -> Command {
+    config_command().as_command(CONFIG_COMMAND)
+}
+
+pub(crate) fn claims_config_command(cmd: &Command) -> bool {
+    cmd.get_name() == CONFIG_COMMAND || cmd.get_all_aliases().any(|alias| alias == CONFIG_COMMAND)
+}
+
+pub(crate) fn claims_config_path(path: &str) -> bool {
+    path == CONFIG_COMMAND || path.starts_with("config.")
+}
+
+pub(crate) fn config_command_collision(claim: &str) -> SetupError {
+    SetupError::Config(format!(
+        "config — {claim}, and standout installs a `config` command of its own for the \
+         configuration given to .config(...). Rename the application's command, or call \
+         .no_config_command() to keep the name"
+    ))
+}
+
+const LINE_TEMPLATE: &str = "{{ line }}";
+
+pub(crate) fn config_result_output(
+    result: ConfigResult,
+    output_mode: OutputMode,
+) -> (Output<serde_json::Value>, TemplateRef) {
+    let (line, structured) = match result {
+        ConfigResult::Template(text) | ConfigResult::Schema(text) => {
+            return (
+                Output::Artifact(Artifact::new(text.into_bytes()).allow_stdout()),
+                TemplateRef::Inline(LINE_TEMPLATE.to_string()),
+            )
+        }
+        ConfigResult::Listing { entries, rendered } => {
+            let object = entries
+                .into_iter()
+                .map(|(key, value)| (key, typed_value(&value)))
+                .collect::<serde_json::Map<_, _>>();
+            (rendered, serde_json::Value::Object(object))
+        }
+        ConfigResult::KeyValue {
+            key,
+            value,
+            rendered,
+            ..
+        } => (rendered, json!({ key: typed_value(&value) })),
+        ConfigResult::ValueSet {
+            key,
+            value,
+            rendered,
+        } => (rendered, json!({ "key": key, "value": value })),
+        ConfigResult::ValueUnset { key } => (format!("{key} unset"), json!({ "key": key })),
+        ConfigResult::TemplateWritten { path } => (
+            format!("template written to {}", path.display()),
+            json!({ "path": path }),
+        ),
+        ConfigResult::SchemaWritten { path } => (
+            format!("schema written to {}", path.display()),
+            json!({ "path": path }),
+        ),
+    };
+    let data = if output_mode.is_structured() {
+        structured
+    } else {
+        json!({ "line": escape_style_tags(&line) })
+    };
+    (
+        Output::Render(data),
+        TemplateRef::Inline(LINE_TEMPLATE.to_string()),
+    )
+}
+
+fn typed_value(value: &clapfig::value::Value) -> serde_json::Value {
+    serde_json::to_value(value).unwrap_or_else(|_| serde_json::Value::String(value.to_string()))
+}
+
+fn escape_style_tags(text: &str) -> String {
+    text.replace('[', "\\[").replace(']', "\\]")
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, clapfig::Schema)]
 pub struct TermSettings {
@@ -58,6 +149,8 @@ pub(crate) trait ConfigSeam {
         overrides: &[(String, String)],
         dir: &Path,
     ) -> Result<ResolvedConfig, ClapfigError>;
+
+    fn handle(&self, action: &ConfigAction) -> Result<ConfigResult, ClapfigError>;
 }
 
 pub(crate) struct TypedSeam<C: DocumentRoot> {
@@ -100,6 +193,10 @@ impl<C: DocumentRoot + DeserializeOwned + 'static> ConfigSeam for TypedSeam<C> {
         let config = builder.build_resolver()?.resolve_at(dir)?;
         let term = self.term.as_ref().map(|accessor| accessor(&config).clone());
         Ok(ResolvedConfig::new(config, term))
+    }
+
+    fn handle(&self, action: &ConfigAction) -> Result<ConfigResult, ClapfigError> {
+        self.builder.clone().handle(action)
     }
 }
 

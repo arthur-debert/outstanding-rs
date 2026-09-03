@@ -10,16 +10,21 @@ use super::{
     output_mode_flag_spelling, App, AppBuilder, HookRegistrationSource, PendingCommand,
     TemplateRef, OUTPUT_MODE_FLAG_VALUES,
 };
-use crate::cli::config::{config_run_error, parse_override_pair, ResolvedConfig};
+use crate::cli::config::{
+    config_command, config_command_tree, config_result_output, config_run_error,
+    parse_override_pair, ResolvedConfig, CONFIG_COMMAND,
+};
 use crate::cli::default_command::ParseFailure;
-use crate::cli::dispatch::{dispatch, extract_command_path, get_deepest_matches, DispatchOutput};
+use crate::cli::dispatch::{
+    dispatch, extract_command_path, get_deepest_matches, render_handler_output, DispatchOutput,
+};
 use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
 use crate::cli::handler::{
     ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, DispatchResult, EntryStream,
     ExitStatus, OutputKind, RunError, RunErrorKind, RunOutput, StreamCapture, StreamSink,
     SuccessKind,
 };
-use crate::cli::hooks::{ArtifactOutput, RenderedOutput, TextOutput};
+use crate::cli::hooks::{ArtifactOutput, Hooks, RenderedOutput, TextOutput};
 use crate::cli::questionnaire::{
     augment_questionnaire_command, render_questions_result, validate_questionnaire_surface,
     QUESTIONNAIRE_ANSWERS_ARG, QUESTIONNAIRE_YES_ARG, QUESTIONS_SUBCOMMAND,
@@ -144,177 +149,303 @@ impl App {
         let path = extract_command_path(&matches);
         let path_str = path.join(".");
 
+        if let Some(action) = self.config_command_action(&matches) {
+            return self.run_config_command(
+                action,
+                path,
+                &matches,
+                output_mode,
+                target,
+                inputs.sources,
+                &sink,
+                &warnings,
+            );
+        }
+
         let commands = self.get_commands();
-        if let Some(dispatch_fn) = commands.get(&path_str) {
-            let override_path = self.output_file_flag.as_ref().and_then(|_| {
-                matches
-                    .try_get_one::<String>("_output_file_path")
-                    .unwrap_or(None)
-                    .map(PathBuf::from)
-            });
+        let Some(dispatch_fn) = commands.get(&path_str) else {
+            return DispatchResult::NoMatch(matches);
+        };
+        let override_path = self.output_file_override(&matches);
+        let mut ctx = match self.command_context(
+            path,
+            output_mode,
+            override_path.as_deref(),
+            &sink,
+            &warnings,
+        ) {
+            Ok(ctx) => ctx,
+            Err(error) => return DispatchResult::Error(error),
+        };
+        ctx.extensions.insert(inputs.sources);
+        if let Some(config) = inputs.config {
+            config.install(&mut ctx.extensions);
+        }
 
-            // The file override takes the entries too, so the sink is retargeted first.
-            let stream = if output_mode.is_stream() {
-                if let Some(path) = &override_path {
-                    match open_output_file(path) {
-                        Ok(file) => sink.redirect(file),
-                        Err(e) => {
-                            return DispatchResult::Error(RunError::new(
-                                format!("Error writing output: {}", e),
-                                RunErrorKind::FinalWrite(OutputKind::Text),
-                            ))
-                        }
-                    }
-                }
-                EntryStream::writing_to(sink.clone())
-            } else {
-                EntryStream::discarding()
-            };
-            let mut ctx = CommandContext::new(path, self.app_state.clone()).with_stream(stream);
-            ctx.extensions.insert(inputs.sources);
-            ctx.extensions.insert(warnings.clone());
-            if let Some(config) = inputs.config {
-                config.install(&mut ctx.extensions);
+        let hooks = self.command_hooks.get(&path_str);
+        let sub_matches = get_deepest_matches(&matches);
+
+        if let Some(hooks) = hooks {
+            if let Err(e) = hooks.run_pre_dispatch(sub_matches, &mut ctx) {
+                return DispatchResult::Error(super::super::dispatch::hook_run_error(
+                    e,
+                    crate::cli::HookPhase::PreDispatch,
+                ));
             }
+        }
 
-            let hooks = self.command_hooks.get(&path_str);
-            let sub_matches = get_deepest_matches(&matches);
+        let dispatch_output = match dispatch(
+            dispatch_fn,
+            sub_matches,
+            &ctx,
+            hooks,
+            output_mode,
+            &self.theme,
+            target,
+        ) {
+            Ok(output) => output,
+            Err(e) => return DispatchResult::Error(e),
+        };
 
-            if let Some(hooks) = hooks {
-                if let Err(e) = hooks.run_pre_dispatch(sub_matches, &mut ctx) {
+        self.present_dispatch_output(
+            dispatch_output,
+            hooks,
+            sub_matches,
+            &ctx,
+            output_mode,
+            override_path,
+            &sink,
+            &warnings,
+        )
+    }
+
+    fn config_command_action(
+        &self,
+        matches: &ArgMatches,
+    ) -> Option<Result<clapfig::ConfigAction, clapfig::ClapfigError>> {
+        if !self.installs_config_command() {
+            return None;
+        }
+        let (name, sub_matches) = matches.subcommand()?;
+        (name == CONFIG_COMMAND).then(|| config_command().parse(sub_matches))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_config_command(
+        &self,
+        action: Result<clapfig::ConfigAction, clapfig::ClapfigError>,
+        path: Vec<String>,
+        matches: &ArgMatches,
+        output_mode: OutputMode,
+        target: TargetProperties,
+        sources: InputSources,
+        sink: &StreamSink,
+        warnings: &WarningBuffer,
+    ) -> DispatchResult {
+        let seam = self
+            .config
+            .as_ref()
+            .expect("the config command is installed only beside a config seam");
+        let result = match action.and_then(|action| seam.handle(&action)) {
+            Ok(result) => result,
+            Err(error) => return DispatchResult::Error(config_run_error(&error)),
+        };
+        let override_path = self.output_file_override(matches);
+        let mut ctx =
+            match self.command_context(path, output_mode, override_path.as_deref(), sink, warnings)
+            {
+                Ok(ctx) => ctx,
+                Err(error) => return DispatchResult::Error(error),
+            };
+        ctx.extensions.insert(sources);
+        let sub_matches = get_deepest_matches(matches);
+        let (output, template) = config_result_output(result, output_mode);
+        let dispatch_output = match render_handler_output(
+            Ok(output),
+            sub_matches,
+            &ctx,
+            None,
+            &template,
+            &self.theme,
+            &self.context_registry,
+            &self.template_engine,
+            self.template_registry.as_ref(),
+            output_mode,
+            None,
+            target,
+        ) {
+            Ok(output) => output,
+            Err(error) => return DispatchResult::Error(error),
+        };
+        self.present_dispatch_output(
+            dispatch_output,
+            None,
+            sub_matches,
+            &ctx,
+            output_mode,
+            override_path,
+            sink,
+            warnings,
+        )
+    }
+
+    fn output_file_override(&self, matches: &ArgMatches) -> Option<PathBuf> {
+        self.output_file_flag.as_ref().and_then(|_| {
+            matches
+                .try_get_one::<String>("_output_file_path")
+                .unwrap_or(None)
+                .map(PathBuf::from)
+        })
+    }
+
+    fn command_context(
+        &self,
+        path: Vec<String>,
+        output_mode: OutputMode,
+        override_path: Option<&std::path::Path>,
+        sink: &StreamSink,
+        warnings: &WarningBuffer,
+    ) -> Result<CommandContext, RunError> {
+        // The file override takes the entries too, so the sink is retargeted first.
+        let stream = if output_mode.is_stream() {
+            if let Some(path) = override_path {
+                let file = open_output_file(path).map_err(|e| {
+                    RunError::new(
+                        format!("Error writing output: {}", e),
+                        RunErrorKind::FinalWrite(OutputKind::Text),
+                    )
+                })?;
+                sink.redirect(file);
+            }
+            EntryStream::writing_to(sink.clone())
+        } else {
+            EntryStream::discarding()
+        };
+        let mut ctx = CommandContext::new(path, self.app_state.clone()).with_stream(stream);
+        ctx.extensions.insert(warnings.clone());
+        Ok(ctx)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn present_dispatch_output(
+        &self,
+        dispatch_output: DispatchOutput,
+        hooks: Option<&Hooks>,
+        sub_matches: &ArgMatches,
+        ctx: &CommandContext,
+        output_mode: OutputMode,
+        override_path: Option<PathBuf>,
+        sink: &StreamSink,
+        warnings: &WarningBuffer,
+    ) -> DispatchResult {
+        let (output, request, status) = match dispatch_output {
+            DispatchOutput::Text {
+                formatted,
+                raw,
+                status,
+            } => (
+                RenderedOutput::Text(TextOutput::new(formatted, raw)),
+                None,
+                status,
+            ),
+            DispatchOutput::Binary(b, f) => {
+                (RenderedOutput::Binary(b, f), None, ExitStatus::SUCCESS)
+            }
+            DispatchOutput::Artifact { output, request } => (
+                RenderedOutput::Artifact(output),
+                Some(request),
+                ExitStatus::SUCCESS,
+            ),
+            DispatchOutput::Silent { status } => (RenderedOutput::Silent, None, status),
+        };
+
+        let mut final_output = if let Some(hooks) = hooks {
+            match hooks.run_post_output(sub_matches, ctx, output) {
+                Ok(o) => o,
+                Err(e) => {
                     return DispatchResult::Error(super::super::dispatch::hook_run_error(
                         e,
-                        crate::cli::HookPhase::PreDispatch,
-                    ));
-                }
-            }
-
-            let dispatch_output = match dispatch(
-                dispatch_fn,
-                sub_matches,
-                &ctx,
-                hooks,
-                output_mode,
-                &self.theme,
-                target,
-            ) {
-                Ok(output) => output,
-                Err(e) => return DispatchResult::Error(e),
-            };
-
-            let (output, request, status) = match dispatch_output {
-                DispatchOutput::Text {
-                    formatted,
-                    raw,
-                    status,
-                } => (
-                    RenderedOutput::Text(TextOutput::new(formatted, raw)),
-                    None,
-                    status,
-                ),
-                DispatchOutput::Binary(b, f) => {
-                    (RenderedOutput::Binary(b, f), None, ExitStatus::SUCCESS)
-                }
-                DispatchOutput::Artifact { output, request } => (
-                    RenderedOutput::Artifact(output),
-                    Some(request),
-                    ExitStatus::SUCCESS,
-                ),
-                DispatchOutput::Silent { status } => (RenderedOutput::Silent, None, status),
-            };
-
-            let mut final_output = if let Some(hooks) = hooks {
-                match hooks.run_post_output(sub_matches, &ctx, output) {
-                    Ok(o) => o,
-                    Err(e) => {
-                        return DispatchResult::Error(super::super::dispatch::hook_run_error(
-                            e,
-                            crate::cli::HookPhase::PostOutput,
-                        ))
-                    }
-                }
-            } else {
-                output
-            };
-
-            if let Err(error) = super::super::dispatch::reject_payload_under_stream(
-                output_mode,
-                final_output.is_binary(),
-                final_output.is_artifact(),
-            ) {
-                return DispatchResult::Error(error);
-            }
-
-            if let RenderedOutput::Artifact(artifact) = final_output {
-                if status != ExitStatus::SUCCESS {
-                    return DispatchResult::Error(
-                        super::super::dispatch::status_without_a_carrier(status, "artifact"),
-                    );
-                }
-                return self.complete_artifact(artifact, request, override_path, &warnings);
-            }
-
-            // Before committing to stdout or a file, so a strict failure leaves no output.
-            if let Some(error) = self.strict_style_tags_error(&warnings) {
-                return DispatchResult::Error(error);
-            }
-
-            if let Some(path) = override_path {
-                let dest = OutputDestination::File(path);
-
-                match &final_output {
-                    RenderedOutput::Text(t) if output_mode.is_stream() => {
-                        let written = sink.with_writer(|file| {
-                            writeln!(file, "{}", t.raw).and_then(|()| file.flush())
-                        });
-                        if let Err(e) = written {
-                            return DispatchResult::Error(RunError::new(
-                                format!("Error writing output: {}", e),
-                                RunErrorKind::FinalWrite(OutputKind::Text),
-                            ));
-                        }
-                        final_output = RenderedOutput::Silent;
-                    }
-                    RenderedOutput::Text(t) => {
-                        if let Err(e) = write_output(&t.raw, &dest) {
-                            return DispatchResult::Error(RunError::new(
-                                format!("Error writing output: {}", e),
-                                RunErrorKind::FinalWrite(OutputKind::Text),
-                            ));
-                        }
-                        final_output = RenderedOutput::Silent;
-                    }
-                    RenderedOutput::Binary(b, _) => {
-                        if let Err(e) = write_binary_output(b, &dest) {
-                            return DispatchResult::Error(RunError::new(
-                                format!("Error writing output: {}", e),
-                                RunErrorKind::FinalWrite(OutputKind::Binary),
-                            ));
-                        }
-                        final_output = RenderedOutput::Silent;
-                    }
-                    RenderedOutput::Artifact(_) => unreachable!("artifacts returned above"),
-                    RenderedOutput::Silent => {}
-                }
-            }
-
-            match final_output {
-                RenderedOutput::Text(t) => DispatchResult::Handled(
-                    RunOutput::command(t.formatted).with_exit_status(status),
-                ),
-                RenderedOutput::Binary(_, _) if status != ExitStatus::SUCCESS => {
-                    DispatchResult::Error(super::super::dispatch::status_without_a_carrier(
-                        status, "binary",
+                        crate::cli::HookPhase::PostOutput,
                     ))
                 }
-                RenderedOutput::Binary(b, f) => DispatchResult::Binary(b, f),
-                RenderedOutput::Artifact(_) => unreachable!("artifacts returned above"),
-                RenderedOutput::Silent => DispatchResult::Handled(
-                    RunOutput::command(String::new()).with_exit_status(status),
-                ),
             }
         } else {
-            DispatchResult::NoMatch(matches)
+            output
+        };
+
+        if let Err(error) = super::super::dispatch::reject_payload_under_stream(
+            output_mode,
+            final_output.is_binary(),
+            final_output.is_artifact(),
+        ) {
+            return DispatchResult::Error(error);
+        }
+
+        if let RenderedOutput::Artifact(artifact) = final_output {
+            if status != ExitStatus::SUCCESS {
+                return DispatchResult::Error(super::super::dispatch::status_without_a_carrier(
+                    status, "artifact",
+                ));
+            }
+            return self.complete_artifact(artifact, request, override_path, warnings);
+        }
+
+        // Before committing to stdout or a file, so a strict failure leaves no output.
+        if let Some(error) = self.strict_style_tags_error(warnings) {
+            return DispatchResult::Error(error);
+        }
+
+        if let Some(path) = override_path {
+            let dest = OutputDestination::File(path);
+
+            match &final_output {
+                RenderedOutput::Text(t) if output_mode.is_stream() => {
+                    let written = sink.with_writer(|file| {
+                        writeln!(file, "{}", t.raw).and_then(|()| file.flush())
+                    });
+                    if let Err(e) = written {
+                        return DispatchResult::Error(RunError::new(
+                            format!("Error writing output: {}", e),
+                            RunErrorKind::FinalWrite(OutputKind::Text),
+                        ));
+                    }
+                    final_output = RenderedOutput::Silent;
+                }
+                RenderedOutput::Text(t) => {
+                    if let Err(e) = write_output(&t.raw, &dest) {
+                        return DispatchResult::Error(RunError::new(
+                            format!("Error writing output: {}", e),
+                            RunErrorKind::FinalWrite(OutputKind::Text),
+                        ));
+                    }
+                    final_output = RenderedOutput::Silent;
+                }
+                RenderedOutput::Binary(b, _) => {
+                    if let Err(e) = write_binary_output(b, &dest) {
+                        return DispatchResult::Error(RunError::new(
+                            format!("Error writing output: {}", e),
+                            RunErrorKind::FinalWrite(OutputKind::Binary),
+                        ));
+                    }
+                    final_output = RenderedOutput::Silent;
+                }
+                RenderedOutput::Artifact(_) => unreachable!("artifacts returned above"),
+                RenderedOutput::Silent => {}
+            }
+        }
+
+        match final_output {
+            RenderedOutput::Text(t) => {
+                DispatchResult::Handled(RunOutput::command(t.formatted).with_exit_status(status))
+            }
+            RenderedOutput::Binary(_, _) if status != ExitStatus::SUCCESS => DispatchResult::Error(
+                super::super::dispatch::status_without_a_carrier(status, "binary"),
+            ),
+            RenderedOutput::Binary(b, f) => DispatchResult::Binary(b, f),
+            RenderedOutput::Artifact(_) => unreachable!("artifacts returned above"),
+            RenderedOutput::Silent => {
+                DispatchResult::Handled(RunOutput::command(String::new()).with_exit_status(status))
+            }
         }
     }
 
@@ -338,6 +469,7 @@ impl App {
             .and_then(|()| self.validate_questionnaire_surfaces(&cmd))
             .and_then(|()| self.unreachable_registrations(&cmd))
             .and_then(|()| self.config_override_flag_collision(&cmd))
+            .and_then(|()| self.config_command_collision(&cmd))
         {
             return (
                 DispatchResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
@@ -483,19 +615,6 @@ impl App {
         let Some(flag) = self.config_override_flag.as_deref() else {
             return Ok(());
         };
-        fn takes(cmd: &Command, flag: &str) -> bool {
-            cmd.get_arguments().any(|arg| {
-                arg.get_id() == CONFIG_OVERRIDE_ARG
-                    || arg.get_long() == Some(flag)
-                    || arg
-                        .get_all_aliases()
-                        .is_some_and(|aliases| aliases.contains(&flag))
-            }) || cmd.get_subcommands().any(|sub| {
-                sub.get_long_flag() == Some(flag)
-                    || sub.get_all_long_flag_aliases().any(|alias| alias == flag)
-                    || takes(sub, flag)
-            })
-        }
         // Generated `--help`/`--version` only exist per command once clap builds the tree.
         let built = matches!(flag, "help" | "version").then(|| {
             let mut built = cmd.clone();
@@ -505,7 +624,7 @@ impl App {
             built.build();
             built
         });
-        if takes(built.as_ref().unwrap_or(cmd), flag) {
+        if command_takes_flag(built.as_ref().unwrap_or(cmd), flag) {
             return Err(SetupError::Config(format!(
                 "config_override_flag(\"{flag}\") is already taken by this application's clap Command"
             )));
@@ -730,6 +849,10 @@ impl App {
                     .action(ArgAction::Append)
                     .help("Override a configuration value"),
             );
+        }
+
+        if self.installs_config_command() {
+            cmd = cmd.subcommand(config_command_tree());
         }
 
         cmd
@@ -994,6 +1117,20 @@ impl App {
             report,
         ))
     }
+}
+
+pub(crate) fn command_takes_flag(cmd: &Command, flag: &str) -> bool {
+    cmd.get_arguments().any(|arg| {
+        arg.get_id() == CONFIG_OVERRIDE_ARG
+            || arg.get_long() == Some(flag)
+            || arg
+                .get_all_aliases()
+                .is_some_and(|aliases| aliases.contains(&flag))
+    }) || cmd.get_subcommands().any(|sub| {
+        sub.get_long_flag() == Some(flag)
+            || sub.get_all_long_flag_aliases().any(|alias| alias == flag)
+            || command_takes_flag(sub, flag)
+    })
 }
 
 #[cfg(test)]

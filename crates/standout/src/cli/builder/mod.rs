@@ -31,7 +31,10 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
-use super::config::ConfigSeam;
+use super::config::{
+    claims_config_command, claims_config_path, config_command_collision, config_command_tree,
+    ConfigSeam,
+};
 use super::default_command::ParseFailure;
 use super::dispatch::DispatchFn;
 use super::group::CommandRecipe;
@@ -47,6 +50,7 @@ use super::help::{
 use super::hooks::{ArtifactOutput, HookError, HookPhase, Hooks, RenderedOutput, TextOutput};
 use super::questionnaire::QuestionnaireCommand;
 use super::result::{HelpDisplay, HelpResult};
+use execution::command_takes_flag;
 use standout_dispatch::verify::ExpectedArg;
 use standout_render::warnings::WarningBuffer;
 
@@ -56,6 +60,7 @@ pub(crate) type SharedTemplateEngine =
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TemplateRef {
     Named(String),
+    Inline(String),
     Absent(TemplateAbsence),
 }
 
@@ -557,6 +562,8 @@ impl AppBuilder {
             }
         }
 
+        let installs_config_command = self.config_command && self.config.is_some();
+
         if let Some(flag) = self.config_override_flag.as_deref() {
             if self.config.is_none() {
                 return Err(SetupError::Config(format!(
@@ -568,9 +575,34 @@ impl AppBuilder {
                 self.output_flag.as_deref(),
                 self.output_file_flag.as_deref(),
             ];
-            if taken.contains(&Some(flag)) {
+            if taken.contains(&Some(flag))
+                || (installs_config_command && command_takes_flag(&config_command_tree(), flag))
+            {
                 return Err(SetupError::Config(format!(
                     "config_override_flag(\"{flag}\") names a flag standout already installs"
+                )));
+            }
+        }
+
+        if !self.config_command && self.config.is_none() {
+            return Err(SetupError::Config(
+                "no_config_command() is set without .config(...): there is no `config` \
+                 command to remove"
+                    .to_string(),
+            ));
+        }
+
+        if installs_config_command {
+            let claim = self
+                .pending_commands
+                .borrow()
+                .keys()
+                .filter(|path| claims_config_path(path))
+                .min()
+                .cloned();
+            if let Some(path) = claim {
+                return Err(config_command_collision(&format!(
+                    "this application registers `{path}`"
                 )));
             }
         }
@@ -631,7 +663,7 @@ impl AppBuilder {
         for (path, pending) in self.pending_commands.borrow().iter() {
             let name = match &pending.template {
                 TemplateRef::Named(name) => name.clone(),
-                TemplateRef::Absent(_) => continue,
+                TemplateRef::Inline(_) | TemplateRef::Absent(_) => continue,
             };
             let Some(registry) = self.template_registry.as_ref() else {
                 return Err(SetupError::Template(missing_template_message(
@@ -795,7 +827,10 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        if let Err(error) = self.config_override_flag_collision(&cmd) {
+        if let Err(error) = self
+            .config_override_flag_collision(&cmd)
+            .and_then(|()| self.config_command_collision(&cmd))
+        {
             return HelpResult::Error(clap::Error::raw(
                 clap::error::ErrorKind::ArgumentConflict,
                 format!("{error}\n"),
@@ -1212,6 +1247,19 @@ impl App {
         (claims > 1).then(|| duplicate_help_word(DECLARED_CLAIM))
     }
 
+    pub(crate) fn installs_config_command(&self) -> bool {
+        self.config_command && self.config.is_some()
+    }
+
+    pub(crate) fn config_command_collision(&self, cmd: &Command) -> Result<(), SetupError> {
+        if self.installs_config_command() && cmd.get_subcommands().any(claims_config_command) {
+            return Err(config_command_collision(
+                "this application's clap `Command` declares `config` (as a subcommand name or alias)",
+            ));
+        }
+        Ok(())
+    }
+
     pub(crate) fn installs_help_word(&self, cmd: &Command) -> bool {
         self.help_word
             || cmd.get_subcommands().next().is_some()
@@ -1382,6 +1430,7 @@ impl App {
         self.validate_questionnaire_surfaces(cmd)?;
         self.unreachable_registrations(cmd)?;
         self.config_override_flag_collision(cmd)?;
+        self.config_command_collision(cmd)?;
         let expected_args: HashMap<String, Vec<ExpectedArg>> = self
             .pending_commands
             .borrow()
