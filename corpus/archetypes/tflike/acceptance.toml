@@ -133,6 +133,7 @@ name = "apply-lifecycle-events-ride-the-stream"
 group = "progress"
 stresses = "apply emits an apply_start/apply_complete pair per changed resource in the stream"
 expected = "pass"
+gap = "typed-command-output"
 [case.run]
 argv = ["apply", "--config", "main.tfl", "--output", "ndjson"]
 timeout_seconds = 10
@@ -147,6 +148,7 @@ name = "apply-deletion-emits-lifecycle-and-summary"
 group = "progress"
 stresses = "a deletion apply carries the same lifecycle events and terminal summary"
 expected = "pass"
+gap = "typed-command-output"
 [case.run]
 argv = ["apply", "--config", "main.tfl", "--output", "ndjson"]
 timeout_seconds = 10
@@ -162,6 +164,7 @@ name = "progress-silent-under-structured-mode"
 group = "progress"
 stresses = "structured mode suppresses progress entirely: no ANSI on stdout, nothing at all on stderr"
 expected = "pass"
+gap = "typed-command-output"
 [case.run]
 argv = ["apply", "--config", "main.tfl", "--output", "ndjson"]
 timeout_seconds = 10

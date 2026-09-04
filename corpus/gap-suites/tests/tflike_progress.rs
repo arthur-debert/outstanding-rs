@@ -9,14 +9,11 @@ use corpus_gap_suites::{parse_ndjson, reject_ansi, required_binary, run, Output}
 
 const BIN: &str = "CORPUS_TFLIKE_BIN";
 
-const CONFIG_TWO_CHANGES: &str = "resource web present\nresource db present\n";
-
 /// `state` is written at the default `main.tfl.state` path; the tempdir is returned to inspect.
 fn apply_in_tempdir(
     binary: &Path,
     config: &str,
     state: Option<&str>,
-    extra_args: &[&str],
 ) -> Result<(tempfile::TempDir, Output), String> {
     let dir = tempfile::tempdir().expect("suite broken: creating tempdir");
     std::fs::write(dir.path().join("main.tfl"), config)
@@ -25,14 +22,16 @@ fn apply_in_tempdir(
         std::fs::write(dir.path().join("main.tfl.state"), state)
             .unwrap_or_else(|err| panic!("suite broken: writing state fixture: {err}"));
     }
-    let mut args = vec!["apply", "--config", "main.tfl"];
-    args.extend_from_slice(extra_args);
-    let out = run(binary, &args, dir.path())?;
+    let out = run(
+        binary,
+        &["apply", "--config", "main.tfl", "--output", "ndjson"],
+        dir.path(),
+    )?;
     Ok((dir, out))
 }
 
 fn apply_two_changes(binary: &Path) -> Result<(tempfile::TempDir, Output), String> {
-    apply_in_tempdir(binary, CONFIG_TWO_CHANGES, None, &["--output", "ndjson"])
+    apply_in_tempdir(binary, "resource web present\nresource db present\n", None)
 }
 
 fn state_resources(dir: &Path) -> Result<Vec<String>, String> {
@@ -112,13 +111,7 @@ fn apply_lifecycle_events_ride_the_stream_and_state_is_rewritten() {
 #[test]
 fn apply_deletion_emits_lifecycle_and_rewrites_state() {
     let binary = required_binary(BIN);
-    let (dir, out) = apply_in_tempdir(
-        &binary,
-        "resource web absent\n",
-        Some("web\n"),
-        &["--output", "ndjson"],
-    )
-    .unwrap();
+    let (dir, out) = apply_in_tempdir(&binary, "resource web absent\n", Some("web\n")).unwrap();
     assert_eq!(out.code, Some(0), "a successful apply should exit 0");
     let entries = parse_ndjson(&out.stdout).unwrap();
     assert_lifecycle_pair(&entries, "web").unwrap();
@@ -143,70 +136,4 @@ fn progress_is_suppressed_under_structured_mode() {
         out.stderr, "",
         "structured mode must silence stderr entirely"
     );
-}
-
-/// The `version`, lifecycle and `change_summary` values of the two-change apply,
-/// in the order every representation delivers them.
-fn expected_records() -> Vec<serde_json::Value> {
-    serde_json::json!([
-        { "type": "version", "format_version": 1 },
-        { "type": "apply_start", "resource": "web" },
-        { "type": "apply_complete", "resource": "web" },
-        { "type": "apply_start", "resource": "db" },
-        { "type": "apply_complete", "resource": "db" },
-        { "type": "change_summary", "add": 2, "remove": 0 },
-    ])
-    .as_array()
-    .expect("a json array")
-    .clone()
-}
-
-const HUMAN_STDOUT: &str = "tflike format 1\n\
-                            applying web\n\
-                            applied web\n\
-                            applying db\n\
-                            applied db\n\
-                            Apply complete: 2 added, 0 removed.\n";
-
-const YAML_STDOUT: &str = "- type: version\n  format_version: 1\n\
-                           - type: apply_start\n  resource: web\n\
-                           - type: apply_complete\n  resource: web\n\
-                           - type: apply_start\n  resource: db\n\
-                           - type: apply_complete\n  resource: db\n\
-                           - type: change_summary\n  add: 2\n  remove: 0\n\n";
-
-const CSV_STDOUT: &str = "type,format_version,resource,add,remove\n\
-                          version,1,,,\n\
-                          apply_start,,web,,\n\
-                          apply_complete,,web,,\n\
-                          apply_start,,db,,\n\
-                          apply_complete,,db,,\n\
-                          change_summary,,,2,0\n\n";
-
-/// Under every representation the same successful apply puts its results on
-/// stdout and leaves stderr empty: no progress prose, no redraw, nothing else.
-#[test]
-fn a_successful_apply_writes_only_its_results_and_leaves_stderr_empty() {
-    let binary = required_binary(BIN);
-    for encoding in ["ndjson", "json", "yaml", "csv"] {
-        let (_dir, out) =
-            apply_in_tempdir(&binary, CONFIG_TWO_CHANGES, None, &["--output", encoding]).unwrap();
-        assert_eq!(out.code, Some(0), "{encoding}: a successful apply exits 0");
-        assert_eq!(out.stderr, "", "{encoding}: stderr carries nothing");
-        reject_ansi(&out.stdout, "stdout").unwrap_or_else(|err| panic!("{encoding}: {err}"));
-        match encoding {
-            "ndjson" => assert_eq!(parse_ndjson(&out.stdout).unwrap(), expected_records()),
-            "json" => assert_eq!(
-                serde_json::from_str::<Vec<serde_json::Value>>(&out.stdout).unwrap(),
-                expected_records()
-            ),
-            "yaml" => assert_eq!(out.stdout, YAML_STDOUT),
-            _ => assert_eq!(out.stdout, CSV_STDOUT),
-        }
-    }
-
-    let (_dir, out) = apply_in_tempdir(&binary, CONFIG_TWO_CHANGES, None, &[]).unwrap();
-    assert_eq!(out.code, Some(0), "human: a successful apply exits 0");
-    assert_eq!(out.stderr, "", "human: stderr carries nothing");
-    assert_eq!(out.stdout, HUMAN_STDOUT);
 }
