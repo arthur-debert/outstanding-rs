@@ -213,7 +213,7 @@ Dispatch Derive Macro:
   - #[derive(Dispatch)]: generate dispatch from clap Subcommand enums
   - #[dispatch(handlers = path)]: module containing handlers
   - #[dispatch(handler = path::fn)]: custom handler override
-  - #[dispatch(template = "path")]: custom template override
+  - #[dispatch(template_name = "path")]: custom template override
   - #[dispatch(nested)]: treat as nested subcommand
   - #[dispatch(pageable)]: the command's human output may reach a pager
   - #[dispatch(skip)]: skip variant
