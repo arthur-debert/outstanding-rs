@@ -22,7 +22,7 @@ use crate::topics::{
 use crate::TemplateRegistry;
 use crate::{
     render_request_split, ColorPolicy, InputSources, RenderError, RenderRequest, Representation,
-    TargetProperties, Theme, TEMPLATE_EXTENSIONS,
+    Theme, TEMPLATE_EXTENSIONS,
 };
 use clap::parser::ValueSource;
 use clap::{Arg, ArgAction, ArgMatches, Command};
@@ -1409,18 +1409,8 @@ impl App {
     }
 
     pub fn extract_output_mode(&self, matches: &ArgMatches) -> Representation {
-        self.extract_output_mode_over(matches, None)
-    }
-
-    pub(crate) fn extract_output_mode_over(
-        &self,
-        matches: &ArgMatches,
-        term: Option<&crate::TermSettings>,
-    ) -> Representation {
-        self.typed_output_mode(matches).unwrap_or_else(|| {
-            term.and_then(|term| term.output)
-                .map_or(self.output_mode_fallback, Representation::from)
-        })
+        self.typed_output_mode(matches)
+            .unwrap_or(self.output_mode_fallback)
     }
 
     pub(crate) fn typed_output_mode(&self, matches: &ArgMatches) -> Option<Representation> {
@@ -1500,9 +1490,10 @@ impl App {
             .unwrap_or(self.output_mode_fallback)
     }
 
-    /// One handler, hooks and render included; `color_policy` decides whether the
-    /// rendered human text carries escape sequences, and `sink` is where the
-    /// handler's events are written as it emits them.
+    /// One handler, hooks and render included; `color_policy` is the policy the
+    /// caller names, which a typed `--color` and `[term] color` outrank through
+    /// `resolve_run`, and `sink` is where the handler's events are written as it
+    /// emits them.
     #[allow(clippy::too_many_arguments)]
     pub fn run_command<H>(
         &self,
@@ -1519,9 +1510,18 @@ impl App {
         let config = self
             .resolve_config(matches)
             .map_err(|error| HookError::pre_dispatch("Config error").with_source(error))?;
-        let output_mode = self.extract_output_mode_over(
+        let resolved = self.resolve_run(
             matches,
             config.as_ref().and_then(|config| config.term.as_ref()),
+            None,
+            color_policy,
+            self.output_mode_fallback,
+            self.process_edge_target(),
+        );
+        let (output_mode, color_policy, target) = (
+            resolved.representation,
+            resolved.color_policy,
+            resolved.target,
         );
         let mut ctx = CommandContext::new(
             path.split('.').map(String::from).collect(),
@@ -1548,8 +1548,6 @@ impl App {
         )
         .map_err(|e| HookError::post_output("Render error").with_source(e))?;
 
-        let mut target = TargetProperties::detect();
-        target.ambiguous_width = self.ambiguous_width;
         let destination = std::rc::Rc::new(crate::cli::events::EventDestination::new(
             sink,
             crate::cli::events::EventContext {

@@ -42,6 +42,12 @@ fn writes_through_the_sink(output_mode: Representation) -> bool {
     output_mode.is_stream() || output_mode.is_human()
 }
 
+pub(crate) struct RunResolution {
+    pub(crate) representation: Representation,
+    pub(crate) color_policy: ColorPolicy,
+    pub(crate) target: TargetProperties,
+}
+
 /// The strict-mode failure for whatever the render window has left unresolved
 /// so far, or `None` when it has left nothing. Callers apply it before writing
 /// the bytes it describes; `warnings` drops the superseded degrade warning.
@@ -153,23 +159,21 @@ impl App {
                 }
             };
             let term = config.as_ref().and_then(|config| config.term.as_ref());
-            let output_mode = match term.and_then(|term| term.output) {
-                Some(term) if self.typed_output_mode(&matches).is_none() => {
-                    Representation::from(term)
-                }
-                _ => output_mode,
-            };
-            let color_policy = self.resolve_color_policy(
-                self.typed_color_policy(&matches),
-                ColorPolicy::Auto,
+            let resolved = self.resolve_run(
+                &matches,
                 term,
+                None,
+                ColorPolicy::Auto,
+                output_mode,
+                self.process_edge_target(),
             );
+            let (output_mode, color_policy) = (resolved.representation, resolved.color_policy);
             (
                 self.dispatch_with_target(
                     matches,
                     output_mode,
                     color_policy,
-                    self.process_edge_target(),
+                    resolved.target,
                     ContextInputs {
                         sources: InputSources::from_process(),
                         config,
@@ -185,10 +189,37 @@ impl App {
         run.with_entries(String::from_utf8_lossy(&capture.take()).into_owned())
     }
 
-    fn process_edge_target(&self) -> TargetProperties {
+    pub(crate) fn process_edge_target(&self) -> TargetProperties {
         let mut target = TargetProperties::detect();
         target.ambiguous_width = self.ambiguous_width;
         target
+    }
+
+    /// The one place a run's presentation is decided, so a rule added here
+    /// reaches every entry point: `dispatch`, the argv path, and the
+    /// partial-adoption `run_command`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn resolve_run(
+        &self,
+        matches: &ArgMatches,
+        term: Option<&crate::TermSettings>,
+        typed_color: Option<ColorPolicy>,
+        named_color: ColorPolicy,
+        representation_fallback: Representation,
+        target: TargetProperties,
+    ) -> RunResolution {
+        RunResolution {
+            representation: self.typed_output_mode(matches).unwrap_or_else(|| {
+                term.and_then(|term| term.output)
+                    .map_or(representation_fallback, Representation::from)
+            }),
+            color_policy: self.resolve_color_policy(
+                self.typed_color_policy(matches).or(typed_color),
+                named_color,
+                term,
+            ),
+            target: file_destination(target, self.output_file_override(matches).is_some()),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -207,7 +238,6 @@ impl App {
 
         let path = extract_command_path(&matches);
         let path_str = path.join(".");
-        let target = file_destination(target, self.output_file_override(&matches).is_some());
 
         if let Some(action) = self.config_command_action(&matches) {
             return self.run_config_command(
@@ -502,9 +532,9 @@ impl App {
                 RenderedOutput::Text(t) if writes_through_the_sink(output_mode) => {
                     let written = sink.with_writer(|file| {
                         if output_mode.is_stream() {
-                            writeln!(file, "{}", t.raw)
+                            writeln!(file, "{}", t.formatted)
                         } else {
-                            write!(file, "{}", t.raw)
+                            write!(file, "{}", t.formatted)
                         }
                         .and_then(|()| file.flush())
                     });
@@ -517,7 +547,7 @@ impl App {
                     final_output = RenderedOutput::Silent;
                 }
                 RenderedOutput::Text(t) => {
-                    if let Err(e) = write_output(&t.raw, &dest) {
+                    if let Err(e) = write_output(&t.formatted, &dest) {
                         return DispatchResult::Error(RunError::new(
                             format!("Error writing output: {}", e),
                             RunErrorKind::FinalWrite(OutputKind::Text),
@@ -693,15 +723,22 @@ impl App {
             Err(error) => return (DispatchResult::Error(error), output_mode, color_policy),
         };
         let term = config.as_ref().and_then(|config| config.term.as_ref());
-        let output_mode = self.extract_output_mode_over(&matches, term);
-        let color_policy = self.resolve_color_policy(typed_color, named_color, term);
+        let resolved = self.resolve_run(
+            &matches,
+            term,
+            typed_color,
+            named_color,
+            self.output_mode_fallback,
+            target,
+        );
+        let (output_mode, color_policy) = (resolved.representation, resolved.color_policy);
 
         (
             self.dispatch_with_target(
                 matches,
                 output_mode,
                 color_policy,
-                target,
+                resolved.target,
                 ContextInputs { sources, config },
                 sink,
                 recorder,

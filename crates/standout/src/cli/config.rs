@@ -20,7 +20,7 @@
 //! section and this module does not look for a field by name in someone else's
 //! struct. [`TermSettings`] holds the keys the framework reads for itself;
 //! `output` names one of the four structured encodings and fills
-//! `extract_output_mode`'s fallback arm when `--output` was not typed. It has no
+//! `resolve_run`'s fallback arm when `--output` was not typed. It has no
 //! spelling for the human representation, which is what a bare invocation
 //! renders, and none for `term-debug`. `color` is the same three values
 //! `--color` takes and fills the same arm of the color resolution.

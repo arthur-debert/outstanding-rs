@@ -4,13 +4,15 @@ use console::Style;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use standout::cli::{
-    App, AppBuilder, EventsFnHandler, FnHandler, HandlerResult, Output, Results, RunErrorKind,
-    TermSettings,
+    App, AppBuilder, EventsFnHandler, FnHandler, HandlerResult, HelpResult, Output, Results,
+    RunErrorKind, StreamSink, TermSettings,
 };
-use standout::{ColorPolicy, EmbeddedTemplates, Representation, Theme};
+use standout::{ColorPolicy, EmbeddedTemplates, InputSources, Representation, TemplateRef, Theme};
 use standout_test::{serial, TestHarness};
 
 const ESC: char = '\u{1b}';
+const CYAN: &str = "\u{1b}[36m";
+const RESET: &str = "\u{1b}[0m";
 
 const TEMPLATES: &[(&str, &str)] = &[("list", "[title]{{ name }}[/title]")];
 
@@ -222,31 +224,60 @@ fn emitting_command() -> Command {
     Command::new("colorapp").subcommand(Command::new("apply"))
 }
 
+fn written_to_a_file(
+    app: &App,
+    command: Command,
+    args: &[&str],
+    path: std::path::PathBuf,
+) -> String {
+    let mut argv: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
+    argv.push("--output-file-path".to_string());
+    argv.push(path.display().to_string());
+    TestHarness::new()
+        .color_capable_terminal()
+        .run(app, command, argv)
+        .assert_success();
+    std::fs::read_to_string(path).unwrap()
+}
+
 #[test]
-fn a_named_output_file_is_never_a_terminal() {
+fn a_batch_run_writes_the_policy_it_resolved_into_the_file() {
     let dir = tempfile::tempdir().unwrap();
-    let written = |name: &str, args: &[&str]| {
-        let path = dir.path().join(name);
-        let mut argv: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
-        argv.push("--output-file-path".to_string());
-        argv.push(path.display().to_string());
-        TestHarness::new()
-            .color_capable_terminal()
-            .run(&emitting_app(), emitting_command(), argv)
-            .assert_success();
-        std::fs::read_to_string(path).unwrap()
+    let written = |when: &str| {
+        written_to_a_file(
+            &app(),
+            cmd(),
+            &["colorapp", "list", "--color", when],
+            dir.path().join(format!("{when}.txt")),
+        )
     };
 
-    let auto = written("auto.txt", &["colorapp", "apply"]);
-    assert!(
-        !auto.contains(ESC),
-        "a file is not a terminal, so auto resolves to no escapes, got: {auto:?}"
+    assert_eq!(written("never"), "milk");
+    assert_eq!(
+        written("auto"),
+        "milk",
+        "a file is not a terminal, so auto resolves to no escapes"
     );
+    assert_eq!(written("always"), format!("{CYAN}milk{RESET}"));
+}
 
-    let always = written("always.txt", &["colorapp", "apply", "--color", "always"]);
-    assert!(
-        always.contains(ESC),
-        "an explicit --color always outranks the destination, got: {always:?}"
+#[test]
+fn the_events_and_the_summary_reach_the_file_under_one_policy() {
+    let dir = tempfile::tempdir().unwrap();
+    let written = |when: &str| {
+        written_to_a_file(
+            &emitting_app(),
+            emitting_command(),
+            &["colorapp", "apply", "--color", when],
+            dir.path().join(format!("{when}.txt")),
+        )
+    };
+
+    assert_eq!(written("never"), "one\n1 done");
+    assert_eq!(written("auto"), "one\n1 done");
+    assert_eq!(
+        written("always"),
+        format!("{CYAN}one{RESET}\n{CYAN}1 done{RESET}")
     );
 }
 
@@ -351,6 +382,91 @@ fn no_color_outranks_the_term_color_key() {
         "an empty NO_COLOR is not set, got: {:?}",
         empty.stdout()
     );
+}
+
+struct Cwd(std::path::PathBuf);
+
+impl Cwd {
+    fn enter(dir: &std::path::Path) -> Self {
+        let previous = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir).unwrap();
+        Self(previous)
+    }
+}
+
+impl Drop for Cwd {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.0);
+    }
+}
+
+struct NoColorAbsent(Option<std::ffi::OsString>);
+
+impl NoColorAbsent {
+    fn enter() -> Self {
+        let previous = std::env::var_os("NO_COLOR");
+        std::env::remove_var("NO_COLOR");
+        Self(previous)
+    }
+}
+
+impl Drop for NoColorAbsent {
+    fn drop(&mut self) {
+        if let Some(previous) = self.0.take() {
+            std::env::set_var("NO_COLOR", previous);
+        }
+    }
+}
+
+/// The partial-adoption entry point, which resolves the same run facts the
+/// argv path does.
+fn run_command_list(app: &App, args: &[&str], named: ColorPolicy) -> String {
+    let matches = match app.get_matches_from(cmd(), args, &InputSources::from_process()) {
+        HelpResult::Matches(matches) => matches,
+        other => panic!("{other:?}"),
+    };
+    let sub = matches.subcommand_matches("list").unwrap();
+    app.run_command(
+        "list",
+        sub,
+        FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({ "name": "milk" })))),
+        TemplateRef::Inline(TEMPLATES[0].1.to_string()),
+        named,
+        StreamSink::new(Vec::new()),
+    )
+    .unwrap()
+    .as_text()
+    .unwrap()
+    .to_string()
+}
+
+#[test]
+fn run_command_lets_the_typed_flag_outrank_the_policy_the_caller_named() {
+    let forced = run_command_list(
+        &app(),
+        &["colorapp", "list", "--color", "always"],
+        ColorPolicy::Never,
+    );
+    assert_eq!(forced, format!("{CYAN}milk{RESET}"));
+
+    let refused = run_command_list(
+        &app(),
+        &["colorapp", "list", "--color", "never"],
+        ColorPolicy::Always,
+    );
+    assert_eq!(refused, "milk");
+}
+
+#[test]
+#[serial]
+fn run_command_reads_the_term_color_key_under_an_auto_policy() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("colorapp.toml"), COLOR_ALWAYS).unwrap();
+    let _no_color = NoColorAbsent::enter();
+    let _cwd = Cwd::enter(dir.path());
+
+    let configured = run_command_list(&configured_app(), &["colorapp", "list"], ColorPolicy::Auto);
+    assert_eq!(configured, format!("{CYAN}milk{RESET}"));
 }
 
 #[test]

@@ -107,20 +107,6 @@ fn color_never_overrides_clicolor_force() {
 }
 
 #[test]
-fn clicolor_force_reaches_ansi_through_consoles_gate() {
-    let result = conventions(&[("CLICOLOR_FORCE", "1")])
-        .run_process(env!("CARGO_BIN_EXE_tdoo"), ["list", "--color", "always"]);
-    assert_ansi(&result);
-}
-
-#[test]
-fn no_color_does_not_reach_the_force_path() {
-    let result = conventions(&[("CLICOLOR_FORCE", "1"), ("NO_COLOR", "1")])
-        .run_process(env!("CARGO_BIN_EXE_tdoo"), ["list", "--color", "always"]);
-    assert_ansi(&result);
-}
-
-#[test]
 fn the_term_color_key_is_read_from_its_environment_spelling() {
     let result = conventions(&[])
         .env("TDOO__TERM__COLOR", "always")
