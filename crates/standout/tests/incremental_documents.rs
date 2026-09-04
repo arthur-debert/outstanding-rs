@@ -3,9 +3,10 @@
 
 use clap::{ArgMatches, Command};
 use serde_json::{json, Value};
+use standout::cli::hooks::TextOutput;
 use standout::cli::{
     App, CommandContext, CommandContextInput, EventsFnHandler, ExitStatus, HandlerResult, Output,
-    Results, RunErrorKind,
+    RenderedOutput, Results, RunErrorKind,
 };
 use standout::{ColorPolicy, EmbeddedTemplates, Representation};
 use standout_test::{TestHarness, TestResult};
@@ -19,12 +20,24 @@ const RESOURCES: [&str; 2] = ["web", "db"];
 
 const WARNING: &str = "a warning the run raised";
 
+const HOOK_WARNING: &str = "a warning the post-output hook raised";
+
+const REPLACEMENT: &str = "the hook's own document";
+
 #[derive(Clone, Copy, PartialEq)]
 enum Ending {
     Summary,
     Silent,
     Failure,
     SummaryAndWarning,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum PostOutput {
+    None,
+    Replaces,
+    Warns,
+    Unchanged,
 }
 
 fn events(results: &mut Results<Value>) -> Result<(), anyhow::Error> {
@@ -35,7 +48,7 @@ fn events(results: &mut Results<Value>) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn app(ending: Ending) -> App {
+fn app(ending: Ending, hook: PostOutput) -> App {
     App::builder()
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .output_file_flag(Some("output-file-path"))
@@ -59,7 +72,20 @@ fn app(ending: Ending) -> App {
                     }
                 },
             ),
-            |cfg| cfg,
+            move |cfg| match hook {
+                PostOutput::None => cfg,
+                PostOutput::Replaces => cfg.post_output(|_, _, _| {
+                    Ok(RenderedOutput::Text(TextOutput::new(
+                        REPLACEMENT.to_string(),
+                        REPLACEMENT.to_string(),
+                    )))
+                }),
+                PostOutput::Warns => cfg.post_output(|_, ctx: &CommandContext, output| {
+                    ctx.warn(HOOK_WARNING);
+                    Ok(output)
+                }),
+                PostOutput::Unchanged => cfg.post_output(|_, _, output| Ok(output)),
+            },
         )
         .unwrap()
         .build()
@@ -77,11 +103,18 @@ fn run_with(ending: Ending, representation: Representation, args: &[&str]) -> Te
     TestHarness::new()
         .color(ColorPolicy::Never)
         .output_mode(representation)
-        .run(&app(ending), command(), argv)
+        .run(&app(ending, PostOutput::None), command(), argv)
 }
 
 fn run(ending: Ending, representation: Representation) -> TestResult {
     run_with(ending, representation, &[])
+}
+
+fn run_hooked(ending: Ending, hook: PostOutput, representation: Representation) -> TestResult {
+    TestHarness::new()
+        .color(ColorPolicy::Never)
+        .output_mode(representation)
+        .run(&app(ending, hook), command(), ["app", "apply"])
 }
 
 /// The records a reader takes from the run's stdout, whatever encoding carried
@@ -138,6 +171,59 @@ fn the_warning_entries_line_framing_writes_last_are_in_the_document_too() {
             "",
             "{representation:?}: a warning the document carries is not repeated as prose"
         );
+    }
+}
+
+#[test]
+fn a_post_output_hook_that_replaces_the_document_sends_the_warnings_to_stderr() {
+    for representation in DOCUMENT_ENCODINGS {
+        let result = run_hooked(
+            Ending::SummaryAndWarning,
+            PostOutput::Replaces,
+            representation,
+        );
+
+        result.assert_success();
+        assert_eq!(result.stdout(), REPLACEMENT, "{representation:?}");
+        assert!(
+            result.stderr().contains(WARNING),
+            "{representation:?}: the warning the hook's document dropped is prose again: {}",
+            result.stderr()
+        );
+    }
+}
+
+#[test]
+fn a_warning_a_post_output_hook_raises_reaches_the_document() {
+    for representation in DOCUMENT_ENCODINGS {
+        let result = run_hooked(Ending::Summary, PostOutput::Warns, representation);
+
+        result.assert_success();
+        let document = records(&result);
+        let warning = document.last().expect("the document ends in the warning");
+        assert_eq!(warning["type"], "diagnostic", "{representation:?}");
+        assert_eq!(warning["summary"], HOOK_WARNING, "{representation:?}");
+        assert_eq!(
+            result.stderr(),
+            "",
+            "{representation:?}: a warning the document carries is not repeated as prose"
+        );
+    }
+}
+
+#[test]
+fn a_post_output_hook_that_returns_the_document_unchanged_changes_nothing() {
+    for representation in DOCUMENT_ENCODINGS {
+        let hooked = run_hooked(
+            Ending::SummaryAndWarning,
+            PostOutput::Unchanged,
+            representation,
+        );
+        let unhooked = run(Ending::SummaryAndWarning, representation);
+
+        hooked.assert_success();
+        assert_eq!(hooked.stdout(), unhooked.stdout(), "{representation:?}");
+        assert_eq!(hooked.stderr(), "", "{representation:?}");
     }
 }
 

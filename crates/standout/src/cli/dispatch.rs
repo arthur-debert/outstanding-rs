@@ -34,8 +34,9 @@ pub enum DispatchOutput {
     },
     /// An incremental command under an encoding that carries a whole run as
     /// one document: its retained event records, then the summary's `result`
-    /// record. The framework appends the run's warning records and encodes
-    /// the array once, at the point a batch document is written.
+    /// record. The framework encodes the array where a batch document is
+    /// written, and appends the run's warning records only after the
+    /// post-output hooks return the document unchanged.
     Records {
         records: Vec<serde_json::Value>,
         status: ExitStatus,

@@ -463,7 +463,10 @@ impl App {
         sink: &StreamSink,
         warnings: &WarningBuffer,
     ) -> DispatchResult {
-        let warnings_included = matches!(dispatch_output, DispatchOutput::Records { .. });
+        // The document a records outcome hands the post-output hooks carries no
+        // warnings; its tail is assembled after they return, from the snapshot
+        // standing then.
+        let mut pending_records: Option<(Vec<serde_json::Value>, String)> = None;
         let (output, request, status) = match dispatch_output {
             DispatchOutput::Text {
                 formatted,
@@ -483,20 +486,18 @@ impl App {
                 ExitStatus::SUCCESS,
             ),
             DispatchOutput::Silent { status } => (RenderedOutput::Silent, None, status),
-            DispatchOutput::Records {
-                mut records,
-                status,
-            } => {
-                records.extend(crate::cli::warning_records(&warnings.snapshot()));
-                let document = match standout_render::serialize_record_array(records, output_mode) {
-                    Ok(document) => document,
-                    Err(error) => {
-                        return DispatchResult::Error(RunError::new(
-                            error.to_string(),
-                            RunErrorKind::Render,
-                        ))
-                    }
-                };
+            DispatchOutput::Records { records, status } => {
+                let document =
+                    match standout_render::serialize_record_array(records.clone(), output_mode) {
+                        Ok(document) => document,
+                        Err(error) => {
+                            return DispatchResult::Error(RunError::new(
+                                error.to_string(),
+                                RunErrorKind::Render,
+                            ))
+                        }
+                    };
+                pending_records = Some((records, document.clone()));
                 (
                     RenderedOutput::Text(TextOutput::new(document.clone(), document)),
                     None,
@@ -519,10 +520,27 @@ impl App {
             output
         };
 
-        // A hook that replaced the document dropped the warning records with
-        // it, so they are the stderr block's again.
-        let warnings_included =
-            warnings_included && matches!(final_output, RenderedOutput::Text(_));
+        // Byte equality with the document the hooks were given, not the return
+        // variant: only then does the framework own the text and append the
+        // warnings standing now. Anything else is the hook's own document, and
+        // every warning goes to the stderr block instead.
+        let mut warnings_included = false;
+        if let Some((mut records, unhooked)) = pending_records {
+            if matches!(&final_output, RenderedOutput::Text(t) if t.formatted == unhooked) {
+                records.extend(crate::cli::warning_records(&warnings.snapshot()));
+                let document = match standout_render::serialize_record_array(records, output_mode) {
+                    Ok(document) => document,
+                    Err(error) => {
+                        return DispatchResult::Error(RunError::new(
+                            error.to_string(),
+                            RunErrorKind::Render,
+                        ))
+                    }
+                };
+                final_output = RenderedOutput::Text(TextOutput::new(document.clone(), document));
+                warnings_included = true;
+            }
+        }
 
         // A binary payload and an artifact own the file the user named, and a
         // silent outcome writes nothing, so none of them takes the destination
