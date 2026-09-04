@@ -187,6 +187,7 @@ impl App {
                     StreamSink::new(capture.clone()),
                     recorder.clone(),
                     warnings,
+                    None,
                 ),
                 output_mode,
                 color_policy,
@@ -239,6 +240,7 @@ impl App {
         sink: StreamSink,
         recorder: RunRecorder,
         warnings: WarningBuffer,
+        pager: Option<Pager>,
     ) -> DispatchResult {
         self.ensure_commands_finalized();
 
@@ -283,6 +285,12 @@ impl App {
 
         let hooks = self.command_hooks.get(&path_str);
         let sub_matches = get_deepest_matches(&matches);
+        let emits_events = self.emits_events_for(&path_str);
+        // An incremental command has already written its events, and a named
+        // file has already taken the run's bytes, so neither pages whatever
+        // the environment says.
+        let pager = pager
+            .filter(|_| !emits_events && override_path.is_none() && self.pageable_for(&path_str));
 
         if let Some(hooks) = hooks {
             if let Err(e) = hooks.run_pre_dispatch(sub_matches, &mut ctx) {
@@ -315,10 +323,12 @@ impl App {
             sub_matches,
             &ctx,
             output_mode,
-            self.emits_events_for(&path_str),
+            emits_events,
             override_path,
             &sink,
+            &recorder,
             &warnings,
+            pager,
         )
     }
 
@@ -403,7 +413,9 @@ impl App {
             false,
             override_path,
             sink,
+            recorder,
             warnings,
+            None,
         )
     }
 
@@ -466,7 +478,9 @@ impl App {
         emits_events: bool,
         override_path: Option<PathBuf>,
         sink: &StreamSink,
+        recorder: &RunRecorder,
         warnings: &WarningBuffer,
+        pager: Option<Pager>,
     ) -> DispatchResult {
         // The document a records outcome hands the post-output hooks carries no
         // warnings; its tail is assembled after they return, from the snapshot
@@ -638,6 +652,15 @@ impl App {
             }
         }
 
+        // The hooks have returned and the file destinations are settled, so
+        // this is the run's whole page: a hook that turned it into a payload
+        // or emptied it leaves the delivery on stdout.
+        if let (Some(pager), RenderedOutput::Text(text)) = (&pager, &final_output) {
+            if !text.formatted.is_empty() {
+                recorder.set_delivery(Delivery::Pager(pager.command().to_string()));
+            }
+        }
+
         let handled = |text: String| {
             DispatchResult::Handled(
                 RunOutput::command(text)
@@ -725,6 +748,14 @@ impl App {
                     color_policy,
                     Some(warnings.clone()),
                 ) {
+                    self.record_help_delivery(
+                        &recorder,
+                        &display,
+                        augmented_cmd.get_name(),
+                        &args,
+                        target,
+                        output_mode,
+                    );
                     return (display.into(), output_mode, color_policy);
                 }
                 if e.use_stderr() {
@@ -758,6 +789,14 @@ impl App {
             color_policy,
             Some(warnings.clone()),
         ) {
+            self.record_help_delivery(
+                &recorder,
+                &display,
+                augmented_cmd.get_name(),
+                &args,
+                target,
+                output_mode,
+            );
             return (display.into(), output_mode, color_policy);
         }
 
@@ -805,6 +844,12 @@ impl App {
             target,
         );
         let (output_mode, color_policy) = (resolved.representation, resolved.color_policy);
+        let pager = self.pager_for_run(
+            augmented_cmd.get_name(),
+            &args,
+            resolved.target,
+            output_mode,
+        );
 
         (
             self.dispatch_with_target(
@@ -816,6 +861,7 @@ impl App {
                 sink,
                 recorder,
                 warnings,
+                pager,
             ),
             output_mode,
             color_policy,
@@ -939,32 +985,68 @@ impl App {
         outcome.handled
     }
 
-    /// Help delivery: a rendered help page goes to the pager the environment
-    /// names when stdout is a terminal, the encoding is human and the
-    /// invocation did not suppress paging. `true` means the pager took the
-    /// bytes and the caller owes the user nothing on stdout; a pager that
-    /// could not start leaves the page unpaged with the run's own status. A
-    /// named output file takes the page before this is reached.
-    fn page_help(
+    /// The pager a run's complete human output goes to, or `None` for every
+    /// case that delivers to stdout instead: a stdout that is not a terminal,
+    /// a structured encoding, `--no-pager`, a named output file, and an
+    /// environment naming no pager. Reading the environment starts nothing,
+    /// so the answer is a decision a test reads back without a terminal.
+    ///
+    /// `--no-pager` and the output file are read from the raw arguments
+    /// because `--help` short-circuits clap and leaves no `ArgMatches`.
+    fn pager_for_run(
         &self,
         app_name: &str,
         args: &[std::ffi::OsString],
-        target: &TargetProperties,
+        target: TargetProperties,
         output_mode: Representation,
-        outcome: &crate::cli::DispatchResult,
-    ) -> bool {
-        let Some(page) = help_page(outcome) else {
-            return false;
-        };
+    ) -> Option<Pager> {
         if !target.stdout_is_terminal
             || output_mode != Representation::Human
             || self.paging_is_suppressed(args)
+            || self.output_file_from_unparsed(args).is_some()
         {
-            return false;
+            return None;
         }
-        match Pager::resolve(app_name).map(|pager| pager.page(page)) {
-            Some(PagerOutcome::Paged | PagerOutcome::ReaderLeft) => true,
-            Some(PagerOutcome::CouldNotStart) | None => false,
+        Pager::resolve(app_name)
+    }
+
+    /// Help pages by the same rule a command's output does and reports the
+    /// same decision, so one process-edge delivery covers both.
+    fn record_help_delivery(
+        &self,
+        recorder: &RunRecorder,
+        display: &super::HelpDisplay,
+        app_name: &str,
+        args: &[std::ffi::OsString],
+        target: TargetProperties,
+        output_mode: Representation,
+    ) {
+        let super::HelpDisplay::Rendered { text } = display else {
+            return;
+        };
+        if text.is_empty() {
+            return;
+        }
+        if let Some(pager) = self.pager_for_run(app_name, args, target, output_mode) {
+            recorder.set_delivery(Delivery::Pager(pager.command().to_string()));
+        }
+    }
+
+    /// Carries out the run's own delivery decision: the pager takes the bytes
+    /// stdout would have received, terminating newline included. `true` means
+    /// the caller owes the user nothing on stdout; a pager that could not
+    /// start leaves them unwritten here, so the caller writes them unpaged
+    /// with the run's own status, and one that stopped reading ends delivery.
+    fn page_delivery(&self, run: &crate::cli::CompletedRun) -> bool {
+        let Delivery::Pager(command) = run.delivery() else {
+            return false;
+        };
+        let DispatchResult::Handled(output) = run.outcome() else {
+            return false;
+        };
+        match Pager::named(command.clone()).page(&format!("{}\n", output)) {
+            PagerOutcome::Paged | PagerOutcome::ReaderLeft => true,
+            PagerOutcome::CouldNotStart => false,
         }
     }
 
@@ -978,7 +1060,6 @@ impl App {
         target.ambiguous_width = self.ambiguous_width;
         let sources = InputSources::from_process();
         let sink = StreamSink::process_stdout();
-        let app_name = cmd.get_name().to_string();
         let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
         // Help short-circuits before an `ArgMatches` exists, so the file the
         // invocation names is read from argv here — early enough that the page
@@ -1012,8 +1093,7 @@ impl App {
                         )
                     })
             });
-        let paged = help_to_file.is_none()
-            && self.page_help(&app_name, &args, &target, output_mode, result.outcome());
+        let paged = help_to_file.is_none() && self.page_delivery(&result);
 
         let stderr = std::io::stderr();
         let mut stderr = stderr.lock();
@@ -1555,11 +1635,7 @@ fn help_page(outcome: &crate::cli::DispatchResult) -> Option<&str> {
     let crate::cli::DispatchResult::Handled(output) = outcome else {
         return None;
     };
-    matches!(
-        output.kind(),
-        SuccessKind::ClapHelp | SuccessKind::PagedHelp
-    )
-    .then(|| output.as_str())
+    matches!(output.kind(), SuccessKind::ClapHelp).then(|| output.as_str())
 }
 
 /// A named output file is never a terminal, so `auto` resolves to plain text

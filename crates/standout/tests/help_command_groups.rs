@@ -271,7 +271,6 @@ fn test_cmd() -> Command {
 fn extract_help(result: HelpResult) -> String {
     match result {
         HelpResult::Help(h) => h,
-        HelpResult::PagedHelp(h) => h,
         other => panic!("Expected Help, got: {other:?}"),
     }
 }

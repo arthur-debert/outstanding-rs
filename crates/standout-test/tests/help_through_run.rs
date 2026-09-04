@@ -11,7 +11,7 @@ use standout_test::TestHarness;
 const TEMPLATES: &[(&str, &str)] = &[("review", "listed")];
 fn configured_help(app: &App, cmd: Command, args: &[&str]) -> String {
     match app.get_matches_from(cmd, args, &standout::InputSources::from_process()) {
-        HelpResult::Help(h) | HelpResult::PagedHelp(h) => h,
+        HelpResult::Help(h) => h,
         other => panic!("expected rendered help, got {other:?}"),
     }
 }
@@ -254,19 +254,6 @@ fn the_output_flag_reaches_the_word_and_the_flags_alike() {
         "the last `--output` wins:\n{}",
         text.stdout()
     );
-}
-#[test]
-#[serial]
-fn a_pager_request_rides_back_as_a_typed_success() {
-    let fixture = downstream().flat().build();
-    let result = TestHarness::new().stdout_is_terminal(false).run(
-        fixture.app(),
-        fixture.command(),
-        ["lookma", "help", "--page"],
-    );
-    result.assert_success();
-    assert_eq!(result.success_kind(), Some(SuccessKind::PagedHelp));
-    result.assert_stdout_contains("USAGE");
 }
 fn assert_is_root_help(rendered: &str) {
     assert!(

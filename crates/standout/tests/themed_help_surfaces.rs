@@ -9,7 +9,7 @@ fn page(fixture: &Fixture, args: &[&str]) -> String {
         args,
         &standout::InputSources::from_process(),
     ) {
-        HelpResult::Help(text) | HelpResult::PagedHelp(text) => text,
+        HelpResult::Help(text) => text,
         other => panic!("expected rendered help, got: {other:?}"),
     }
 }

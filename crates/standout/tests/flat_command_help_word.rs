@@ -9,7 +9,6 @@ use standout_fixtures::downstream;
 fn help_text(result: HelpResult) -> String {
     match result {
         HelpResult::Help(h) => h,
-        HelpResult::PagedHelp(h) => h,
         other => panic!("expected rendered help, got: {other:?}"),
     }
 }
@@ -122,16 +121,6 @@ fn the_help_word_parses_its_own_arguments() {
     assert!(
         tagged.contains("[header]USAGE[/header]"),
         "output:\n{tagged}"
-    );
-
-    let paged = fixture.app().get_matches_from(
-        fixture.command(),
-        ["lookma", "help", "--page"],
-        &standout::InputSources::from_process(),
-    );
-    assert!(
-        matches!(paged, HelpResult::PagedHelp(_)),
-        "expected paged help, got: {paged:?}"
     );
 }
 

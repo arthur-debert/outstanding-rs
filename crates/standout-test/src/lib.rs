@@ -551,7 +551,9 @@ impl TestResult {
     pub fn results(&self) -> &[serde_json::Value] {
         &self.results
     }
-    /// Where the rendered bytes went: stdout or the file the user named.
+    /// Where the rendered bytes went: stdout, the file the user named, or
+    /// the pager the environment named. An in-process run reports the pager
+    /// decision without starting one.
     pub fn delivery(&self) -> &Delivery {
         &self.delivery
     }

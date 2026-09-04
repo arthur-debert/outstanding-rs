@@ -36,6 +36,17 @@ pub(crate) enum PagerOutcome {
 }
 
 impl Pager {
+    /// The pager a run already decided on, named by its own delivery record.
+    pub(crate) fn named(command: impl Into<String>) -> Self {
+        Self {
+            command: command.into(),
+        }
+    }
+
+    pub(crate) fn command(&self) -> &str {
+        &self.command
+    }
+
     pub(crate) fn resolve(app_name: &str) -> Option<Self> {
         if cfg!(windows) {
             return None;
@@ -170,9 +181,7 @@ mod tests {
 
     #[cfg(unix)]
     fn pager(command: &str) -> Pager {
-        Pager {
-            command: command.to_string(),
-        }
+        Pager::named(command)
     }
 
     #[cfg(unix)]

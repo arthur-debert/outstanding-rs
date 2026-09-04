@@ -42,7 +42,7 @@ fn app_override_of_named_help_template_is_used() {
         ["app", "--help"],
         &standout::InputSources::from_process(),
     ) {
-        HelpResult::Help(text) | HelpResult::PagedHelp(text) => {
+        HelpResult::Help(text) => {
             assert!(
                 text.contains("CUSTOM HELP PAGE"),
                 "named override must win:\n{text}"

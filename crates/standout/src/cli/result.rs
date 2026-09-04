@@ -94,13 +94,12 @@ impl std::ops::Deref for CompletedRun {
 pub enum HelpResult {
     Matches(clap::ArgMatches),
     Help(String),
-    PagedHelp(String),
     Error(clap::Error),
 }
 
 #[derive(Debug)]
 pub(crate) enum HelpDisplay {
-    Rendered { text: String, paged: bool },
+    Rendered { text: String },
     Clap(clap::Error),
     RenderFailed(clap::Error),
 }
@@ -108,8 +107,7 @@ pub(crate) enum HelpDisplay {
 impl From<HelpDisplay> for HelpResult {
     fn from(display: HelpDisplay) -> Self {
         match display {
-            HelpDisplay::Rendered { text, paged: true } => HelpResult::PagedHelp(text),
-            HelpDisplay::Rendered { text, paged: false } => HelpResult::Help(text),
+            HelpDisplay::Rendered { text } => HelpResult::Help(text),
             HelpDisplay::Clap(e) | HelpDisplay::RenderFailed(e) => HelpResult::Error(e),
         }
     }
@@ -118,11 +116,7 @@ impl From<HelpDisplay> for HelpResult {
 impl From<HelpDisplay> for DispatchResult {
     fn from(display: HelpDisplay) -> Self {
         match display {
-            HelpDisplay::Rendered { text, paged } => DispatchResult::Handled(if paged {
-                RunOutput::paged_help(text)
-            } else {
-                RunOutput::clap_help(text)
-            }),
+            HelpDisplay::Rendered { text } => DispatchResult::Handled(RunOutput::clap_help(text)),
             HelpDisplay::Clap(e) if e.use_stderr() => {
                 DispatchResult::Error(RunError::new(e.to_string(), RunErrorKind::ClapUsage))
             }
