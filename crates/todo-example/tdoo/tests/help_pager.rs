@@ -83,6 +83,32 @@ fn no_pager_writes_the_page_straight_to_stdout() {
 
 #[cfg(unix)]
 #[test]
+fn a_named_output_file_takes_the_page_the_pager_would_have() {
+    let dir = tempfile::tempdir().unwrap();
+
+    for (asked, request) in [("--help", "flag"), ("help", "word")] {
+        let page = dir.path().join(format!("{request}.txt"));
+        let result = help(&[("TDOO_PAGER", MARKING)]).run_pty(
+            env!("CARGO_BIN_EXE_tdoo"),
+            ["--output-file-path", page.to_str().unwrap(), asked],
+        );
+
+        result.assert_success();
+        let written = std::fs::read_to_string(&page).unwrap();
+        assert!(
+            written.contains("USAGE") && !written.contains("PAGED "),
+            "expected the unpaged page in the file for the help {request}, got:\n{written}"
+        );
+        assert!(
+            !result.stdout().contains("PAGED ") && !result.stdout().contains("USAGE"),
+            "expected nothing on stdout for the help {request}, got:\n{}",
+            result.stdout()
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn a_pager_that_cannot_start_leaves_the_page_and_the_status_alone() {
     assert_unpaged(
         &help(&[("TDOO_PAGER", "/nonexistent/pager")])

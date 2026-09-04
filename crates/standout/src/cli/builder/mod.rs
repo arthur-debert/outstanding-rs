@@ -898,6 +898,7 @@ impl App {
     {
         if let Err(error) = self
             .config_override_flag_collision(&cmd)
+            .and_then(|()| self.framework_flag_collision(&cmd))
             .and_then(|()| self.config_command_collision(&cmd))
         {
             return HelpResult::Error(clap::Error::raw(
@@ -1435,10 +1436,10 @@ impl App {
 
     pub(crate) fn typed_output_mode(&self, matches: &ArgMatches) -> Option<Representation> {
         self.output_flag.as_ref()?;
-        match matches.try_get_one::<String>("_output_mode") {
+        match matches.try_get_one::<String>(OUTPUT_MODE_ARG) {
             // A `DefaultValue` source means the user never typed `--output`.
             Ok(Some(value))
-                if matches.value_source("_output_mode") != Some(ValueSource::DefaultValue) =>
+                if matches.value_source(OUTPUT_MODE_ARG) != Some(ValueSource::DefaultValue) =>
             {
                 parse_output_mode_flag(value.as_str())
             }
@@ -1496,6 +1497,19 @@ impl App {
             .as_deref()
             .and_then(|flag| last_unparsed_flag_value(flag, args))
             .and_then(parse_color_flag)
+    }
+
+    /// The pre-parse read the help path uses, where no `ArgMatches` exists yet.
+    /// A named file is the run's destination whatever else the invocation asks
+    /// for, so help lands there rather than in a pager.
+    pub(crate) fn output_file_from_unparsed(
+        &self,
+        args: &[std::ffi::OsString],
+    ) -> Option<std::path::PathBuf> {
+        self.output_file_flag
+            .as_deref()
+            .and_then(|flag| last_unparsed_flag_value(flag, args))
+            .map(std::path::PathBuf::from)
     }
 
     /// Read from the raw arguments: paging is decided at the process edge,
@@ -1711,6 +1725,7 @@ impl App {
         self.validate_questionnaire_surfaces(cmd)?;
         self.unreachable_registrations(cmd)?;
         self.config_override_flag_collision(cmd)?;
+        self.framework_flag_collision(cmd)?;
         self.config_command_collision(cmd)?;
         let expected_args: HashMap<String, Vec<ExpectedArg>> = self
             .pending_commands
@@ -1798,6 +1813,8 @@ pub(crate) const COLOR_FLAG_VALUES: [&str; 3] = ["auto", "always", "never"];
 
 pub(crate) const COLOR_ARG: &str = "_color";
 pub(crate) const NO_PAGER_ARG: &str = "_no_pager";
+pub(crate) const OUTPUT_MODE_ARG: &str = "_output_mode";
+pub(crate) const OUTPUT_FILE_ARG: &str = "_output_file_path";
 
 pub(crate) const COLOR_FLAG_DEFAULT: &str = "auto";
 

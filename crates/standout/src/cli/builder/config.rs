@@ -210,6 +210,7 @@ impl AppBuilder {
 
 #[cfg(test)]
 mod tests {
+    use super::super::OUTPUT_MODE_ARG;
     use super::*;
     use crate::EmbeddedTemplates;
 
@@ -801,7 +802,7 @@ mod tests {
             let augmented = app.augment_framework_surface(Command::new("app"));
             let defaults = augmented
                 .get_arguments()
-                .find(|arg| arg.get_id() == "_output_mode")
+                .find(|arg| arg.get_id() == OUTPUT_MODE_ARG)
                 .expect("the output flag is declared")
                 .get_default_values()
                 .to_vec();

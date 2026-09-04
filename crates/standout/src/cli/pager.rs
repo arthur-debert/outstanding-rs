@@ -37,15 +37,15 @@ pub(crate) enum PagerOutcome {
 
 impl Pager {
     pub(crate) fn resolve(app_name: &str) -> Option<Self> {
+        if cfg!(windows) {
+            return None;
+        }
         Self::resolve_from(app_name, |name| {
             std::env::var_os(name).map(|value| value.to_string_lossy().into_owned())
         })
     }
 
     fn resolve_from(app_name: &str, var: impl Fn(&str) -> Option<String>) -> Option<Self> {
-        if cfg!(windows) {
-            return None;
-        }
         let value = var(&app_pager_var(app_name)).or_else(|| var("PAGER"))?;
         let command = value.trim();
         (!command.is_empty()).then(|| Self {
@@ -158,12 +158,24 @@ mod tests {
         assert!(child_env(|_| true).is_empty());
     }
 
+    /// Windows has no `sh` to run the command through, so `resolve` answers
+    /// `None` whatever the environment names.
+    #[cfg(windows)]
+    #[test]
+    fn windows_pages_nothing_the_environment_names() {
+        std::env::set_var("PAGER", "more");
+        assert_eq!(Pager::resolve("myapp"), None);
+        std::env::remove_var("PAGER");
+    }
+
+    #[cfg(unix)]
     fn pager(command: &str) -> Pager {
         Pager {
             command: command.to_string(),
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_pager_that_reads_everything_is_paged() {
         let dir = tempfile::tempdir().unwrap();
@@ -175,6 +187,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&seen).unwrap(), "one\ntwo\n");
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_reader_settings_reach_the_pager() {
         let dir = tempfile::tempdir().unwrap();
@@ -189,6 +202,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&seen).unwrap(), "FRX -c");
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_pager_that_cannot_start_says_so() {
         assert_eq!(
@@ -197,6 +211,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_pager_that_stops_reading_says_so() {
         let content = "x".repeat(1024 * 1024);

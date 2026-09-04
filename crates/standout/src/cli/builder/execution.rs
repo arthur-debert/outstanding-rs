@@ -8,8 +8,8 @@ use std::path::PathBuf;
 
 use super::{
     output_mode_flag_spelling, App, AppBuilder, HookRegistrationSource, PendingCommand,
-    TemplateRef, COLOR_ARG, COLOR_FLAG_DEFAULT, COLOR_FLAG_VALUES, NO_PAGER_ARG,
-    OUTPUT_MODE_FLAG_VALUES,
+    TemplateRef, COLOR_ARG, COLOR_FLAG_DEFAULT, COLOR_FLAG_VALUES, NO_PAGER_ARG, OUTPUT_FILE_ARG,
+    OUTPUT_MODE_ARG, OUTPUT_MODE_FLAG_VALUES,
 };
 use crate::cli::config::{
     config_command, config_command_tree, config_result_output, config_run_error,
@@ -410,7 +410,7 @@ impl App {
     fn output_file_override(&self, matches: &ArgMatches) -> Option<PathBuf> {
         self.output_file_flag.as_ref().and_then(|_| {
             matches
-                .try_get_one::<String>("_output_file_path")
+                .try_get_one::<String>(OUTPUT_FILE_ARG)
                 .unwrap_or(None)
                 .map(PathBuf::from)
         })
@@ -682,6 +682,7 @@ impl App {
             .and_then(|()| self.validate_questionnaire_surfaces(&cmd))
             .and_then(|()| self.unreachable_registrations(&cmd))
             .and_then(|()| self.config_override_flag_collision(&cmd))
+            .and_then(|()| self.framework_flag_collision(&cmd))
             .and_then(|()| self.config_command_collision(&cmd))
         {
             return (
@@ -875,6 +876,39 @@ impl App {
         Ok(())
     }
 
+    /// The framework's own global flags against every command in the
+    /// application's tree. clap rejects a duplicate long name with a debug
+    /// assertion, which a release build never runs: the duplicate would reach
+    /// users as a flag that answers to whichever definition clap reached
+    /// first, so standout refuses the pair itself.
+    pub(crate) fn framework_flag_collision(&self, cmd: &Command) -> Result<(), SetupError> {
+        let installed = [
+            (
+                "output_flag",
+                "no_output_flag()",
+                self.output_flag.as_deref(),
+            ),
+            (
+                "output_file_flag",
+                "no_output_file_flag()",
+                self.output_file_flag.as_deref(),
+            ),
+            ("color_flag", "no_color_flag()", self.color_flag.as_deref()),
+            ("pager_flag", "no_pager_flag()", self.pager_flag.as_deref()),
+        ];
+        for (seam, removal, flag) in installed {
+            let Some(flag) = flag else { continue };
+            if let Some(owner) = command_declaring_long(cmd, flag, &[]) {
+                return Err(SetupError::Config(format!(
+                    "{seam} installs `--{flag}`, which this application already declares on \
+                     `{owner}`. Rename standout's with {seam}(Some(\"...\")), drop it with \
+                     {removal}, or rename the application's own flag"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     pub fn run<I, T>(&self, cmd: Command, args: I) -> bool
     where
         I: IntoIterator<Item = T>,
@@ -891,7 +925,8 @@ impl App {
     /// names when stdout is a terminal, the encoding is human and the
     /// invocation did not suppress paging. `true` means the pager took the
     /// bytes and the caller owes the user nothing on stdout; a pager that
-    /// could not start leaves the page unpaged with the run's own status.
+    /// could not start leaves the page unpaged with the run's own status. A
+    /// named output file takes the page before this is reached.
     fn page_help(
         &self,
         app_name: &str,
@@ -900,19 +935,16 @@ impl App {
         output_mode: Representation,
         outcome: &crate::cli::DispatchResult,
     ) -> bool {
-        let crate::cli::DispatchResult::Handled(output) = outcome else {
+        let Some(page) = help_page(outcome) else {
             return false;
         };
-        if !matches!(
-            output.kind(),
-            SuccessKind::ClapHelp | SuccessKind::PagedHelp
-        ) || !target.stdout_is_terminal
+        if !target.stdout_is_terminal
             || output_mode != Representation::Human
             || self.paging_is_suppressed(args)
         {
             return false;
         }
-        match Pager::resolve(app_name).map(|pager| pager.page(output.as_str())) {
+        match Pager::resolve(app_name).map(|pager| pager.page(page)) {
             Some(PagerOutcome::Paged | PagerOutcome::ReaderLeft) => true,
             Some(PagerOutcome::CouldNotStart) | None => false,
         }
@@ -930,12 +962,16 @@ impl App {
         let sink = StreamSink::process_stdout();
         let app_name = cmd.get_name().to_string();
         let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
+        // Help short-circuits before an `ArgMatches` exists, so the file the
+        // invocation names is read from argv here — early enough that the page
+        // is rendered for a file rather than for the terminal.
+        let output_file = self.output_file_from_unparsed(&args);
         // Nothing reads this run's values back, so its events are written and
         // dropped rather than retained for the length of the command.
         let result = self.run_recording(
             cmd,
             &args,
-            target,
+            file_destination(target, output_file.is_some()),
             ColorPolicy::Auto,
             sources,
             sink.clone(),
@@ -945,11 +981,27 @@ impl App {
         let warnings = result.warnings().to_vec();
         let output_mode = result.output_mode();
 
-        let paged = self.page_help(&app_name, &args, &target, output_mode, result.outcome());
+        // A named output file wins over the pager, and over stdout.
+        let help_to_file = output_file
+            .zip(help_page(result.outcome()))
+            .map(|(path, page)| {
+                write_output(page, &OutputDestination::File(path))
+                    .err()
+                    .map(|error| {
+                        RunError::new(
+                            format!("Error writing output: {}", error),
+                            RunErrorKind::FinalWrite(OutputKind::Text),
+                        )
+                    })
+            });
+        let paged = help_to_file.is_none()
+            && self.page_help(&app_name, &args, &target, output_mode, result.outcome());
 
         let stderr = std::io::stderr();
         let mut stderr = stderr.lock();
-        let (handled, mut final_write_failure) = if paged {
+        let (handled, mut final_write_failure) = if let Some(failure) = help_to_file {
+            (true, failure)
+        } else if paged {
             (true, None)
         } else if output_mode.is_stream() {
             let emitted = sink.with_writer(|stdout| {
@@ -1146,7 +1198,7 @@ impl App {
         }
 
         if let Some(ref flag_name) = self.output_flag {
-            let mut arg = Arg::new("_output_mode")
+            let mut arg = Arg::new(OUTPUT_MODE_ARG)
                 .long(flag_name.clone())
                 .value_name("MODE")
                 .global(true)
@@ -1184,7 +1236,7 @@ impl App {
 
         if let Some(ref flag_name) = self.output_file_flag {
             cmd = cmd.arg(
-                Arg::new("_output_file_path")
+                Arg::new(OUTPUT_FILE_ARG)
                     .long(flag_name.clone())
                     .value_name("PATH")
                     .global(true)
@@ -1478,6 +1530,20 @@ impl App {
     }
 }
 
+/// The rendered help page a run ended in, whichever path rendered it: clap's
+/// own `--help`, or the grouped page standout renders for `--help` and the
+/// `help` word.
+fn help_page(outcome: &crate::cli::DispatchResult) -> Option<&str> {
+    let crate::cli::DispatchResult::Handled(output) = outcome else {
+        return None;
+    };
+    matches!(
+        output.kind(),
+        SuccessKind::ClapHelp | SuccessKind::PagedHelp
+    )
+    .then(|| output.as_str())
+}
+
 /// A named output file is never a terminal, so `auto` resolves to plain text
 /// in it; an explicit `--color always` still writes escapes there.
 fn file_destination(mut target: TargetProperties, writes_to_a_file: bool) -> TargetProperties {
@@ -1486,6 +1552,46 @@ fn file_destination(mut target: TargetProperties, writes_to_a_file: bool) -> Tar
         target.stdout_color_capability = false;
     }
     target
+}
+
+/// The framework's own arguments, so a command already carrying them does not
+/// read as colliding with itself.
+const FRAMEWORK_ARG_IDS: [&str; 5] = [
+    OUTPUT_MODE_ARG,
+    OUTPUT_FILE_ARG,
+    COLOR_ARG,
+    NO_PAGER_ARG,
+    CONFIG_OVERRIDE_ARG,
+];
+
+/// The path of the first command in the tree declaring `flag` as a long name
+/// or long alias, `path` naming the ancestors reached so far.
+fn command_declaring_long(cmd: &Command, flag: &str, path: &[&str]) -> Option<String> {
+    let here = || {
+        let mut names: Vec<&str> = path.to_vec();
+        names.push(cmd.get_name());
+        names.join(" ")
+    };
+    let declared = cmd.get_arguments().any(|arg| {
+        !FRAMEWORK_ARG_IDS.contains(&arg.get_id().as_str())
+            && (arg.get_long() == Some(flag)
+                || arg
+                    .get_all_aliases()
+                    .is_some_and(|aliases| aliases.contains(&flag)))
+    });
+    if declared {
+        return Some(here());
+    }
+    let mut path = path.to_vec();
+    path.push(cmd.get_name());
+    cmd.get_subcommands().find_map(|sub| {
+        if sub.get_long_flag() == Some(flag)
+            || sub.get_all_long_flag_aliases().any(|alias| alias == flag)
+        {
+            return Some(path.join(" "));
+        }
+        command_declaring_long(sub, flag, &path)
+    })
 }
 
 pub(crate) fn command_takes_flag(cmd: &Command, flag: &str) -> bool {
@@ -3018,6 +3124,51 @@ mod tests {
             crate::InputSources::from_process(),
         );
         assert!(!result.is_handled());
+    }
+
+    /// clap's duplicate-long assertion only runs in debug builds, so standout
+    /// names the seam itself rather than letting a release build take the
+    /// duplicate.
+    #[test]
+    fn an_application_flag_colliding_with_a_framework_flag_is_a_setup_error() {
+        use serde_json::json;
+
+        let app = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
+                "list",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 1})))),
+                |cfg| cfg,
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let cmd = Command::new("app").subcommand(
+            Command::new("list").arg(
+                Arg::new("quiet")
+                    .long("no-pager")
+                    .action(ArgAction::SetTrue),
+            ),
+        );
+
+        let error = app.verify_command(&cmd).unwrap_err().to_string();
+        assert!(
+            error.contains("pager_flag installs `--no-pager`")
+                && error.contains("app list")
+                && error.contains("no_pager_flag()"),
+            "expected the seam named, got: {error}"
+        );
+
+        let result = app.run_with(
+            cmd,
+            ["app", "list"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
+        assert!(result.error().is_some_and(|error| error
+            .to_string()
+            .contains("pager_flag installs `--no-pager`")));
     }
 
     #[test]
