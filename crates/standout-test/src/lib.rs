@@ -298,6 +298,7 @@ impl TestHarness {
         let captured = StreamCapture::default();
         let sink = StreamSink::new(captured.clone());
         let run = app.run_with_sink(cmd, argv, target, self.color_policy, sources, sink.clone());
+        let color_policy = run.color_policy();
         let warnings = run.warnings().to_vec();
         let output_mode = run.output_mode();
         let results = run.results().to_vec();
@@ -324,7 +325,7 @@ impl TestHarness {
         if !standout::cli::carries_warning_entries(&outcome, output_mode) {
             stderr.push_str(&standout_render::warnings::render_block_for_target(
                 theme,
-                self.color_policy,
+                color_policy,
                 target,
                 &warnings,
             ));

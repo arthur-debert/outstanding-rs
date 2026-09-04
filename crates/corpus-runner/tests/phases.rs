@@ -495,13 +495,14 @@ fi
 echo 'irrelevant'
 "#;
 
-// Honors `--output text|term|json`; term adds only ANSI bold.
+// Honors `--output json` and `--color always`; colored output adds only ANSI bold.
 const WELL_BEHAVED: &str = r#"
 if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]'; exit 0; fi
 mode=text
 prev=""
 for a in "$@"; do
   if [ "$prev" = "--output" ]; then mode="$a"; fi
+  if [ "$prev" = "--color" ] && [ "$a" = "always" ]; then mode=term; fi
   prev="$a"
 done
 case "$mode" in
@@ -518,6 +519,7 @@ mode=text
 prev=""
 for a in "$@"; do
   if [ "$prev" = "--output" ]; then mode="$a"; fi
+  if [ "$prev" = "--color" ] && [ "$a" = "always" ]; then mode=term; fi
   prev="$a"
 done
 case "$mode" in
@@ -543,6 +545,7 @@ mode=text
 prev=""
 for a in "$@"; do
   if [ "$prev" = "--output" ]; then mode="$a"; fi
+  if [ "$prev" = "--color" ] && [ "$a" = "always" ]; then mode=term; fi
   prev="$a"
 done
 case "$mode" in
@@ -563,6 +566,7 @@ mode=text
 prev=""
 for a in "$@"; do
   if [ "$prev" = "--output" ]; then mode="$a"; fi
+  if [ "$prev" = "--color" ] && [ "$a" = "always" ]; then mode=term; fi
   prev="$a"
 done
 case "$mode" in
@@ -583,6 +587,7 @@ mode=text
 prev=""
 for a in "$@"; do
   if [ "$prev" = "--output" ]; then mode="$a"; fi
+  if [ "$prev" = "--color" ] && [ "$a" = "always" ]; then mode=term; fi
   prev="$a"
 done
 case "$mode" in
@@ -598,6 +603,7 @@ mode=text
 prev=""
 for a in "$@"; do
   if [ "$prev" = "--output" ]; then mode="$a"; fi
+  if [ "$prev" = "--color" ] && [ "$a" = "always" ]; then mode=term; fi
   prev="$a"
 done
 case "$mode" in
@@ -619,6 +625,7 @@ mode=text
 prev=""
 for a in "$@"; do
   if [ "$prev" = "--output" ]; then mode="$a"; fi
+  if [ "$prev" = "--color" ] && [ "$a" = "always" ]; then mode=term; fi
   prev="$a"
 done
 if [ -n "$NO_COLOR" ] && [ "$mode" != "text" ]; then sleep 30; fi
@@ -637,6 +644,7 @@ mode=text
 prev=""
 for a in "$@"; do
   if [ "$prev" = "--output" ]; then mode="$a"; fi
+  if [ "$prev" = "--color" ] && [ "$a" = "always" ]; then mode=term; fi
   prev="$a"
 done
 if [ -n "$NO_COLOR" ]; then

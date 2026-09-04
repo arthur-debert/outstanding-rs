@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use super::{
     output_mode_flag_spelling, App, AppBuilder, HookRegistrationSource, PendingCommand,
-    TemplateRef, OUTPUT_MODE_FLAG_VALUES,
+    TemplateRef, COLOR_ARG, COLOR_FLAG_DEFAULT, COLOR_FLAG_VALUES, OUTPUT_MODE_FLAG_VALUES,
 };
 use crate::cli::config::{
     config_command, config_command_tree, config_result_output, config_run_error,
@@ -145,26 +145,30 @@ impl App {
     ) -> crate::cli::CompletedRun {
         let capture = StreamCapture::default();
         let recorder = RunRecorder::new();
-        let run = self.collect_run_warnings(ColorPolicy::Auto, &recorder, |warnings| {
+        let run = self.collect_run_warnings(&recorder, |warnings| {
             let config = match self.resolve_config_for(&matches) {
                 Ok(config) => config,
-                Err(error) => return (DispatchResult::Error(error), output_mode),
+                Err(error) => {
+                    return (DispatchResult::Error(error), output_mode, ColorPolicy::Auto)
+                }
             };
-            let term_output = config
-                .as_ref()
-                .and_then(|config| config.term.as_ref())
-                .and_then(|term| term.output);
-            let output_mode = match term_output {
+            let term = config.as_ref().and_then(|config| config.term.as_ref());
+            let output_mode = match term.and_then(|term| term.output) {
                 Some(term) if self.typed_output_mode(&matches).is_none() => {
                     Representation::from(term)
                 }
                 _ => output_mode,
             };
+            let color_policy = self.resolve_color_policy(
+                self.typed_color_policy(&matches),
+                ColorPolicy::Auto,
+                term,
+            );
             (
                 self.dispatch_with_target(
                     matches,
                     output_mode,
-                    ColorPolicy::Auto,
+                    color_policy,
                     self.process_edge_target(),
                     ContextInputs {
                         sources: InputSources::from_process(),
@@ -175,6 +179,7 @@ impl App {
                     warnings,
                 ),
                 output_mode,
+                color_policy,
             )
         });
         run.with_entries(String::from_utf8_lossy(&capture.take()).into_owned())
@@ -202,6 +207,7 @@ impl App {
 
         let path = extract_command_path(&matches);
         let path_str = path.join(".");
+        let target = file_destination(target, self.output_file_override(&matches).is_some());
 
         if let Some(action) = self.config_command_action(&matches) {
             return self.run_config_command(
@@ -559,12 +565,15 @@ impl App {
         sink: StreamSink,
         recorder: RunRecorder,
         warnings: WarningBuffer,
-    ) -> (DispatchResult, Representation)
+    ) -> (DispatchResult, Representation, ColorPolicy)
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
         let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
+        let named_color = color_policy;
+        let typed_color = self.typed_color_from_unparsed(&args);
+        let color_policy = self.resolve_color_policy(typed_color, named_color, None);
 
         if let Err(error) = self
             .malformed_registrations()
@@ -576,6 +585,7 @@ impl App {
             return (
                 DispatchResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
                 self.extract_output_mode_from_unparsed(&args),
+                color_policy,
             );
         }
 
@@ -585,6 +595,7 @@ impl App {
             return (
                 DispatchResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
                 self.extract_output_mode_from_unparsed(&args),
+                color_policy,
             );
         }
 
@@ -598,6 +609,7 @@ impl App {
                         RunErrorKind::DefaultCommand,
                     )),
                     self.extract_output_mode_from_unparsed(&args),
+                    color_policy,
                 )
             }
             Err(ParseFailure::Clap(e)) => {
@@ -610,7 +622,7 @@ impl App {
                     color_policy,
                     Some(warnings.clone()),
                 ) {
-                    return (display.into(), output_mode);
+                    return (display.into(), output_mode, color_policy);
                 }
                 if e.use_stderr() {
                     return (
@@ -619,6 +631,7 @@ impl App {
                             RunErrorKind::ClapUsage,
                         )),
                         output_mode,
+                        color_policy,
                     );
                 }
                 let output = match e.kind() {
@@ -627,11 +640,13 @@ impl App {
                     }
                     _ => RunOutput::clap_help(e.to_string()),
                 };
-                return (DispatchResult::Handled(output), output_mode);
+                return (DispatchResult::Handled(output), output_mode, color_policy);
             }
         };
 
         let output_mode = self.extract_output_mode(&matches);
+        let typed_color = self.typed_color_policy(&matches).or(typed_color);
+        let color_policy = self.resolve_color_policy(typed_color, named_color, None);
 
         if let Some(display) = self.intercept_help_word(
             &mut augmented_cmd,
@@ -640,7 +655,7 @@ impl App {
             color_policy,
             Some(warnings.clone()),
         ) {
-            return (display.into(), output_mode);
+            return (display.into(), output_mode, color_policy);
         }
 
         if let Some((path, questionnaire)) = self.questionnaire_questions_invocation(&matches) {
@@ -662,23 +677,24 @@ impl App {
                             RunErrorKind::ClapUsage,
                         )),
                         output_mode,
+                        color_policy,
                     );
                 }
             }
             return (
                 render_questions_result(questionnaire, &matches),
                 output_mode,
+                color_policy,
             );
         }
 
         let config = match self.resolve_config_for(&matches) {
             Ok(config) => config,
-            Err(error) => return (DispatchResult::Error(error), output_mode),
+            Err(error) => return (DispatchResult::Error(error), output_mode, color_policy),
         };
-        let output_mode = self.extract_output_mode_over(
-            &matches,
-            config.as_ref().and_then(|config| config.term.as_ref()),
-        );
+        let term = config.as_ref().and_then(|config| config.term.as_ref());
+        let output_mode = self.extract_output_mode_over(&matches, term);
+        let color_policy = self.resolve_color_policy(typed_color, named_color, term);
 
         (
             self.dispatch_with_target(
@@ -692,6 +708,7 @@ impl App {
                 warnings,
             ),
             output_mode,
+            color_policy,
         )
     }
 
@@ -857,14 +874,13 @@ impl App {
     /// return before the pre-commit strict check, are checked here instead.
     fn collect_run_warnings(
         &self,
-        color_policy: ColorPolicy,
         recorder: &RunRecorder,
-        inner: impl FnOnce(WarningBuffer) -> (DispatchResult, Representation),
+        inner: impl FnOnce(WarningBuffer) -> (DispatchResult, Representation, ColorPolicy),
     ) -> crate::cli::CompletedRun {
         let warnings = WarningBuffer::new();
         self.seed_startup_warnings(&warnings);
         let _capture = standout_render::diagnostics::begin_capture();
-        let (mut outcome, output_mode) = inner(warnings.clone());
+        let (mut outcome, output_mode, color_policy) = inner(warnings.clone());
         if outcome.success_kind().is_some() {
             if let Some(error) = self.strict_style_tags_error(&warnings) {
                 outcome = DispatchResult::Error(error);
@@ -973,7 +989,7 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        self.collect_run_warnings(color_policy, &recorder, |warnings| {
+        self.collect_run_warnings(&recorder, |warnings| {
             self.dispatch_from_with_target(
                 cmd,
                 args,
@@ -1007,6 +1023,18 @@ impl App {
                 arg = arg.default_value(spelling);
             }
             cmd = cmd.arg(arg);
+        }
+
+        if let Some(ref flag_name) = self.color_flag {
+            cmd = cmd.arg(
+                Arg::new(COLOR_ARG)
+                    .long(flag_name.clone())
+                    .value_name("WHEN")
+                    .global(true)
+                    .value_parser(COLOR_FLAG_VALUES)
+                    .default_value(COLOR_FLAG_DEFAULT)
+                    .help("When to color human output"),
+            );
         }
 
         if let Some(ref flag_name) = self.output_file_flag {
@@ -1297,6 +1325,16 @@ impl App {
             report,
         ))
     }
+}
+
+/// A named output file is never a terminal, so `auto` resolves to plain text
+/// in it; an explicit `--color always` still writes escapes there.
+fn file_destination(mut target: TargetProperties, writes_to_a_file: bool) -> TargetProperties {
+    if writes_to_a_file {
+        target.stdout_is_terminal = false;
+        target.stdout_color_capability = false;
+    }
+    target
 }
 
 pub(crate) fn command_takes_flag(cmd: &Command, flag: &str) -> bool {

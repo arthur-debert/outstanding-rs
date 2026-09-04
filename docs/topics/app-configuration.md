@@ -499,6 +499,22 @@ App::builder()
     .no_output_file_flag()  // Disable entirely
 ```
 
+### Color Flag
+
+`--color auto|always|never` decides whether the human page carries escape
+sequences, on its own and whatever `--output` names. It renames and disappears
+through the same seam.
+
+```rust
+App::builder()
+    .color_flag(Some("colour"))  // --colour instead of --color
+```
+
+```rust
+App::builder()
+    .no_color_flag()  // Disable entirely; an application that spells --color itself needs this
+```
+
 ### Configuration
 
 `config(clapfig_builder)` registers the application's settings struct;
@@ -518,6 +534,7 @@ pub struct App {
     output_flag: Option<String>,
     output_mode_fallback: Representation,
     output_file_flag: Option<String>,
+    color_flag: Option<String>,
     theme: Theme,
     command_hooks: HashMap<String, Hooks>,
     template_registry: Option<TemplateRegistry>,

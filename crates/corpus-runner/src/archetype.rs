@@ -44,6 +44,10 @@ impl Default for Invariants {
     }
 }
 
+/// A presentation cell of the matrix, not a `--output` value: the human page
+/// plain, the same page with escape sequences, and the JSON encoding. Since
+/// TERM01 the first two are `--color never`/`always` on the human
+/// representation, which the flag cannot name.
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum InvariantMode {
@@ -58,6 +62,14 @@ impl InvariantMode {
             Self::Text => "text",
             Self::Term => "term",
             Self::Json => "json",
+        }
+    }
+
+    pub fn argv(self) -> &'static [&'static str] {
+        match self {
+            Self::Text => &["--color", "never"],
+            Self::Term => &["--color", "always"],
+            Self::Json => &["--output", "json"],
         }
     }
 }

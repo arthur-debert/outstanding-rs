@@ -35,7 +35,7 @@ pub mod hooks;
 pub mod macros;
 
 pub use builder::{App, AppBuilder, STRICT_STYLE_TAGS_ENV};
-pub use config::{MissingConfig, TermOutput, TermSettings};
+pub use config::{MissingConfig, TermColor, TermOutput, TermSettings};
 
 pub use group::{CommandConfig, GroupBuilder};
 

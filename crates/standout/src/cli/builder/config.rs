@@ -111,6 +111,16 @@ impl AppBuilder {
         self
     }
 
+    pub fn color_flag(mut self, name: Option<&str>) -> Self {
+        self.color_flag = Some(name.unwrap_or("color").to_string());
+        self
+    }
+
+    pub fn no_color_flag(mut self) -> Self {
+        self.color_flag = None;
+        self
+    }
+
     pub fn config<C>(mut self, builder: clapfig::TypedBuilder<C>) -> Self
     where
         C: clapfig::DocumentRoot + serde::de::DeserializeOwned + 'static,

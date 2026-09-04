@@ -84,3 +84,60 @@ fn the_force_path_does_not_reach_auto_mode() {
         conventions(&[("CLICOLOR_FORCE", "1")]).run_process(env!("CARGO_BIN_EXE_tdoo"), ["list"]);
     assert_plain(&result);
 }
+
+#[test]
+fn color_always_through_a_pipe_emits_ansi() {
+    let result =
+        conventions(&[]).run_process(env!("CARGO_BIN_EXE_tdoo"), ["list", "--color", "always"]);
+    assert_ansi(&result);
+}
+
+#[test]
+fn color_always_overrides_no_color() {
+    let result = conventions(&[("NO_COLOR", "1")])
+        .run_process(env!("CARGO_BIN_EXE_tdoo"), ["list", "--color", "always"]);
+    assert_ansi(&result);
+}
+
+#[test]
+fn color_never_overrides_clicolor_force() {
+    let result = conventions(&[("CLICOLOR_FORCE", "1")])
+        .run_process(env!("CARGO_BIN_EXE_tdoo"), ["list", "--color", "never"]);
+    assert_plain(&result);
+}
+
+#[test]
+fn clicolor_force_reaches_ansi_through_consoles_gate() {
+    let result = conventions(&[("CLICOLOR_FORCE", "1")])
+        .run_process(env!("CARGO_BIN_EXE_tdoo"), ["list", "--color", "always"]);
+    assert_ansi(&result);
+}
+
+#[test]
+fn no_color_does_not_reach_the_force_path() {
+    let result = conventions(&[("CLICOLOR_FORCE", "1"), ("NO_COLOR", "1")])
+        .run_process(env!("CARGO_BIN_EXE_tdoo"), ["list", "--color", "always"]);
+    assert_ansi(&result);
+}
+
+#[test]
+fn the_term_color_key_is_read_from_its_environment_spelling() {
+    let result = conventions(&[])
+        .env("TDOO__TERM__COLOR", "always")
+        .run_process(env!("CARGO_BIN_EXE_tdoo"), ["list"]);
+    assert_ansi(&result);
+}
+
+/// The configured key at the process edge, where `NO_COLOR` outranks it.
+#[test]
+fn the_term_color_key_is_read_from_the_file() {
+    let configured = conventions(&[])
+        .fixture("tdoo.toml", "[term]\ncolor = \"always\"\n")
+        .run_process(env!("CARGO_BIN_EXE_tdoo"), ["list"]);
+    assert_ansi(&configured);
+
+    let vetoed = conventions(&[("NO_COLOR", "1")])
+        .fixture("tdoo.toml", "[term]\ncolor = \"always\"\n")
+        .run_process(env!("CARGO_BIN_EXE_tdoo"), ["list"]);
+    assert_plain(&vetoed);
+}

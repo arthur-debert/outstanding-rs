@@ -96,7 +96,9 @@ impl Downstream {
     }
 
     fn app(&self) -> App {
-        let mut builder = App::builder().help_word(self.help_word);
+        // This application spells `--color` itself, so it removes the
+        // framework's through the same seam `--output` has.
+        let mut builder = App::builder().help_word(self.help_word).no_color_flag();
 
         if self.topics {
             builder = builder
