@@ -280,10 +280,9 @@ THEME: Handlers
 	into something else if needed. A command whose emitted events are its
 	whole result returns Silent as its summary.
 
-	Binary: Raw bytes written to a file. The filename is used directly as a
-	path (relative or absolute). The bytes are written via std::fs::write(),
-	overwriting any existing file. A confirmation message prints to stderr:
-	"Wrote N bytes to filename".
+	Binary: Raw bytes. run() writes them to stdout; --output-file-path sends
+	them to that file instead. The filename the handler names is a suggestion
+	the framework never writes to, readable from DispatchResult::binary().
 
 	A command that emits events carries Render and Silent only: Binary and
 	Artifact from one are a render error under every representation.
@@ -1172,7 +1171,7 @@ THEME: Output Modes
 	The flag is global - it applies to all subcommands. Standout adds
 	it automatically via augment_command(), alongside two siblings that are
 	global the same way: --color auto|always|never, which decides the escape
-	sequences in human text, and --no-pager, which writes straight to stdout.
+	sequences in human text, and --no-pager, which turns paging off for the run.
 
 
 48. What is TermDebug mode for?

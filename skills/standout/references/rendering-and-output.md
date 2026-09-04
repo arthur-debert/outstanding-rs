@@ -34,7 +34,7 @@ The global `--output` flag names a structured encoding; the human representation
 | `json`, `yaml`, `csv` | Direct serialization; template skipped | Parse or assert on data |
 | `ndjson` | One compact JSON object per line: handler events, then `{"type":"result","data":…}` | Consume a stream while the command runs |
 
-`--color auto|always|never` is the separate decision about escape sequences in human text; a structured encoding never carries them. `--no-pager` writes straight to stdout instead of through a pager.
+`--color auto|always|never` is the separate decision about escape sequences in human text; a structured encoding never carries them. `--no-pager` turns paging off for the run.
 
 An unknown style tag degrades to unstyled text in the human representation and is recorded as a warning; term-debug keeps it literal. Structured encodings also skip injected template context.
 

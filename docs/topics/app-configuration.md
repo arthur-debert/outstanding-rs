@@ -517,8 +517,9 @@ App::builder()
 
 ### Pager Flag
 
-`--no-pager` writes a run's output straight to stdout instead of through a
-pager. It renames and disappears through the same seam.
+`--no-pager` turns paging off for one run, leaving the bytes to whichever
+destination they would have had without a pager. It renames and disappears
+through the same seam.
 
 ```rust
 App::builder()

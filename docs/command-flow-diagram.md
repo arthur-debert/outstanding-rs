@@ -101,6 +101,7 @@ flowchart TB
     STRUCT_SER --> JSON_OUT
     STRUCT_SER --> YAML_OUT
     STRUCT_SER --> OTHER_OUT
+    STRUCT_SER --> NDJSON_OUT
     JSON_OUT & YAML_OUT & OTHER_OUT & NDJSON_OUT --> DO
 
     MODE -->|"Human/TermDebug"| JINJA

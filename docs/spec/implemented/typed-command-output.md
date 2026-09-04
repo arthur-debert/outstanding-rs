@@ -9,9 +9,9 @@
 >   `_`. An application that never names itself reads `PAGER` alone, so the
 >   framework never guesses a name from argv or the binary.
 > - The human representation of an incremental command is one rendered line per
->   event and nothing else. No spinner, counter or transient line is derived
->   from the events, and no setting asks for one; that feature is still the
->   separate spec the Non-goals name.
+>   event, then the returned summary. No spinner, counter or transient line is
+>   derived from the events, and no setting asks for one; that feature is still
+>   the separate spec the Non-goals name.
 > - The corpus `systemdlike` member asks for color with `--color never` and
 >   `--color always` in place of the retired `--output text` and `--output
 >   term`. Its produced binary predates the change, so it leaves the per-PR

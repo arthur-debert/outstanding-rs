@@ -158,7 +158,7 @@ Global Flags AppBuilder Installs:
   - --output <MODE>: the structured encoding (json, yaml, csv, ndjson,
     term-debug); output_flag(Some(name)) renames, no_output_flag() removes
   - --color <WHEN>: auto/always/never; color_flag / no_color_flag
-  - --no-pager: write straight to stdout; pager_flag / no_pager_flag
+  - --no-pager: turn paging off for the run; pager_flag / no_pager_flag
   - --output-file-path <PATH>: output_file_flag / no_output_file_flag
   - --set key=value: opt-in, config_override_flag(name)
 
@@ -170,7 +170,8 @@ Command Handler Types:
 Handler Output:
   - Output::Render(data): data to render via template
   - Output::Silent: no output
-  - Output::Binary(bytes, filename): binary file output
+  - Output::Binary { data, filename }: raw bytes on stdout, or in the
+    --output-file-path file; filename is a suggestion for a capture caller
   - HandlerResult<T>: Result<Output<T>, Error>
 
 Incremental Results:
