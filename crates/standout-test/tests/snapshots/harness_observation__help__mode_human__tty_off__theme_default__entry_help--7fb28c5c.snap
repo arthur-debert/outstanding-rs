@@ -20,6 +20,6 @@ OPTIONS
   --color <WHEN>             When to color human output
                              default: auto
                              possible values: auto, always, never
-  --no-pager                 Write output straight to stdout, never through a pager
+  --no-pager                 Write output straight to stdout
   --output-file-path <PATH>  Write output to file instead of stdout
   -h, --help                 Print help
