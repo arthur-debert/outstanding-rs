@@ -75,6 +75,11 @@ pub trait EventSink {
     fn is_open(&self) -> bool {
         true
     }
+
+    /// Remembers a failure the channel raised before reaching `deliver`, so a
+    /// value that never became an event fails the run the way one the
+    /// destination refused does, whether or not the handler propagates it.
+    fn record_failure(&self, _error: &EmitError) {}
 }
 
 #[derive(Debug)]
@@ -183,7 +188,9 @@ impl<E: Serialize> Results<E> {
 
     /// Returns once the value has been written and retained; fails when it does
     /// not serialize, does not render, or cannot be written. The write comes
-    /// first, so a value the destination refused is never retained.
+    /// first, so a value the destination refused is never retained. Every
+    /// failure reaches the sink, the serialization one through
+    /// [`EventSink::record_failure`] because it happens before the write.
     pub fn emit(&mut self, event: E) -> Result<(), EmitError> {
         let retaining = self
             .recorder
@@ -193,7 +200,16 @@ impl<E: Serialize> Results<E> {
         if retaining.is_none() && open.is_none() {
             return Ok(());
         }
-        let value = serde_json::to_value(&event)?;
+        let value = match serde_json::to_value(&event) {
+            Ok(value) => value,
+            Err(error) => {
+                let error = EmitError::from(error);
+                if let Some(sink) = self.sink.as_ref() {
+                    sink.record_failure(&error);
+                }
+                return Err(error);
+            }
+        };
         if let Some(sink) = open {
             sink.deliver(&value)?;
         }
@@ -319,6 +335,26 @@ mod tests {
         map.insert((1u8, 2u8), 3u8);
         let error = results.emit(map).unwrap_err();
         assert!(matches!(error, EmitError::Serialize(_)), "{error}");
+    }
+
+    #[test]
+    fn an_unserializable_event_reaches_the_sink_as_a_recorded_failure() {
+        #[derive(Default)]
+        struct Remembers(RefCell<Vec<String>>);
+        impl EventSink for Remembers {
+            fn deliver(&self, _: &serde_json::Value) -> Result<(), EmitError> {
+                Ok(())
+            }
+            fn record_failure(&self, error: &EmitError) {
+                self.0.borrow_mut().push(error.to_string());
+            }
+        }
+        let sink = Rc::new(Remembers::default());
+        let mut results = Results::for_run(None, sink.clone());
+        let mut map = std::collections::HashMap::new();
+        map.insert((1u8, 2u8), 3u8);
+        results.emit(map).unwrap_err();
+        assert_eq!(sink.0.borrow().len(), 1, "{:?}", sink.0.borrow());
     }
 
     #[test]

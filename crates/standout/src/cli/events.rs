@@ -12,9 +12,10 @@
 //!   command runs and retains each record instead. A run that fails never asks
 //!   for them, which is how nothing partial goes out.
 //!
-//! Every reason an event does not reach the destination is returned from
-//! `deliver`, so the handler stops at the `emit` that failed, and the first of
-//! them is remembered for [`EventDestination::take_failure`].
+//! Every reason an event does not reach the destination is returned to the
+//! handler, so it stops at the `emit` that failed, and the first of them is
+//! remembered for [`EventDestination::take_failure`] whether or not the
+//! handler propagates it.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -193,15 +194,19 @@ impl EventSink for EventDestination {
         let Err(error) = self.write(event) else {
             return Ok(());
         };
-        let mut failure = self.failure.borrow_mut();
-        if failure.is_none() {
-            *failure = Some(RunError::new(error.to_string(), failure_kind(&error)));
-        }
+        self.record_failure(&error);
         Err(error)
     }
 
     fn is_open(&self) -> bool {
         self.retained.is_some() || self.sink.is_open()
+    }
+
+    fn record_failure(&self, error: &EmitError) {
+        let mut failure = self.failure.borrow_mut();
+        if failure.is_none() {
+            *failure = Some(RunError::new(error.to_string(), failure_kind(error)));
+        }
     }
 }
 
