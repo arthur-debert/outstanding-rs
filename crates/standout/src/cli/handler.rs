@@ -2,10 +2,10 @@ pub use standout_dispatch::{
     emits_events, AppFailure, Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun,
     CommandContext, ContractSurface, Delivery, Diagnostic, DiagnosticKind, DiagnosticPosition,
     DiagnosticRange, DispatchResult, EmitError, Envelope, EventSink, EventsFnHandler, ExitStatus,
-    Extensions, ExternalFailure, FnHandler, Handler, HandlerResult, InvalidAppStatus,
-    InvalidExternalStatus, NoEvents, Output, OutputKind, Results, RunError, RunErrorKind,
-    RunOutput, RunRecorder, Severity, StreamCapture, StreamSink, SuccessKind, Summary,
-    SummaryResult,
+    Extensions, ExternalFailure, FnHandler, Handler, HandlerOutcome, HandlerResult,
+    InvalidAppStatus, InvalidExternalStatus, NoEvents, Output, OutputKind, Results, RunError,
+    RunErrorKind, RunOutput, RunRecorder, Severity, StreamCapture, StreamSink, SuccessKind,
+    Summary, SummaryResult,
 };
 
 use standout_input::{InputSourceKind, Inputs, MissingInput};

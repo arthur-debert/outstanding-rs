@@ -105,6 +105,7 @@ fn test_struct_handler_with_state() {
     impl standout::cli::Handler for StatefulHandler {
         type Event = standout::cli::NoEvents;
         type Output = serde_json::Value;
+        type Outcome = standout::cli::Output<serde_json::Value>;
 
         fn handle(
             &mut self,

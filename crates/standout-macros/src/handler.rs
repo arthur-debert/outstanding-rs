@@ -456,17 +456,22 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
         quote! { #ok_type }
     };
 
-    let into_handler_result = if emits {
-        quote! {
-            ::core::result::Result::map(
-                #dispatch::IntoSummaryResult::into_summary_result(#wrapper_name(matches, ctx #event_argument)),
-                #dispatch::Output::from,
-            )
-        }
+    let (handler_outcome, handle_result, into_outcome) = if emits {
+        (
+            quote! { #dispatch::Summary<#output_type> },
+            quote! { #dispatch::SummaryResult<Self::Output> },
+            quote! {
+                #dispatch::IntoSummaryResult::into_summary_result(#wrapper_name(matches, ctx #event_argument))
+            },
+        )
     } else {
-        quote! {
-            #dispatch::IntoHandlerResult::into_handler_result(#wrapper_name(matches, ctx #event_argument))
-        }
+        (
+            quote! { #dispatch::Output<#output_type> },
+            quote! { #dispatch::HandlerResult<Self::Output> },
+            quote! {
+                #dispatch::IntoHandlerResult::into_handler_result(#wrapper_name(matches, ctx #event_argument))
+            },
+        )
     };
 
     Ok(quote! {
@@ -490,15 +495,16 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
         impl #dispatch::Handler for #handler_struct_name {
             type Event = #handler_event;
             type Output = #output_type;
+            type Outcome = #handler_outcome;
 
             fn handle(
                 &mut self,
                 matches: &::clap::ArgMatches,
                 ctx: &#dispatch::CommandContext,
                 #handler_results: &mut #dispatch::Results<Self::Event>,
-            ) -> #dispatch::HandlerResult<Self::Output>
+            ) -> #handle_result
             {
-                #into_handler_result
+                #into_outcome
             }
 
             fn expected_args(&self) -> ::std::vec::Vec<#dispatch::verify::ExpectedArg> {

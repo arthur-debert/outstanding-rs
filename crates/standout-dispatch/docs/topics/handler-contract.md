@@ -503,22 +503,26 @@ Bytes are owned; streaming is deliberately not part of this contract.
 
 ## Incremental commands
 
-`Handler` carries two associated types. `Output` is the batch value or the
-summary; `Event` is the type of the values the command produces while it runs.
-A batch command sets `Event = NoEvents`, whose uninhabited type leaves `emit`
-with no argument that can be constructed, and ignores the third parameter.
+`Handler` carries three associated types. `Output` is the batch value or the
+summary; `Event` is the type of the values the command produces while it runs;
+`Outcome` is what `handle` wraps the value in, and `HandlerOutcome` admits
+`Output<T>` only under `NoEvents`, so a command that declares events has
+`Summary<T>` and no payload variant to return. A batch command sets
+`Event = NoEvents`, whose uninhabited type leaves `emit` with no argument that
+can be constructed, and ignores the third parameter.
 
 ```rust,ignore
 pub trait Handler {
     type Event: Serialize + 'static;
     type Output: Serialize;
+    type Outcome: HandlerOutcome<Self::Output, Self::Event>;
 
     fn handle(
         &mut self,
         matches: &ArgMatches,
         ctx: &CommandContext,
         results: &mut Results<Self::Event>,
-    ) -> HandlerResult<Self::Output>;
+    ) -> Result<Self::Outcome, anyhow::Error>;
 }
 ```
 
@@ -550,10 +554,9 @@ cannot ask which representation is running or where the bytes go.
 The adapter behind a two-argument closure (`FnHandler`) sets `Event = NoEvents`;
 `EventsFnHandler` is the adapter behind a three-argument closure taking
 `&mut Results<E>`, and that closure returns `Summary<T>` — `Render` or
-`Silent`, with an exit status — rather than `Output<T>`, so a payload from a
-command that declares events does not compile. `#[handler]` picks between the
-two adapters, and between the two return types, from whether the function
-declares a `Results` parameter.
+`Silent`, with an exit status — rather than `Output<T>`. `#[handler]` picks
+between the two adapters, and between the two outcomes, from whether the
+function declares a `Results` parameter.
 
 `RunRecorder` is the framework's own retention of the same values, passed to
 the dispatch closure rather than held on the context, so a handler cannot

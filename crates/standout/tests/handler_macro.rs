@@ -464,11 +464,11 @@ fn the_generated_struct_handler_emits_through_the_channel_it_is_given() {
     let recorder = RunRecorder::new();
     let mut results = Results::recording(recorder.clone());
 
-    let output = incremental_Handler
+    let summary = incremental_Handler
         .handle(&matches, &ctx, &mut results)
         .unwrap();
 
-    assert!(matches!(output, Output::Render(false)));
+    assert!(matches!(summary, Summary::Render(false)));
     assert_eq!(recorder.records().len(), 1);
 }
 

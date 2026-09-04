@@ -1,7 +1,27 @@
-error[E0277]: a command that declares events returns a `Summary`, not an `Output`
-  --> tests/ui/emitting_command_cannot_return_a_payload.rs:12:1
+error[E0277]: a command that declares events returns `Summary<()>`, not `Output<()>`
+  --> tests/ui/emitting_command_cannot_return_a_payload.rs:38:20
    |
-12 | #[handler]
+38 |     type Outcome = Output<()>;
+   |                    ^^^^^^^^^^ the trait `HandlerOutcome<(), Step>` is not implemented for `standout_dispatch::Output<()>`
+   |
+   = note: the events carried the run's results already, so a summary is `Render` or `Silent`
+help: the trait `HandlerOutcome<(), Step>` is not implemented for `standout_dispatch::Output<()>`
+      but trait `HandlerOutcome<(), NoEvents>` is implemented for it
+  --> $WORKSPACE/crates/standout-dispatch/src/handler.rs
+   |
+   | impl<T: Serialize> HandlerOutcome<T, NoEvents> for Output<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `NoEvents`, found `Step`
+note: required by a bound in `standout_dispatch::Handler::Outcome`
+  --> $WORKSPACE/crates/standout-dispatch/src/handler.rs
+   |
+   |     type Outcome: HandlerOutcome<Self::Output, Self::Event>;
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Handler::Outcome`
+
+error[E0277]: a command that declares events returns a `Summary`, not an `Output`
+  --> tests/ui/emitting_command_cannot_return_a_payload.rs:13:1
+   |
+13 | #[handler]
    | ^^^^^^^^^^ the trait `IntoSummaryResult<standout_dispatch::Output<()>>` is not implemented for `Result<standout_dispatch::Output<()>, anyhow::Error>`
    |
    = note: the events carried the run's results already, so a summary is `Render` or `Silent`
@@ -13,20 +33,20 @@ help: the trait `IntoSummaryResult<T>` is implemented for `Result<Summary<T>, an
    = note: this error originates in the attribute macro `handler` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0308]: mismatched types
-  --> tests/ui/emitting_command_cannot_return_a_payload.rs:12:1
+  --> tests/ui/emitting_command_cannot_return_a_payload.rs:13:1
    |
-12 | #[handler]
+13 | #[handler]
    | ^^^^^^^^^^
    | |
-   | expected `Result<Output<()>, Error>`, found `Result<Output<Output<()>>, Error>`
-   | expected `Result<standout_dispatch::Output<()>, anyhow::Error>` because of return type
+   | expected `Result<Summary<()>, Error>`, found `Result<Summary<Output<()>>, Error>`
+   | expected `Result<Summary<()>, anyhow::Error>` because of return type
    |
-   = note: expected enum `Result<standout_dispatch::Output<()>, anyhow::Error>`
-              found enum `Result<standout_dispatch::Output<standout_dispatch::Output<()>>, anyhow::Error>`
+   = note: expected enum `Result<Summary<()>, anyhow::Error>`
+              found enum `Result<Summary<standout_dispatch::Output<()>>, anyhow::Error>`
    = note: this error originates in the attribute macro `handler` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0599]: no variant, associated function, or constant named `Artifact` found for enum `Summary<T>` in the current scope
-  --> tests/ui/emitting_command_cannot_return_a_payload.rs:26:17
+  --> tests/ui/emitting_command_cannot_return_a_payload.rs:27:17
    |
-26 |     Ok(Summary::Artifact(Artifact::new(vec![0])))
+27 |     Ok(Summary::Artifact(Artifact::new(vec![0])))
    |                 ^^^^^^^^ variant, associated function, or constant not found in `Summary<_>`

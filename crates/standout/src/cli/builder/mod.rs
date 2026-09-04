@@ -39,7 +39,8 @@ use super::default_command::ParseFailure;
 use super::dispatch::DispatchFn;
 use super::group::CommandRecipe;
 use super::handler::{
-    emits_events, CommandContext, Extensions, Handler, Output as HandlerOutput, Results, StreamSink,
+    emits_events, CommandContext, Extensions, Handler, HandlerOutcome, Output as HandlerOutput,
+    Results, StreamSink,
 };
 use super::help::data::{extract_help_data, extract_help_data_with_topics};
 use super::help::{
@@ -1566,7 +1567,9 @@ impl App {
             },
         ));
         let mut results = Results::<H::Event>::for_run(None, destination.clone());
-        let handled = handler.handle(matches, &ctx, &mut results);
+        let handled = handler
+            .handle(matches, &ctx, &mut results)
+            .map(HandlerOutcome::into_output);
         drop(results);
         if let Some(failure) = destination.take_failure() {
             return Err(HookError::post_output("Render error").with_source(failure));

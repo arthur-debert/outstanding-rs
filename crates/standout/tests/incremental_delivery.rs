@@ -6,8 +6,7 @@ use serde::Serialize;
 use serde_json::json;
 use standout::cli::{
     App, CommandContext, Diagnostic, DiagnosticKind, DispatchResult, EventsFnHandler, ExitStatus,
-    Handler, HandlerResult, Output, OutputKind, Results, RunErrorKind, StreamSink, Summary,
-    SummaryResult,
+    Handler, OutputKind, Results, RunErrorKind, StreamSink, Summary, SummaryResult,
 };
 use standout::{
     AmbiguousWidth, ColorMode, ColorPolicy, EmbeddedTemplates, IconMode, InputSources,
@@ -397,16 +396,17 @@ struct HandWritten {
 impl Handler for HandWritten {
     type Event = Event<'static>;
     type Output = serde_json::Value;
+    type Outcome = Summary<serde_json::Value>;
 
     fn handle(
         &mut self,
         _: &ArgMatches,
         _: &CommandContext,
         results: &mut Results<Self::Event>,
-    ) -> HandlerResult<serde_json::Value> {
+    ) -> SummaryResult<serde_json::Value> {
         *self.ran.borrow_mut() = true;
         results.emit(Event::ApplyStart { resource: "web" })?;
-        Ok(Output::Render(json!({ "add": 1 })))
+        Ok(Summary::Render(json!({ "add": 1 })))
     }
 }
 

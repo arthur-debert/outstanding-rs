@@ -279,6 +279,37 @@ impl<T: Serialize> IntoSummaryResult<T> for SummaryResult<T> {
     }
 }
 
+mod outcome {
+    pub trait Sealed {}
+}
+
+/// What `Handler::handle` may return, tied to the command's event type:
+/// `Output<T>` is an outcome only for `NoEvents`, so a command that declares
+/// events has `Summary<T>` and no payload variant to return.
+#[diagnostic::on_unimplemented(
+    message = "a command that declares events returns `Summary<{T}>`, not `Output<{T}>`",
+    note = "the events carried the run's results already, so a summary is `Render` or `Silent`"
+)]
+pub trait HandlerOutcome<T: Serialize, E: Serialize + 'static>: outcome::Sealed {
+    fn into_output(self) -> Output<T>;
+}
+
+impl<T: Serialize> outcome::Sealed for Output<T> {}
+
+impl<T: Serialize> outcome::Sealed for Summary<T> {}
+
+impl<T: Serialize> HandlerOutcome<T, NoEvents> for Output<T> {
+    fn into_output(self) -> Output<T> {
+        self
+    }
+}
+
+impl<T: Serialize, E: Serialize + 'static> HandlerOutcome<T, E> for Summary<T> {
+    fn into_output(self) -> Output<T> {
+        Output::from(self)
+    }
+}
+
 pub trait IntoHandlerResult<T: Serialize> {
     fn into_handler_result(self) -> HandlerResult<T>;
 }
@@ -758,12 +789,15 @@ pub trait Handler {
     /// [`emits_events`](crate::emits_events) reads.
     type Event: Serialize + 'static;
     type Output: Serialize;
+    /// [`Output`] for a batch command, [`Summary`] for one that declares
+    /// events: [`HandlerOutcome`] admits the first only under [`NoEvents`].
+    type Outcome: HandlerOutcome<Self::Output, Self::Event>;
     fn handle(
         &mut self,
         matches: &ArgMatches,
         ctx: &CommandContext,
         results: &mut Results<Self::Event>,
-    ) -> HandlerResult<Self::Output>;
+    ) -> Result<Self::Outcome, anyhow::Error>;
     fn expected_args(&self) -> Vec<ExpectedArg> {
         Vec::new()
     }
@@ -796,6 +830,7 @@ where
 {
     type Event = NoEvents;
     type Output = T;
+    type Outcome = Output<T>;
     fn handle(
         &mut self,
         matches: &ArgMatches,
@@ -840,15 +875,14 @@ where
 {
     type Event = E;
     type Output = T;
+    type Outcome = Summary<T>;
     fn handle(
         &mut self,
         matches: &ArgMatches,
         ctx: &CommandContext,
         results: &mut Results<E>,
-    ) -> HandlerResult<T> {
-        (self.f)(matches, ctx, results)
-            .into_summary_result()
-            .map(Output::from)
+    ) -> SummaryResult<T> {
+        (self.f)(matches, ctx, results).into_summary_result()
     }
 }
 pub struct SimpleFnHandler<F, T, R = HandlerResult<T>>
@@ -879,6 +913,7 @@ where
 {
     type Event = NoEvents;
     type Output = T;
+    type Outcome = Output<T>;
     fn handle(
         &mut self,
         matches: &ArgMatches,
