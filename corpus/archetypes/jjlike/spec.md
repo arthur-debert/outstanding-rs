@@ -14,7 +14,7 @@ of the core rendering feature.
 
 **Owning epic: not yet minted.** No parity Spec currently covers user-supplied runtime
 templates; the existing parity Specs are config layering (PAR01), the machine
-contract (PAR02), and typed command output (`docs/spec/typed-command-output.md`).
+contract (PAR02), and typed command output (`docs/spec/implemented/typed-command-output.md`).
 Epic codes are assigned by the human, so this suite deliberately does not invent one — every assertion group below is
 owned by the future runtime-templates parity epic, and assigning its code is flagged for
 that epic's grill. Until then the expected-fail markers name the gap in prose: the

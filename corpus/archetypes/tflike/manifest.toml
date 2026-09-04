@@ -53,4 +53,4 @@ cases = [
 
 [gaps]
 PAR02 = "The machine contract (docs/spec/implemented/parity-machine-contract.md): NDJSON stream mode, diagnostics as stream entries with severity and range, -detailed-exitcode's 0/2/1 vocabulary, handler-error-as-diagnostic. The diagnostic-milestone cases are its executable shape; PAR02 is done when they turn green."
-typed-command-output = "Typed command output (docs/spec/typed-command-output.md): apply_start and apply_complete as typed incremental result events on the command's stream, with human progress rendering absent under structured encodings. The progress-milestone cases were its executable shape; TERM01 closed them."
+typed-command-output = "Typed command output (docs/spec/implemented/typed-command-output.md): apply_start and apply_complete as typed incremental result events on the command's stream, with human progress rendering absent under structured encodings. The progress-milestone cases were its executable shape; TERM01 closed them."

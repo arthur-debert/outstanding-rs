@@ -13,7 +13,7 @@ The weak argument for removal is that the seam was dead: no production code in
 the workspace ever called `detect_is_tty`, so the override could not change
 what any run did. That argument alone would not justify the break, because the
 seam had a named future consumer. The typed command output Spec
-(`docs/spec/typed-command-output.md`) delivers complete human output to a pager
+(`docs/spec/implemented/typed-command-output.md`) delivers complete human output to a pager
 only when stdout is a terminal, and renders transient progress on stderr only
 when stderr is one, which is exactly a TTY detector with a test override.
 Deleting a seam that an approved Spec plans to use is churn unless something

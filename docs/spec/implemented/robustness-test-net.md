@@ -40,7 +40,7 @@ roster implemented on the blessed idioms, the CI gate, real downstreams joined â
 after the blessed surface, since corpus apps pin idioms that epic deliberately breaks;
 only its validity run and its spec-only archetype authoring, which produce no app, may
 start before the release.
-Typed command output (`docs/spec/typed-command-output.md`) depends on machine contract,
+Typed command output (`docs/spec/implemented/typed-command-output.md`) depends on machine contract,
 not merely on config layering: its incremental result events ride the model that epic
 defines. Ordering is by
 dependency, not calendar: siblings under one parent may run concurrently.

@@ -3,9 +3,8 @@
 An incremental command produces its result while it runs. This records the Rust contract
 that lets a handler produce those values — the signatures, who owns what, what order the
 values reach a consumer in, and what a failure after the first value means — for
-`docs/spec/typed-command-output.md`, which carries the reasoning and whose closed
-decisions this restates rather than reopens. Nothing here changes production behavior;
-the workstream that implements it does.
+`docs/spec/implemented/typed-command-output.md`, which carries the reasoning and whose
+closed decisions this restates rather than reopens.
 
 ## The contract
 
@@ -94,8 +93,9 @@ other data that does not cross threads.
 Events reach a consumer in emit order, each one written before `emit` returns; the
 summary follows the handler's return. Under line framing that is the handler's event
 lines, then the `result` record, then the warning entries ADR-0038 places last. Under an
-encoding without line framing it is one array of exactly those records, the events in
-order and the summary's record last, written when the command ends. The human
+encoding without line framing it is one array of exactly those records in that order,
+written when the command ends, so the array ends with the warning entries and the
+summary's `result` record sits before them. The human
 representation renders one line per event as it happens, from the command's template name
 with an `.event` suffix, then the summary from the command's own template.
 
@@ -153,8 +153,7 @@ here.
 Three forms were prototyped against the boundary in
 `crates/standout-dispatch/src/handler.rs` and its erasure into the dispatch closure in
 `crates/standout/src/cli/group.rs`, each with borrowed `ArgMatches`, a failure after
-earlier events, a post-dispatch hook and in-process capture. The prototypes are not in
-this diff; the PR reports what each compiled to.
+earlier events, a post-dispatch hook and in-process capture.
 
 A **returned iterator** cannot be `'static`, because the events are built from borrowed
 `ArgMatches`; the compiler asks for a lifetime on the returned trait object, which puts

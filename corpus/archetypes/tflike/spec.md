@@ -12,7 +12,7 @@ in two forms — the roster's `acceptance.toml` beside this spec (every case
 different epics own them:
 
 - **Diagnostic milestone** — gates **PAR02** (`docs/spec/implemented/parity-machine-contract.md`).
-- **Progress milestone** — gates typed command output (`docs/spec/typed-command-output.md`),
+- **Progress milestone** — gates typed command output (`docs/spec/implemented/typed-command-output.md`),
   whose epic code is not yet minted.
 
 Everything below is written from the CLI user's perspective and is asserted black-box
