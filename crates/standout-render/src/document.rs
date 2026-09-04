@@ -35,19 +35,45 @@ pub fn serialize_document<T: Serialize>(
     }
 }
 
-/// The `ndjson` form of a handler's rendered value: the one line
-/// `{"type":"result","data":<value>}`, without its newline.
+/// The record a run's document gives a handler's rendered value:
+/// `{"type":"result","data":<value>}`.
+pub fn result_record(data: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({ "type": "result", "data": data })
+}
+
+/// The `ndjson` form of a handler's rendered value: [`result_record`] as one
+/// line, without its newline.
 pub fn result_entry<T: Serialize>(data: &T) -> Result<String, RenderError> {
-    #[derive(Serialize)]
-    struct ResultEntry<'a, T> {
-        #[serde(rename = "type")]
-        entry_type: &'static str,
-        data: &'a T,
+    Ok(serde_json::to_string(&result_record(
+        serde_json::to_value(data)?,
+    ))?)
+}
+
+/// The document a run's records become under an encoding with no line
+/// framing: the array, in the form the framework writes a rendered value.
+pub fn serialize_record_array(
+    records: Vec<serde_json::Value>,
+    representation: Representation,
+) -> Result<String, RenderError> {
+    serialize_structured(&serde_json::Value::Array(records), representation)
+}
+
+/// The document text of `data` under a structured representation, without the
+/// trailing newline [`serialize_document`] adds: the form a rendered value
+/// takes before the framework writes it. `ndjson`'s is the `result` record.
+pub(crate) fn serialize_structured(
+    data: &serde_json::Value,
+    representation: Representation,
+) -> Result<String, RenderError> {
+    match representation {
+        Representation::Json => Ok(serde_json::to_string_pretty(data)?),
+        Representation::Yaml => Ok(serde_yaml::to_string(data)?),
+        Representation::Csv => crate::util::write_csv(data),
+        Representation::Ndjson => result_entry(data),
+        mode => Err(RenderError::OperationError(format!(
+            "{mode:?} is not a structured representation"
+        ))),
     }
-    Ok(serde_json::to_string(&ResultEntry {
-        entry_type: "result",
-        data,
-    })?)
 }
 
 /// The inverse of [`serialize_document`] for the same mode.
@@ -110,6 +136,19 @@ mod tests {
             serialize_document(&record, Representation::Csv).unwrap(),
             "name,count,note\n\"a, \"\"quoted\"\"\",2,\n"
         );
+    }
+
+    #[test]
+    fn a_record_array_is_the_line_framed_records_as_one_document() {
+        let records = vec![
+            serde_json::json!({"type": "apply_start"}),
+            result_record(serde_json::json!({"add": 1})),
+        ];
+        for mode in [Representation::Json, Representation::Yaml] {
+            let text = serialize_record_array(records.clone(), mode).unwrap();
+            let back: Vec<serde_json::Value> = deserialize_document(mode, &text).unwrap();
+            assert_eq!(back, records, "{mode:?}");
+        }
     }
 
     #[test]

@@ -386,6 +386,7 @@ impl App {
             color_policy,
             None,
             target,
+            None,
         ) {
             Ok(output) => output,
             Err(error) => return DispatchResult::Error(error),
@@ -462,6 +463,7 @@ impl App {
         sink: &StreamSink,
         warnings: &WarningBuffer,
     ) -> DispatchResult {
+        let warnings_included = matches!(dispatch_output, DispatchOutput::Records { .. });
         let (output, request, status) = match dispatch_output {
             DispatchOutput::Text {
                 formatted,
@@ -481,6 +483,26 @@ impl App {
                 ExitStatus::SUCCESS,
             ),
             DispatchOutput::Silent { status } => (RenderedOutput::Silent, None, status),
+            DispatchOutput::Records {
+                mut records,
+                status,
+            } => {
+                records.extend(crate::cli::warning_records(&warnings.snapshot()));
+                let document = match standout_render::serialize_record_array(records, output_mode) {
+                    Ok(document) => document,
+                    Err(error) => {
+                        return DispatchResult::Error(RunError::new(
+                            error.to_string(),
+                            RunErrorKind::Render,
+                        ))
+                    }
+                };
+                (
+                    RenderedOutput::Text(TextOutput::new(document.clone(), document)),
+                    None,
+                    status,
+                )
+            }
         };
 
         let mut final_output = if let Some(hooks) = hooks {
@@ -496,6 +518,11 @@ impl App {
         } else {
             output
         };
+
+        // A hook that replaced the document dropped the warning records with
+        // it, so they are the stderr block's again.
+        let warnings_included =
+            warnings_included && matches!(final_output, RenderedOutput::Text(_));
 
         // A binary payload and an artifact own the file the user named, and a
         // silent outcome writes nothing, so none of them takes the destination
@@ -573,18 +600,21 @@ impl App {
             }
         }
 
+        let handled = |text: String| {
+            DispatchResult::Handled(
+                RunOutput::command(text)
+                    .with_exit_status(status)
+                    .with_warnings_included(warnings_included),
+            )
+        };
         match final_output {
-            RenderedOutput::Text(t) => {
-                DispatchResult::Handled(RunOutput::command(t.formatted).with_exit_status(status))
-            }
+            RenderedOutput::Text(t) => handled(t.formatted),
             RenderedOutput::Binary(_, _) if status != ExitStatus::SUCCESS => DispatchResult::Error(
                 super::super::dispatch::status_without_a_carrier(status, "binary"),
             ),
             RenderedOutput::Binary(b, f) => DispatchResult::Binary(b, f),
             RenderedOutput::Artifact(_) => unreachable!("artifacts returned above"),
-            RenderedOutput::Silent => {
-                DispatchResult::Handled(RunOutput::command(String::new()).with_exit_status(status))
-            }
+            RenderedOutput::Silent => handled(String::new()),
         }
     }
 
@@ -887,7 +917,7 @@ impl App {
         }
         drop(stderr);
 
-        if !crate::cli::carries_warning_entries(result.outcome(), output_mode) {
+        if !crate::cli::warnings_delivered_on_stdout(result.outcome(), output_mode) {
             standout_render::warnings::flush_to_stderr(
                 &self.theme,
                 result.color_policy(),

@@ -257,26 +257,46 @@ fn the_human_representation_renders_each_event_then_the_summary() {
 }
 
 #[test]
-fn an_encoding_that_buffers_events_carries_none_yet_and_writes_nothing() {
-    for representation in [
-        Representation::Json,
-        Representation::Yaml,
-        Representation::Csv,
-    ] {
+fn csv_carries_no_events_yet_and_writes_nothing() {
+    let result = TestHarness::new().output_mode(Representation::Csv).run(
+        &app(),
+        command(),
+        ["app", "stream"],
+    );
+    result.assert_error_kind(RunErrorKind::Render);
+    assert!(
+        result
+            .expect_diagnostic()
+            .summary
+            .contains("standout does not build one yet"),
+        "{}",
+        result.stdout()
+    );
+}
+
+#[test]
+fn json_and_yaml_carry_the_run_as_the_array_of_the_framed_records() {
+    let framed: Vec<serde_json::Value> = TestHarness::new()
+        .output_mode(Representation::Ndjson)
+        .run(&app(), command(), ["app", "stream"])
+        .stdout()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+
+    for representation in [Representation::Json, Representation::Yaml] {
         let result = TestHarness::new().output_mode(representation).run(
             &app(),
             command(),
             ["app", "stream"],
         );
-        result.assert_error_kind(RunErrorKind::Render);
-        assert!(
-            result
-                .expect_diagnostic()
-                .summary
-                .contains("standout does not build one yet"),
-            "{representation:?}: {}",
-            result.stdout()
-        );
+        result.assert_success();
+        let document: Vec<serde_json::Value> = if representation == Representation::Yaml {
+            serde_yaml::from_str(result.stdout()).unwrap()
+        } else {
+            serde_json::from_str(result.stdout()).unwrap()
+        };
+        assert_eq!(document, framed, "{representation:?}");
     }
 }
 

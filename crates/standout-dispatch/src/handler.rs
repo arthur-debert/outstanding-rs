@@ -328,6 +328,7 @@ pub struct RunOutput {
     text: String,
     kind: SuccessKind,
     status: ExitStatus,
+    warnings_included: bool,
 }
 impl RunOutput {
     pub fn command(text: impl Into<String>) -> Self {
@@ -347,11 +348,21 @@ impl RunOutput {
             text: text.into(),
             kind,
             status: ExitStatus::SUCCESS,
+            warnings_included: false,
         }
     }
     pub fn with_exit_status(mut self, status: ExitStatus) -> Self {
         self.status = status;
         self
+    }
+    /// Marks output whose document already carries the run's warning records,
+    /// so the framework neither appends them nor renders them to stderr.
+    pub fn with_warnings_included(mut self, included: bool) -> Self {
+        self.warnings_included = included;
+        self
+    }
+    pub const fn warnings_included(&self) -> bool {
+        self.warnings_included
     }
     pub fn as_str(&self) -> &str {
         &self.text

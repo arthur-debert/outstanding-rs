@@ -32,6 +32,14 @@ pub enum DispatchOutput {
     Silent {
         status: ExitStatus,
     },
+    /// An incremental command under an encoding that carries a whole run as
+    /// one document: its retained event records, then the summary's `result`
+    /// record. The framework appends the run's warning records and encodes
+    /// the array once, at the point a batch document is written.
+    Records {
+        records: Vec<serde_json::Value>,
+        status: ExitStatus,
+    },
 }
 
 /// A binary or artifact outcome has nowhere to carry a status, so it is a render error.
@@ -105,10 +113,9 @@ pub(crate) fn reject_payload_from_an_emitting_command(
     ))
 }
 
-/// The encodings that carry a command's results as one document have no
-/// incremental form yet, so an incremental command under one is refused with
-/// this, ahead of the handler, so a mutating run never happens for a reason
-/// known before it started.
+/// CSV has no incremental form yet, so an incremental command under it is
+/// refused with this, ahead of the handler, so a mutating run never happens
+/// for a reason known before it started.
 pub(crate) fn events_under_a_document_encoding(
     command_path: &str,
     output_mode: crate::Representation,
@@ -132,7 +139,7 @@ pub(crate) fn reject_events_under_a_document_encoding(
     command_path: &str,
     output_mode: crate::Representation,
 ) -> Result<(), RunError> {
-    if !emits_events || output_mode.is_human() || output_mode.is_stream() {
+    if !emits_events || output_mode != crate::Representation::Csv {
         return Ok(());
     }
     Err(events_under_a_document_encoding(command_path, output_mode))
@@ -289,6 +296,7 @@ pub(crate) fn render_handler_output<T: Serialize>(
     color_policy: ColorPolicy,
     structured_output_projection: Option<&StructuredOutputProjection>,
     target: TargetProperties,
+    document_records: Option<Vec<serde_json::Value>>,
 ) -> Result<DispatchOutput, RunError> {
     let (output, status) = match result {
         Ok(output) => output.split_exit_status(),
@@ -324,6 +332,10 @@ pub(crate) fn render_handler_output<T: Serialize>(
             let json_data = serialize_handler_data(&data)?;
             let json_data = run_post_dispatch_hooks(json_data, matches, ctx, hooks)?;
             recorder.record(json_data.clone());
+            if let Some(mut records) = document_records {
+                records.push(standout_render::result_record(json_data));
+                return Ok(DispatchOutput::Records { records, status });
+            }
             let request = request_for(json_data)?;
             let (formatted, raw) = render_via_request(&request)?;
             Ok(DispatchOutput::Text {
@@ -332,7 +344,10 @@ pub(crate) fn render_handler_output<T: Serialize>(
                 status,
             })
         }
-        HandlerOutput::Silent => Ok(DispatchOutput::Silent { status }),
+        HandlerOutput::Silent => Ok(match document_records {
+            Some(records) => DispatchOutput::Records { records, status },
+            None => DispatchOutput::Silent { status },
+        }),
         HandlerOutput::Binary { data, filename } => Ok(DispatchOutput::Binary(data, filename)),
         HandlerOutput::Artifact(artifact) => {
             let (bytes, suggested_destination, stdout_allowed, report) = artifact.into_parts();

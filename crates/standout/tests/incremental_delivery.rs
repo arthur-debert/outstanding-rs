@@ -364,52 +364,44 @@ fn strict_mode_fails_an_event_with_an_unresolved_style_tag_before_it_is_written(
 }
 
 #[test]
-fn an_encoding_that_cannot_carry_events_refuses_before_the_handler_runs() {
-    for representation in ["json", "yaml", "csv"] {
-        let destination = Shared::default();
-        let ran = Rc::new(RefCell::new(false));
-        let handler_ran = ran.clone();
-        let app = App::builder()
-            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
-            .command_with(
-                "apply",
-                EventsFnHandler::new(
-                    move |_,
-                          _ctx,
-                          results: &mut Results<Event>|
-                          -> HandlerResult<serde_json::Value> {
-                        *handler_ran.borrow_mut() = true;
-                        results.emit(Event::ApplyStart { resource: "web" })?;
-                        Ok(Output::Render(json!({ "add": 1 })))
-                    },
-                ),
-                |cfg| cfg,
-            )
-            .unwrap()
-            .build()
-            .unwrap();
+fn csv_refuses_an_incremental_command_before_the_handler_runs() {
+    let destination = Shared::default();
+    let ran = Rc::new(RefCell::new(false));
+    let handler_ran = ran.clone();
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "apply",
+            EventsFnHandler::new(
+                move |_, _ctx, results: &mut Results<Event>| -> HandlerResult<serde_json::Value> {
+                    *handler_ran.borrow_mut() = true;
+                    results.emit(Event::ApplyStart { resource: "web" })?;
+                    Ok(Output::Render(json!({ "add": 1 })))
+                },
+            ),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
 
-        let outcome = app
-            .run_with_sink(
-                command(),
-                ["app", &format!("--output={representation}"), "apply"],
-                target(),
-                ColorPolicy::Never,
-                InputSources::from_process(),
-                StreamSink::new(destination.clone()),
-            )
-            .into_outcome();
+    let outcome = app
+        .run_with_sink(
+            command(),
+            ["app", "--output=csv", "apply"],
+            target(),
+            ColorPolicy::Never,
+            InputSources::from_process(),
+            StreamSink::new(destination.clone()),
+        )
+        .into_outcome();
 
-        assert!(
-            render_error(&outcome).contains("standout does not build one yet"),
-            "{representation}"
-        );
-        assert!(
-            !*ran.borrow(),
-            "{representation}: a command that cannot be carried never runs"
-        );
-        assert!(destination.0.borrow().is_empty(), "{representation}");
-    }
+    assert!(render_error(&outcome).contains("standout does not build one yet"));
+    assert!(
+        !*ran.borrow(),
+        "a command that cannot be carried never runs"
+    );
+    assert!(destination.0.borrow().is_empty());
 }
 
 #[test]
@@ -494,30 +486,25 @@ fn hand_written_run(args: &[&str], handler: HandWritten, destination: Shared) ->
 }
 
 #[test]
-fn a_hand_written_emitter_is_refused_before_it_runs_by_an_encoding_that_cannot_carry_events() {
-    for representation in ["json", "yaml", "csv"] {
-        let destination = Shared::default();
-        let ran = Rc::new(RefCell::new(false));
-        let outcome = hand_written_run(
-            &["app", &format!("--output={representation}"), "apply"],
-            HandWritten {
-                ran: ran.clone(),
-                emit: true,
-                output: || Output::Render(json!({ "add": 1 })),
-            },
-            destination.clone(),
-        );
+fn a_hand_written_emitter_is_refused_before_it_runs_by_csv() {
+    let destination = Shared::default();
+    let ran = Rc::new(RefCell::new(false));
+    let outcome = hand_written_run(
+        &["app", "--output=csv", "apply"],
+        HandWritten {
+            ran: ran.clone(),
+            emit: true,
+            output: || Output::Render(json!({ "add": 1 })),
+        },
+        destination.clone(),
+    );
 
-        assert!(
-            render_error(&outcome).contains("standout does not build one yet"),
-            "{representation}"
-        );
-        assert!(
-            !*ran.borrow(),
-            "{representation}: a command that cannot be carried never runs"
-        );
-        assert!(destination.0.borrow().is_empty(), "{representation}");
-    }
+    assert!(render_error(&outcome).contains("standout does not build one yet"));
+    assert!(
+        !*ran.borrow(),
+        "a command that cannot be carried never runs"
+    );
+    assert!(destination.0.borrow().is_empty());
 }
 
 #[test]

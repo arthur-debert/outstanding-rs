@@ -148,14 +148,9 @@ fn serialize_structured(
     data: &serde_json::Value,
     format: Representation,
 ) -> Result<RenderResult, RenderError> {
-    let output = match format {
-        Representation::Json => serde_json::to_string_pretty(data)?,
-        Representation::Yaml => serde_yaml::to_string(data)?,
-        Representation::Csv => crate::util::write_csv(data)?,
-        Representation::Ndjson => crate::document::result_entry(data)?,
-        _ => unreachable!("serialize_structured requires a structured representation"),
-    };
-    Ok(RenderResult::plain(output))
+    Ok(RenderResult::plain(crate::document::serialize_structured(
+        data, format,
+    )?))
 }
 
 fn render_from_request(request: &RenderRequest) -> Result<RenderResult, RenderError> {

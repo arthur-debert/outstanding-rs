@@ -8,12 +8,16 @@
 //!   with the value bound to `event`, and writes one flushed line per event,
 //!   on a terminal and into a pipe alike;
 //! - line framing writes the value as the handler produced it, compact JSON on
-//!   its own line, with the discriminator the application gave it.
+//!   its own line, with the discriminator the application gave it;
+//! - an encoding that carries a whole run as one document writes no event
+//!   while the command runs, and retains each record instead, so the caller
+//!   takes them with [`EventDestination::take_document_records`] once the
+//!   handler returns and writes the one array the run ends in. A run that
+//!   fails never asks for them, which is how nothing partial goes out.
 //!
-//! A representation that carries a command's results as one document has no
-//! incremental form, so it has no branch here: dispatch entry refuses an
-//! incremental command under one before the handler runs, and whether a
-//! command is incremental follows from its `Handler::Event` type.
+//! CSV is the encoding with no branch here yet: dispatch entry refuses an
+//! incremental command under it before the handler runs, and whether a command
+//! is incremental follows from its `Handler::Event` type.
 //!
 //! Every reason an event does not reach the destination — a missing event
 //! template, a render failure, an unresolved style tag under strict mode, a
@@ -55,6 +59,12 @@ fn named_event_template(name: &str) -> standout_render::TemplateRef {
     standout_render::TemplateRef::Named(format!("{name}.event"))
 }
 
+/// The encodings that carry a whole run as one document, so an event is
+/// retained until the command ends rather than written as it arrives.
+pub(crate) fn retains_events(representation: Representation) -> bool {
+    matches!(representation, Representation::Json | Representation::Yaml)
+}
+
 pub(crate) struct EventContext {
     pub command_path: String,
     pub template: Option<standout_render::TemplateRef>,
@@ -80,6 +90,7 @@ pub(crate) struct EventDestination {
     /// varies only the value bound to `event`.
     request: Option<RefCell<RenderRequest>>,
     failure: RefCell<Option<RunError>>,
+    retained: Option<RefCell<Vec<serde_json::Value>>>,
 }
 
 impl EventDestination {
@@ -111,12 +122,23 @@ impl EventDestination {
             warnings: context.warnings,
             request,
             failure: RefCell::new(None),
+            retained: retains_events(context.representation).then(|| RefCell::new(Vec::new())),
         }
     }
 
     /// The framework's own reason the run cannot stand, if an event met one.
     pub(crate) fn take_failure(&self) -> Option<RunError> {
         self.failure.borrow_mut().take()
+    }
+
+    /// The event records this run retained, in emit order, or `None` when the
+    /// representation already wrote each event as it arrived. Taking them
+    /// empties the destination, so a caller that asks twice gets the records
+    /// once.
+    pub(crate) fn take_document_records(&self) -> Option<Vec<serde_json::Value>> {
+        self.retained
+            .as_ref()
+            .map(|retained| std::mem::take(&mut *retained.borrow_mut()))
     }
 
     /// Strict mode's no-output-on-failure rule reaches each event: the render
@@ -151,6 +173,10 @@ impl EventDestination {
     }
 
     fn write(&self, event: &serde_json::Value) -> Result<(), EmitError> {
+        if let Some(retained) = self.retained.as_ref() {
+            retained.borrow_mut().push(event.clone());
+            return Ok(());
+        }
         if self.representation.is_human() {
             let text = self.render(event)?;
             return Ok(self.sink.write_line(text.as_bytes())?);
@@ -177,6 +203,6 @@ impl EventSink for EventDestination {
     }
 
     fn is_open(&self) -> bool {
-        self.sink.is_open()
+        self.retained.is_some() || self.sink.is_open()
     }
 }

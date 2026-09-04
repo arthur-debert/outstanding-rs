@@ -14,10 +14,14 @@
 //! Under `ndjson` the document is one compact line, and it is the only
 //! representation whose warnings are stdout entries too:
 //! [`emit_warning_entries`] writes each as a `severity: warning` diagnostic of
-//! kind `framework` after the result or the failure. The single-document
-//! encodings keep warnings as stderr prose, which
+//! kind `framework` after the result or the failure. A single-document
+//! encoding keeps warnings as stderr prose, which
 //! `standout_render::warnings::flush_to_stderr` owns, and so does a `NoMatch`
-//! handoff under every representation, since the framework then owns no stdout.
+//! handoff under every representation, since the framework then owns no
+//! stdout. The exception is an incremental command under `json` or `yaml`,
+//! whose array already ends in the same warning records line framing would
+//! have written: [`warnings_delivered_on_stdout`] is the question both callers
+//! ask before rendering anything to stderr.
 //! Both callers write the `ndjson` bytes through the run's `StreamSink`, the
 //! destination the handler's entries already went to, so an output file
 //! override that retargeted the sink receives the whole stream.
@@ -118,6 +122,28 @@ pub fn carries_diagnostic_document(output_mode: Representation) -> bool {
 /// Only under `ndjson`, and never for a `NoMatch` handoff.
 pub fn carries_warning_entries(result: &DispatchResult, output_mode: Representation) -> bool {
     output_mode.is_stream() && !matches!(result, DispatchResult::NoMatch(_))
+}
+
+/// Whether the framework has already put the run's warnings on stdout: as the
+/// `ndjson` entries after the document, or inside the one array an incremental
+/// command's `json` or `yaml` run writes. Nothing renders them to stderr when
+/// it has.
+pub fn warnings_delivered_on_stdout(result: &DispatchResult, output_mode: Representation) -> bool {
+    carries_warning_entries(result, output_mode)
+        || matches!(result, DispatchResult::Handled(output) if output.warnings_included())
+}
+
+/// The records [`emit_warning_entries`] writes as lines, as data, for the
+/// encoding that carries them inside one document instead.
+pub fn warning_records(warnings: &[String]) -> Vec<serde_json::Value> {
+    warnings
+        .iter()
+        .map(|warning| {
+            let mut entry = Diagnostic::warning(warning.clone());
+            entry.kind = DiagnosticKind::Framework;
+            serde_json::to_value(&entry).expect("a diagnostic is plain data")
+        })
+        .collect()
 }
 
 /// A no-op unless `carries_warning_entries`; `Err` is a final-write failure on stdout.

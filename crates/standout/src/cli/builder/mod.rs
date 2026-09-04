@@ -1577,6 +1577,9 @@ impl App {
         if let Some(failure) = destination.take_failure() {
             return Err(HookError::post_output("Render error").with_source(failure));
         }
+        let document_records = emits_events::<H::Event>()
+            .then(|| destination.take_document_records())
+            .flatten();
         let (output, status) = match handled {
             Ok(output) => output.split_exit_status(),
             Err(e) => return Err(HookError::post_output("Handler error").with_source(e)),
@@ -1605,28 +1608,42 @@ impl App {
                     json_data = hooks.run_post_dispatch(matches, &ctx, json_data)?;
                 }
 
-                let request = RenderRequest {
-                    data: json_data,
-                    template: template.clone(),
-                    theme: self.theme.clone(),
-                    format: output_mode,
-                    color_policy,
-                    target,
-                    engine: self.template_engine.clone(),
-                    registry: self.template_registry.clone(),
-                    context_registry: Some(self.context_registry.clone()),
-                    csv_projection: self.csv_projection_for(path),
-                    extras: HashMap::new(),
-                    warnings: Some(warnings),
-                };
-                match render_request_split(&request) {
-                    Ok(rendered) => {
-                        RenderedOutput::Text(TextOutput::new(rendered.formatted, rendered.raw))
+                match document_records {
+                    Some(mut records) => {
+                        records.push(standout_render::result_record(json_data));
+                        run_document(records, output_mode)?
                     }
-                    Err(e) => return Err(HookError::post_output("Render error").with_source(e)),
+                    None => {
+                        let request = RenderRequest {
+                            data: json_data,
+                            template: template.clone(),
+                            theme: self.theme.clone(),
+                            format: output_mode,
+                            color_policy,
+                            target,
+                            engine: self.template_engine.clone(),
+                            registry: self.template_registry.clone(),
+                            context_registry: Some(self.context_registry.clone()),
+                            csv_projection: self.csv_projection_for(path),
+                            extras: HashMap::new(),
+                            warnings: Some(warnings),
+                        };
+                        match render_request_split(&request) {
+                            Ok(rendered) => RenderedOutput::Text(TextOutput::new(
+                                rendered.formatted,
+                                rendered.raw,
+                            )),
+                            Err(e) => {
+                                return Err(HookError::post_output("Render error").with_source(e))
+                            }
+                        }
+                    }
                 }
             }
-            HandlerOutput::Silent => RenderedOutput::Silent,
+            HandlerOutput::Silent => match document_records {
+                Some(records) => run_document(records, output_mode)?,
+                None => RenderedOutput::Silent,
+            },
             HandlerOutput::Binary { data, filename } => RenderedOutput::Binary(data, filename),
             HandlerOutput::Artifact(artifact) => {
                 let (bytes, suggested_destination, stdout_allowed, report) = artifact.into_parts();
@@ -1685,6 +1702,21 @@ impl App {
             .collect();
         super::app::verify_recursive(cmd, &expected_args, &[], true)
     }
+}
+
+/// The one document an incremental command ends in under an encoding that
+/// carries a whole run. `run_command` owns no stdout of its own, so the run's
+/// warnings stay the caller's business and no warning record joins the array.
+fn run_document(
+    records: Vec<serde_json::Value>,
+    output_mode: crate::Representation,
+) -> Result<RenderedOutput, HookError> {
+    let document = standout_render::serialize_record_array(records, output_mode)
+        .map_err(|e| HookError::post_output("Render error").with_source(e))?;
+    Ok(RenderedOutput::Text(TextOutput::new(
+        document.clone(),
+        document,
+    )))
 }
 
 fn claims_help(cmd: &Command) -> bool {
