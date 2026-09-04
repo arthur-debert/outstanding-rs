@@ -527,7 +527,7 @@ App::builder()
 
 ```rust
 App::builder()
-    .no_pager_flag()  // Remove it; the user then has no way to decline paging
+    .no_pager_flag()  // Remove it; the user then declines paging only by unsetting the variable
 ```
 
 Which commands may page is a per-command declaration, not a builder call: see

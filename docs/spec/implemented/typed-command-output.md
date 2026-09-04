@@ -22,7 +22,11 @@
 >   summary for a command that returns one. ADR-0041's typed
 >   `TestResult::events::<E>()` was not built, so a test compares
 >   `serde_json::Value`s rather than deserializing into its own event type.
-> - #519 has not run.
+> - WS08 (#519) has not run in full. The documentation, the help text and this
+>   Spec's filing as implemented are done; what it still owes is the adopter half — the corpus
+>   applications replacing their own `--no-pager` flag and `PAGER` reading with
+>   the framework's, one compiled reference command covering the batch and
+>   incremental combinations, and the blind run that re-accepts `systemdlike`.
 
 ## Problem
 
