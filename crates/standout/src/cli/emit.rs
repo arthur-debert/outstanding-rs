@@ -7,28 +7,21 @@
 //! stderr carries nothing the framework wrote for it; under the human
 //! representation the failure is prose on stderr. An `App` or `External`
 //! failure writes its verbatim bytes to stderr under every representation and
-//! adds the stdout document in the structured ones. A status a successful handler declared
-//! (`Output::with_exit_status`) changes none of this: the outcome is
-//! `Handled`, emitted as any success is, and only the process status differs.
+//! adds the stdout document in the structured ones. A status a successful
+//! handler declared (`Output::with_exit_status`) changes none of this: the
+//! outcome is `Handled`, emitted as any success is.
 //!
 //! Under `ndjson` the document is one compact line, and it is the only
 //! representation whose warnings are stdout entries too:
 //! [`emit_warning_entries`] writes each as a `severity: warning` diagnostic of
-//! kind `framework` after the result or the failure. A single-document
-//! encoding keeps warnings as stderr prose, which
+//! kind `framework` after the result or the failure. A single-document encoding
+//! keeps warnings as stderr prose, which
 //! `standout_render::warnings::flush_to_stderr` owns, and so does a `NoMatch`
-//! handoff under every representation, since the framework then owns no
-//! stdout. The exception is an incremental command under `json` or `yaml`,
-//! whose array already ends in the same warning records line framing would
-//! have written: [`warnings_delivered_on_stdout`] is the question both callers
-//! ask before rendering anything to stderr.
-//! Both callers write the `ndjson` bytes through the run's `StreamSink`, the
-//! destination the handler's entries already went to, so an output file
-//! override that retargeted the sink receives the whole stream.
-//!
-//! The CSV form of the diagnostic is a `CsvProjection` over the document:
-//! one row whose `range` is three columns, `range_filename`, `range_line` and
-//! `range_column`, empty when unset.
+//! handoff. The exception is an incremental command under `json` or `yaml`,
+//! whose array already ends in those warning records:
+//! [`warnings_delivered_on_stdout`] is the question both callers ask before
+//! rendering anything to stderr. Both write the `ndjson` bytes through the run's
+//! `StreamSink`, so an output file override receives the whole stream.
 
 use std::io::Write;
 
@@ -126,8 +119,7 @@ pub fn carries_warning_entries(result: &DispatchResult, output_mode: Representat
 
 /// Whether the framework has already put the run's warnings on stdout: as the
 /// `ndjson` entries after the document, or inside the one array an incremental
-/// command's `json` or `yaml` run writes. Nothing renders them to stderr when
-/// it has.
+/// command's `json` or `yaml` run writes. Nothing renders them to stderr then.
 pub fn warnings_delivered_on_stdout(result: &DispatchResult, output_mode: Representation) -> bool {
     carries_warning_entries(result, output_mode)
         || matches!(result, DispatchResult::Handled(output) if output.warnings_included())

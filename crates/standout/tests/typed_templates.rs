@@ -950,8 +950,6 @@ fn build_fails_for_an_incremental_command_with_only_a_summary_template() {
     );
 }
 
-/// A handler that returns `Output::Silent` renders no summary, so the event
-/// template alone is the whole presentation.
 #[test]
 fn an_incremental_command_builds_with_only_an_event_template() {
     incremental_show_app(EVENT_ONLY_TEMPLATES).build().unwrap();

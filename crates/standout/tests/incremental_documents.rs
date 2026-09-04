@@ -145,9 +145,7 @@ fn run_hooked(ending: Ending, hook: PostOutput, representation: Representation) 
         .run(&app(ending, hook), command(), ["app", "apply"])
 }
 
-/// The records a reader takes from the run's stdout, whatever encoding carried
-/// them: the `ndjson` stream parsed line by line, and every other encoding's
-/// one array parsed as a whole.
+/// `ndjson` is parsed line by line, every other encoding as one array.
 fn records(result: &TestResult) -> Vec<Value> {
     match result.output_mode() {
         Representation::Ndjson => result
@@ -162,8 +160,6 @@ fn records(result: &TestResult) -> Vec<Value> {
 
 const DOCUMENT_ENCODINGS: [Representation; 2] = [Representation::Json, Representation::Yaml];
 
-/// The records a successful two-resource run puts on stdout under any JSON-shaped
-/// encoding: the four events, then the summary in the machine contract's envelope.
 fn stream_records() -> Vec<Value> {
     vec![
         json!({"type": "apply_start", "resource": "web"}),
@@ -282,8 +278,7 @@ fn a_post_output_hook_that_changes_only_raw_keeps_its_output() {
     }
 }
 
-/// The destination the run writes through, readable by the handler that is
-/// still emitting into it.
+/// Readable by the handler that is still emitting into it.
 #[derive(Clone, Default)]
 struct Watched(std::rc::Rc<std::cell::RefCell<Vec<u8>>>);
 
@@ -487,8 +482,6 @@ fn result_reports_the_same_events_and_summary_under_every_representation() {
     }
 }
 
-/// The rows the run's events become under CSV: the flat-record header of the
-/// event keys, one row per event, no summary and no warning.
 const EVENT_ROWS: &str = "type,resource\n\
                           apply_start,web\n\
                           apply_complete,web\n\
@@ -546,8 +539,6 @@ fn the_output_file_receives_the_csv_document_and_stdout_stays_empty() {
     assert_eq!(result.delivery().path(), Some(path.as_path()));
 }
 
-/// The events an application gives CSV can be nested; the run then fails the
-/// way a nested batch value does, with the document never written.
 fn nested_event_app() -> App {
     App::builder()
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
@@ -640,8 +631,6 @@ fn result_reports_the_same_events_and_summary_under_csv() {
     assert_eq!(csv.result(), Some(&json!({ "add": 2 })));
 }
 
-/// A summary template an emitting command has no use for: CSV takes its rows
-/// from the events, so the run has them however the summary is configured.
 #[derive(Clone, Copy)]
 enum NoSummaryTemplate {
     Silent,
@@ -699,7 +688,6 @@ fn a_command_with_no_summary_template_still_has_its_csv_rows() {
     }
 }
 
-/// The human render of the same run: one line per event, then the summary.
 const HUMAN_LINES: &str = "apply_start web\n\
                            apply_complete web\n\
                            apply_start db\n\

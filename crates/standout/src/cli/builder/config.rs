@@ -13,10 +13,8 @@ impl AppBuilder {
         self
     }
 
-    /// The application's own name, which every entry point reads the same way
-    /// — the argv path, `dispatch` and `run_command` alike. An application
-    /// that names itself is paged by `<NAME>_PAGER` before `PAGER`; one that
-    /// does not is paged by `PAGER` alone.
+    /// The application's own name. An application that names itself is paged by
+    /// `<NAME>_PAGER` before `PAGER`; one that does not is paged by `PAGER`.
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -136,8 +134,8 @@ impl AppBuilder {
         self
     }
 
-    /// Removes the flag that suppresses paging, leaving the application no way
-    /// to turn a resolved pager off for one invocation.
+    /// Removes the flag that suppresses paging, leaving no way to turn a
+    /// resolved pager off for one invocation.
     pub fn no_pager_flag(mut self) -> Self {
         self.pager_flag = None;
         self

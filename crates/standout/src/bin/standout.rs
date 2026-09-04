@@ -1272,8 +1272,8 @@ fn sample_command_args(spec: &ProjectSpec, primary_value: &str) -> Vec<String> {
     args
 }
 
-/// The chained `TestHarness` setup calls the samples need, in order. The caller
-/// joins them: rustfmt keeps a single-call chain on one line and breaks a longer one.
+/// The chained `TestHarness` setup calls the samples need, in order, for the
+/// caller to join.
 fn harness_setup_calls(spec: &ProjectSpec, primary_value: &str) -> Vec<String> {
     let mut calls = Vec::new();
     for (index, input) in spec.inputs.iter().enumerate() {
@@ -1303,8 +1303,8 @@ fn harness_expression(calls: &[String]) -> String {
     }
 }
 
-/// The harness binding and the `run` call, as two statements: a separate
-/// binding keeps the chain one call long, which rustfmt formats predictably.
+/// The harness binding and the `run` call, as two statements: a one-call chain
+/// is what rustfmt formats predictably.
 fn generated_harness_run(spec: &ProjectSpec, primary_value: &str, args: &[String]) -> String {
     let harness = harness_expression(&harness_setup_calls(spec, primary_value));
     let inline_args = format!("&app, cli::command(), [{}]", args.join(", "));

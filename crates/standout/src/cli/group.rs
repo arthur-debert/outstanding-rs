@@ -45,14 +45,12 @@ pub(crate) trait CommandRecipe {
     fn take_hooks(&mut self) -> Option<Hooks>;
 
     /// True when the command's handler declares that it produces its result
-    /// while it runs, so build-time template validation can require the
-    /// `<name>.event` template it will render each event from.
+    /// while it runs, so the build can require its `<name>.event` template.
     fn emits_events(&self) -> bool {
         false
     }
 
-    /// True when the application marked the command's complete human output
-    /// as one the user may read through a pager.
+    /// True when the application marked the command's human output pageable.
     fn pageable(&self) -> bool {
         false
     }
@@ -122,7 +120,7 @@ where
                 Results::<H::Event>::for_run(Some(recorder.clone()), destination.clone());
             let result = handler.borrow_mut().handle(matches, ctx, &mut results);
             // An event the framework could not carry outranks whatever the
-            // handler went on to return, including a swallowed `emit` error.
+            // handler went on to return, a swallowed `emit` error included.
             if let Some(failure) = destination.take_failure() {
                 return Err(failure);
             }
@@ -535,9 +533,9 @@ impl<H> CommandConfig<H> {
         self
     }
 
-    /// Marks the command's complete human output as pageable. Eligibility
-    /// only: the framework still pages nothing unless the run is batch human
-    /// output on a terminal that the environment names a pager for.
+    /// Marks the command's complete human output as pageable. Eligibility only:
+    /// the framework pages nothing unless the run is batch human output on a
+    /// terminal the environment names a pager for.
     pub fn pageable(mut self) -> Self {
         self.pageable = true;
         self

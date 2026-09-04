@@ -400,10 +400,8 @@ fn a_normal_invocation_is_untouched_through_run() {
     result.assert_stdout_eq("range=main..HEAD");
 }
 
-/// The two cases that cross the run's color policy against the destination.
-/// App-managed help renders through the same policy as command output, so an
-/// explicit policy has to outrank what the destination reports. Both assert on
-/// the raw bytes: `stdout_plain()` strips exactly the difference under test.
+/// Both assert on the raw bytes: `stdout_plain()` strips exactly the difference
+/// under test.
 #[test]
 #[serial]
 fn an_always_policy_colors_help_on_a_destination_that_is_not_a_terminal() {

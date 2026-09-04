@@ -645,11 +645,9 @@ impl DispatchResult {
     }
 }
 pub trait Handler {
-    /// The type of the values the command produces while it runs.
+    /// The type of the values the command produces while it runs, or
     /// [`NoEvents`] for a command that produces none, which is what
-    /// [`emits_events`](crate::emits_events) reads to decide whether this is
-    /// an incremental command. `'static` because an associated type carries no
-    /// lifetime from `handle`'s parameters.
+    /// [`emits_events`](crate::emits_events) reads.
     type Event: Serialize + 'static;
     type Output: Serialize;
     fn handle(
@@ -699,9 +697,8 @@ where
         (self.f)(matches, ctx).into_handler_result()
     }
 }
-/// The adapter behind a three-argument closure: the third parameter is the
-/// command's typed results channel, so `Event` is the closure's own event type
-/// rather than [`NoEvents`].
+/// The adapter behind a three-argument closure, whose third parameter is the
+/// command's typed results channel, so `Event` is the closure's event type.
 pub struct EventsFnHandler<F, E, T, R = HandlerResult<T>>
 where
     E: Serialize + 'static,

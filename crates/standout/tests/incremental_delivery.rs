@@ -33,8 +33,7 @@ fn command() -> Command {
     Command::new("app").subcommand(Command::new("apply"))
 }
 
-/// The handler reads the destination between emits; `seen` holds what had
-/// arrived when each `emit` returned.
+/// `seen` holds what had arrived when each `emit` returned.
 fn app(seen: Rc<RefCell<Vec<String>>>, written: Rc<RefCell<Vec<u8>>>) -> App {
     App::builder()
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
@@ -210,9 +209,6 @@ fn a_reader_that_leaves_lets_the_handler_finish_and_keeps_the_command_s_status()
     );
 }
 
-/// The whole point of the payload rule: an incremental command's events are
-/// already on the destination, so it renders and stays silent, and never hands
-/// back a second document.
 fn payload_command<T>(
     templates: &'static [(&'static str, &'static str)],
     emits: usize,
@@ -439,9 +435,6 @@ fn an_emit_failure_the_handler_swallows_still_fails_the_run() {
     assert!(destination.0.borrow().is_empty());
 }
 
-/// A hand-written `Handler`, which sets its `Event` type and nothing else:
-/// what makes the command an incremental one is that type, so there is no
-/// second declaration for this handler to leave at a default.
 struct HandWritten {
     ran: Rc<RefCell<bool>>,
     emit: bool,

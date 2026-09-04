@@ -6,26 +6,12 @@
 //! opposed to operational messages about the run.
 //!
 //! [`Results`] carries what retains a value and what writes it behind an `Rc`,
-//! so it needs no lifetime parameter and `Handler::handle` gains none. A batch
-//! command sets `Handler::Event` to [`NoEvents`], whose uninhabited type leaves
-//! `emit` with no argument that can be constructed.
-//!
+//! so it needs no lifetime parameter and `Handler::handle` gains none.
 //! [`RunRecorder`] retains each value as data whatever representation the run
-//! selected, and carries the run's [`Delivery`] decision, so a test asserts on
-//! the values and on the rendered bytes separately; the process edge installs
-//! [`RunRecorder::summary_only`] instead, which writes each event and keeps
-//! none, so a long run costs no memory for the events nobody reads back.
-//! [`EventSink`] is the other
-//! half: the representation-specific destination that renders or frames the
-//! value and writes it before `emit` returns. The consuming framework
-//! implements it, because the human representation of an event is a template
-//! render and this crate does not render.
-//!
-//! `emit` serializes once and hands the same [`serde_json::Value`] to both,
-//! the sink first: a value the destination refused fails the emit and is not
-//! retained, so what `results()` reports is what a reader could have seen. It
-//! skips serializing only when there is nothing to retain and nothing open to
-//! write to, which is what a sink whose reader went away reports.
+//! selected, so a test asserts on the values and on the rendered bytes
+//! separately. [`EventSink`] is the representation-specific destination the
+//! consuming framework implements, because the human representation of an event
+//! is a template render and this crate does not render.
 
 use serde::Serialize;
 use std::any::TypeId;
@@ -40,9 +26,7 @@ use std::rc::Rc;
 pub enum NoEvents {}
 
 /// Whether a command whose `Handler::Event` is `E` produces its result while
-/// it runs. [`NoEvents`] is the type that says it does not, and every other
-/// event type says it does, so the fact is the handler's own signature rather
-/// than a separate declaration that can disagree with it.
+/// it runs: false for [`NoEvents`] and true for every other event type.
 pub fn emits_events<E: 'static>() -> bool {
     TypeId::of::<E>() != TypeId::of::<NoEvents>()
 }
@@ -59,9 +43,8 @@ pub enum EmitError {
     Write(#[from] std::io::Error),
 }
 
-/// Where the run's rendered bytes went. `Pager` carries the shell word list
-/// the environment named, decided without starting anything, so a test reads
-/// the decision back off a run that never had a terminal.
+/// Where the run's rendered bytes went. `Pager` carries the shell word list the
+/// environment named, decided without starting the pager.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Delivery {
     #[default]
@@ -112,16 +95,13 @@ impl Default for RunRecorder {
 }
 
 impl RunRecorder {
-    /// Retains every value the run produces, events included, for an entry
-    /// point that hands them back through `results()`.
+    /// Retains every value the run produces, events included.
     pub fn new() -> Self {
         Self::with_event_retention(true)
     }
 
-    /// Retains the summary and the delivery decision and drops each event
-    /// instead of keeping it. The process edge installs this one: it writes
-    /// every event and returns none, so a run whose events nobody reads back
-    /// costs memory for one value rather than for its whole length.
+    /// Retains the summary and the delivery decision and drops each event, so a
+    /// run whose events nobody reads back costs memory for one value.
     pub fn summary_only() -> Self {
         Self::with_event_retention(false)
     }
@@ -138,7 +118,6 @@ impl RunRecorder {
         self.0.borrow_mut().records.push(value);
     }
 
-    /// Whether an emitted event is worth serializing for retention.
     pub fn retains_events(&self) -> bool {
         self.0.borrow().retain_events
     }
@@ -202,10 +181,9 @@ impl<E: Serialize> Results<E> {
         }
     }
 
-    /// Returns once the value has been written and retained; fails when it
-    /// does not serialize, does not render, or cannot be written. The write
-    /// comes first, so a value the destination refused is not one `results()`
-    /// reports the run as having produced.
+    /// Returns once the value has been written and retained; fails when it does
+    /// not serialize, does not render, or cannot be written. The write comes
+    /// first, so a value the destination refused is never retained.
     pub fn emit(&mut self, event: E) -> Result<(), EmitError> {
         let retaining = self
             .recorder
@@ -285,8 +263,6 @@ mod tests {
         assert_eq!(sink.values.borrow().len(), 1);
     }
 
-    /// Serializing it at all is the failure, so a channel that reports success
-    /// on it never asked for the bytes.
     struct Unserializable;
 
     impl Serialize for Unserializable {

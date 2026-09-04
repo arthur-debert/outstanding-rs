@@ -3,12 +3,10 @@
 //!
 //! The command comes from the environment only — `<APP>_PAGER`, then `PAGER`
 //! — so no configuration file can name a program the framework will execute.
-//! `<APP>` is the name the application gave the builder, so an application
-//! that never named itself is paged by `PAGER` alone.
-//! An unset variable and an empty winning value both mean "do not page":
-//! there is no built-in `less` or `more` to fall back to. The value is a
-//! shell word list, not a program name, so it runs through `sh -c`; Windows
-//! has no such shell and never pages.
+//! `<APP>` is the name the application gave the builder. An unset variable and
+//! an empty winning value both mean "do not page": there is no built-in `less`
+//! or `more` to fall back to. The value is a shell word list, not a program
+//! name, so it runs through `sh -c`; Windows has no such shell and never pages.
 //!
 //! `page` reports which of three things happened rather than deciding for the
 //! caller: the pager read the bytes, it could not start (the caller still owes
@@ -180,8 +178,6 @@ mod tests {
         assert!(child_env(|_| true).is_empty());
     }
 
-    /// Windows has no `sh` to run the command through, so `resolve` answers
-    /// `None` whatever the environment names.
     #[cfg(windows)]
     #[test]
     #[serial_test::serial]

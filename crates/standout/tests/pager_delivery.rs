@@ -38,8 +38,6 @@ fn command() -> Command {
         .subcommand(Command::new("status"))
 }
 
-/// `log` is the pageable batch command, `apply` the pageable incremental one
-/// and `status` the batch command the application never marked.
 fn app() -> App {
     App::builder()
         .name("myapp")
@@ -76,8 +74,6 @@ fn app() -> App {
         .unwrap()
 }
 
-/// A terminal target with `MYAPP_PAGER` naming a pager and `PAGER` out of the
-/// way, which is every condition the decision needs beyond the invocation.
 /// `MYAPP` is the name the application gave the builder, not clap's.
 fn on_a_terminal() -> TestHarness {
     TestHarness::new()
@@ -188,10 +184,6 @@ fn an_environment_naming_no_pager_pages_nothing() {
     assert_eq!(result.delivery(), &Delivery::Stdout);
 }
 
-/// The decision is taken on what the post-output hooks returned, not on what
-/// the handler rendered: a hook that turns the page into a payload leaves the
-/// run delivering to stdout, and one that rewrites the text pages the
-/// rewrite.
 #[test]
 #[serial]
 fn a_post_output_hook_decides_what_there_is_to_page() {
@@ -259,10 +251,6 @@ fn help_reports_the_same_decision_a_command_does() {
     assert_eq!(word.delivery(), &Delivery::Pager(PAGER.to_string()));
 }
 
-/// The strict-style check runs after the help page is rendered and replaces it
-/// with a render error. The delivery is recorded on the outcome that stands
-/// after it, so the run reports the stdout that error goes to rather than the
-/// pager the page it replaced would have gone to.
 #[test]
 #[serial]
 fn a_help_page_the_strict_style_check_rejects_pages_nothing() {
@@ -289,9 +277,6 @@ fn a_help_page_the_strict_style_check_rejects_pages_nothing() {
     assert_eq!(result.delivery(), &Delivery::Stdout);
 }
 
-/// The decision is taken in `resolve_run`, which every entry point goes
-/// through, so the in-process `dispatch` reports what the argv path reports
-/// for one target instead of never reporting a pager at all.
 #[test]
 #[serial]
 fn dispatch_reports_the_decision_the_argv_path_reports() {

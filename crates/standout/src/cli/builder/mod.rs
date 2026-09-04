@@ -158,9 +158,6 @@ pub(crate) fn refresh_named_template(
     }
 }
 
-/// A command that produces its result while it runs renders every event from
-/// `<name>.event`, so the template is required at build time rather than
-/// discovered on the first event.
 fn missing_event_template_message(
     command_path: &str,
     template_name: &str,
@@ -723,11 +720,9 @@ impl AppBuilder {
                     };
                     return Err(SetupError::Template(message));
                 }
-                // A handler that returns `Output::Silent` renders no summary,
-                // and which variant it returns is a value this build cannot
-                // read, so a summary template it never needs is optional here
-                // and a summary template it does need is a render error on the
-                // run that reaches for it.
+                // A handler returning `Output::Silent` renders no summary, and
+                // the build cannot read which variant it returns, so a missing
+                // summary template is a render error on the run instead.
                 if matches!(
                     registry.get_content(&name),
                     Err(standout_render::RegistryError::NotFound { .. })
@@ -1424,15 +1419,11 @@ impl App {
         }
     }
 
-    /// The run's color policy, in the Spec's order: an explicit `--color`, the
-    /// policy the caller named (`run_with_color`, the harness), `NO_COLOR`, the
-    /// resolved `[term] color`, and last the destination, which `Auto` leaves to
-    /// `resolve_style_mode`.
-    ///
-    /// `NO_COLOR` is read here only to outrank a configured `always`. Below the
-    /// key it is a destination fact, which the process edge already probes as
-    /// part of stdout's color capability and an application may name for itself
-    /// on `TargetProperties`.
+    /// The run's color policy, in precedence order: an explicit `--color`, the
+    /// policy the caller named, `NO_COLOR`, the resolved `[term] color`, and
+    /// last the destination, which `Auto` leaves to `resolve_style_mode`.
+    /// `NO_COLOR` is read here only to outrank a configured `always`; below the
+    /// key it is a destination fact the process edge already probes.
     pub(crate) fn resolve_color_policy(
         &self,
         typed: Option<ColorPolicy>,
@@ -1476,9 +1467,8 @@ impl App {
             .and_then(parse_color_flag)
     }
 
-    /// The pre-parse read the paging decision uses, taken for help before any
-    /// `ArgMatches` exists. A named file is the run's destination whatever
-    /// else the invocation asks for, so the page lands there, never in a pager.
+    /// A named file is the run's destination whatever else the invocation asks
+    /// for, so the page lands there, never in a pager.
     pub(crate) fn output_file_from_unparsed(
         &self,
         args: &[std::ffi::OsString],
@@ -1489,8 +1479,6 @@ impl App {
             .map(std::path::PathBuf::from)
     }
 
-    /// Read from the raw arguments, because `--help` short-circuits clap and
-    /// leaves no `ArgMatches` for the paging decision to consult.
     pub(crate) fn paging_is_suppressed(&self, args: &[std::ffi::OsString]) -> bool {
         self.pager_flag
             .as_deref()
@@ -1509,10 +1497,9 @@ impl App {
             .unwrap_or(self.output_mode_fallback)
     }
 
-    /// One handler, hooks and render included; `color_policy` is the policy the
-    /// caller names, which a typed `--color` and `[term] color` outrank through
-    /// `resolve_run`, and `sink` is where the handler's events are written as it
-    /// emits them.
+    /// One handler, hooks and render included. A typed `--color` and
+    /// `[term] color` outrank `color_policy`; `sink` takes the handler's events
+    /// as it emits them.
     #[allow(clippy::too_many_arguments)]
     pub fn run_command<H>(
         &self,
@@ -1624,10 +1611,8 @@ impl App {
                 })
                 .map_err(|e| HookError::post_output("Render error").with_source(e))
         };
-        // CSV takes the retained events as its rows, through the command's
-        // `CsvProjection` when it declares one, so it goes down the render path
-        // a batch value takes and leaves the summary out; the other document
-        // encodings take the array of records.
+        // CSV takes the retained events as its rows and leaves the summary out;
+        // the other document encodings take the array of records.
         let event_rows = output_mode == crate::Representation::Csv;
 
         let output = match output {
@@ -1714,9 +1699,8 @@ impl App {
     }
 }
 
-/// The one document an incremental command ends in under `json` or `yaml`.
-/// `run_command` owns no stdout of its own, so the run's warnings stay the
-/// caller's business and no warning record joins the array.
+/// The one document an incremental command ends in under `json` or `yaml`. No
+/// warning record joins the array: `run_command` owns no stdout of its own.
 fn run_document(
     records: Vec<serde_json::Value>,
     output_mode: crate::Representation,
