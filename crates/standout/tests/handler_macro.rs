@@ -472,6 +472,34 @@ fn the_generated_struct_handler_emits_through_the_channel_it_is_given() {
     assert_eq!(recorder.records().len(), 1);
 }
 
+// The signature docs/topics/incremental-commands.md shows. It writes
+// `Result<Summary<T>, E>` out because the macro reads the return type by name,
+// and neither `SummaryResult<T>` nor the batch `HandlerResult<T>` is `Result`.
+#[handler]
+fn apply(
+    #[matches] _matches: &ArgMatches,
+    #[ctx] _ctx: &CommandContext,
+    results: &mut Results<Step>,
+) -> Result<Summary<usize>, anyhow::Error> {
+    results.emit(Step::Started {
+        name: "web".to_string(),
+    })?;
+    Ok(Summary::Render(1))
+}
+
+#[test]
+fn the_documented_incremental_signature_compiles_under_the_macro() {
+    let matches = verbose_matches(&["test"]);
+    let ctx = CommandContext::default();
+    let recorder = RunRecorder::new();
+    let mut results = Results::recording(recorder.clone());
+
+    let summary = apply_Handler.handle(&matches, &ctx, &mut results).unwrap();
+
+    assert!(matches!(summary, Summary::Render(1)));
+    assert_eq!(recorder.records().len(), 1);
+}
+
 #[handler]
 fn batch(#[flag] verbose: bool) -> Result<bool, anyhow::Error> {
     Ok(verbose)

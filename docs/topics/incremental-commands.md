@@ -23,7 +23,7 @@ fn apply(
     _matches: &ArgMatches,
     _ctx: &CommandContext,
     results: &mut Results<Event>,
-) -> SummaryResult<Applied> {
+) -> Result<Summary<Applied>, anyhow::Error> {
     for change in plan()? {
         results.emit(Event::ApplyStart { resource: change.name.clone() })?;
         change.apply()?;                  // a failure here follows the events
