@@ -8,11 +8,12 @@ use serde::Serialize;
 use serde_json::json;
 use serial_test::serial;
 use standout::cli::hooks::TextOutput;
+use standout::cli::RunErrorKind;
 use standout::cli::{
     App, CommandContext, Delivery, EventsFnHandler, FnHandler, HandlerResult, Output,
     RenderedOutput, Results,
 };
-use standout::{EmbeddedTemplates, Representation};
+use standout::{ColorPolicy, EmbeddedTemplates, InputSources, Representation, TargetProperties};
 use standout_test::{TestHarness, TestResult};
 
 const TEMPLATES: &[(&str, &str)] = &[
@@ -41,6 +42,7 @@ fn command() -> Command {
 /// and `status` the batch command the application never marked.
 fn app() -> App {
     App::builder()
+        .name("myapp")
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "log",
@@ -76,6 +78,7 @@ fn app() -> App {
 
 /// A terminal target with `MYAPP_PAGER` naming a pager and `PAGER` out of the
 /// way, which is every condition the decision needs beyond the invocation.
+/// `MYAPP` is the name the application gave the builder, not clap's.
 fn on_a_terminal() -> TestHarness {
     TestHarness::new()
         .stdout_is_terminal(true)
@@ -193,6 +196,7 @@ fn an_environment_naming_no_pager_pages_nothing() {
 #[serial]
 fn a_post_output_hook_decides_what_there_is_to_page() {
     let payload = App::builder()
+        .name("myapp")
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "log",
@@ -214,6 +218,7 @@ fn a_post_output_hook_decides_what_there_is_to_page() {
     assert_eq!(result.delivery(), &Delivery::Stdout);
 
     let rewritten = App::builder()
+        .name("myapp")
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "log",
@@ -252,4 +257,75 @@ fn help_reports_the_same_decision_a_command_does() {
     let word = run(on_a_terminal(), ["myapp", "help"]);
     word.assert_success();
     assert_eq!(word.delivery(), &Delivery::Pager(PAGER.to_string()));
+}
+
+/// The strict-style check runs after the help page is rendered and replaces it
+/// with a render error. The delivery is recorded on the outcome that stands
+/// after it, so the run reports the stdout that error goes to rather than the
+/// pager the page it replaced would have gone to.
+#[test]
+#[serial]
+fn a_help_page_the_strict_style_check_rejects_pages_nothing() {
+    let strict = App::builder()
+        .name("myapp")
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .strict_style_tags(true)
+        .command_with(
+            "log",
+            FnHandler::new(|_: &ArgMatches, _: &CommandContext| {
+                Ok(Output::Render(json!({ "entries": 3 })))
+            }),
+            |cfg| cfg.pageable(),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let described = Command::new("myapp")
+        .subcommand(Command::new("log").about("[bogus]every entry so far[/bogus]"));
+    let result = on_a_terminal().run(&strict, described, ["myapp", "--help"]);
+
+    result.assert_error_kind(RunErrorKind::Render);
+    assert_eq!(result.delivery(), &Delivery::Stdout);
+}
+
+/// The decision is taken in `resolve_run`, which every entry point goes
+/// through, so the in-process `dispatch` reports what the argv path reports
+/// for one target instead of never reporting a pager at all.
+#[test]
+#[serial]
+fn dispatch_reports_the_decision_the_argv_path_reports() {
+    let restore = (std::env::var_os("MYAPP_PAGER"), std::env::var_os("PAGER"));
+    std::env::set_var("MYAPP_PAGER", PAGER);
+    std::env::remove_var("PAGER");
+
+    let app = app();
+    let target = TargetProperties::detect();
+    let dispatched = app.dispatch(
+        command().try_get_matches_from(["myapp", "log"]).unwrap(),
+        Representation::Human,
+    );
+    let from_argv = app.run_with_color(
+        command(),
+        ["myapp", "log"],
+        target,
+        ColorPolicy::Auto,
+        InputSources::from_process(),
+    );
+
+    let expected = if target.stdout_is_terminal {
+        Delivery::Pager(PAGER.to_string())
+    } else {
+        Delivery::Stdout
+    };
+    assert_eq!(dispatched.delivery(), &expected);
+    assert_eq!(from_argv.delivery(), &expected);
+
+    match restore.0 {
+        Some(value) => std::env::set_var("MYAPP_PAGER", value),
+        None => std::env::remove_var("MYAPP_PAGER"),
+    }
+    if let Some(value) = restore.1 {
+        std::env::set_var("PAGER", value);
+    }
 }

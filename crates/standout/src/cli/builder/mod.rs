@@ -360,6 +360,7 @@ fn strict_style_tags_from_env(value: Option<std::ffi::OsString>) -> bool {
 }
 
 pub struct App {
+    pub(crate) name: Option<String>,
     pub(crate) registry: TopicRegistry,
     pub(crate) output_flag: Option<String>,
     pub(crate) output_mode_fallback: Representation,
@@ -397,6 +398,7 @@ impl App {
 }
 
 pub struct AppBuilder {
+    pub(crate) name: Option<String>,
     pub(crate) registry: TopicRegistry,
     pub(crate) output_flag: Option<String>,
     pub(crate) output_mode_fallback: Representation,
@@ -448,6 +450,7 @@ pub struct AppBuilder {
 impl AppBuilder {
     pub(crate) fn new() -> Self {
         Self {
+            name: None,
             registry: TopicRegistry::new(),
             output_flag: Some("output".to_string()),
             output_mode_fallback: Representation::Human,
@@ -657,6 +660,7 @@ impl AppBuilder {
         }
 
         let app = App {
+            name: self.name,
             registry: self.registry,
             output_flag: self.output_flag,
             output_mode_fallback: self.output_mode_fallback,

@@ -2213,6 +2213,7 @@ fn main() -> Result<()> {
 
 fn build_app(user_scope: clapfig::SearchPath) -> Result<standout::cli::App> {
     Ok(standout::cli::App::builder()
+        .name(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
         .templates(embed_templates!("src/templates"))
         .styles(embed_styles!("src/styles"))

@@ -7,6 +7,7 @@ use standout::{embed_styles, embed_templates};
 
 pub(crate) fn build(user_scope: SearchPath) -> Result<App> {
     Ok(App::builder()
+        .name(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
         .default_command_with(|ctx| {
             Some(if ctx.stdin_is_piped() { "add" } else { "list" }.to_string())
