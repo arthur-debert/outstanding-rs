@@ -8,7 +8,8 @@ use std::path::PathBuf;
 
 use super::{
     output_mode_flag_spelling, App, AppBuilder, HookRegistrationSource, PendingCommand,
-    TemplateRef, COLOR_ARG, COLOR_FLAG_DEFAULT, COLOR_FLAG_VALUES, OUTPUT_MODE_FLAG_VALUES,
+    TemplateRef, COLOR_ARG, COLOR_FLAG_DEFAULT, COLOR_FLAG_VALUES, NO_PAGER_ARG,
+    OUTPUT_MODE_FLAG_VALUES,
 };
 use crate::cli::config::{
     config_command, config_command_tree, config_result_output, config_run_error,
@@ -26,12 +27,12 @@ use crate::cli::handler::{
     StreamSink, SuccessKind,
 };
 use crate::cli::hooks::{ArtifactOutput, Hooks, RenderedOutput, TextOutput};
+use crate::cli::pager::{Pager, PagerOutcome};
 use crate::cli::questionnaire::{
     augment_questionnaire_command, render_questions_result, validate_questionnaire_surface,
     QUESTIONNAIRE_ANSWERS_ARG, QUESTIONNAIRE_YES_ARG, QUESTIONS_SUBCOMMAND,
 };
 use crate::cli::ProcessOutcome;
-use crate::topics::display_with_pager;
 use crate::SetupError;
 use std::io::Write;
 
@@ -886,6 +887,37 @@ impl App {
         outcome.handled
     }
 
+    /// Help delivery: a rendered help page goes to the pager the environment
+    /// names when stdout is a terminal, the encoding is human and the
+    /// invocation did not suppress paging. `true` means the pager took the
+    /// bytes and the caller owes the user nothing on stdout; a pager that
+    /// could not start leaves the page unpaged with the run's own status.
+    fn page_help(
+        &self,
+        app_name: &str,
+        args: &[std::ffi::OsString],
+        target: &TargetProperties,
+        output_mode: Representation,
+        outcome: &crate::cli::DispatchResult,
+    ) -> bool {
+        let crate::cli::DispatchResult::Handled(output) = outcome else {
+            return false;
+        };
+        if !matches!(
+            output.kind(),
+            SuccessKind::ClapHelp | SuccessKind::PagedHelp
+        ) || !target.stdout_is_terminal
+            || output_mode != Representation::Human
+            || self.paging_is_suppressed(args)
+        {
+            return false;
+        }
+        match Pager::resolve(app_name).map(|pager| pager.page(output.as_str())) {
+            Some(PagerOutcome::Paged | PagerOutcome::ReaderLeft) => true,
+            Some(PagerOutcome::CouldNotStart) | None => false,
+        }
+    }
+
     /// `run` without ending the process.
     pub fn run_emitted<I, T>(&self, cmd: Command, args: I) -> ProcessOutcome
     where
@@ -896,11 +928,13 @@ impl App {
         target.ambiguous_width = self.ambiguous_width;
         let sources = InputSources::from_process();
         let sink = StreamSink::process_stdout();
+        let app_name = cmd.get_name().to_string();
+        let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
         // Nothing reads this run's values back, so its events are written and
         // dropped rather than retained for the length of the command.
         let result = self.run_recording(
             cmd,
-            args,
+            &args,
             target,
             ColorPolicy::Auto,
             sources,
@@ -911,14 +945,7 @@ impl App {
         let warnings = result.warnings().to_vec();
         let output_mode = result.output_mode();
 
-        let paged = match result.outcome() {
-            crate::cli::DispatchResult::Handled(output)
-                if output.kind() == SuccessKind::PagedHelp =>
-            {
-                display_with_pager(output.as_str()).is_ok()
-            }
-            _ => false,
-        };
+        let paged = self.page_help(&app_name, &args, &target, output_mode, result.outcome());
 
         let stderr = std::io::stderr();
         let mut stderr = stderr.lock();
@@ -1142,6 +1169,16 @@ impl App {
                     .value_parser(COLOR_FLAG_VALUES)
                     .default_value(COLOR_FLAG_DEFAULT)
                     .help("When to color human output"),
+            );
+        }
+
+        if let Some(ref flag_name) = self.pager_flag {
+            cmd = cmd.arg(
+                Arg::new(NO_PAGER_ARG)
+                    .long(flag_name.clone())
+                    .global(true)
+                    .action(ArgAction::SetTrue)
+                    .help("Write output straight to stdout, never through a pager"),
             );
         }
 

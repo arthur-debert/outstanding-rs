@@ -121,6 +121,19 @@ impl AppBuilder {
         self
     }
 
+    /// Renames the flag that suppresses paging, installed as `--no-pager`.
+    pub fn pager_flag(mut self, name: Option<&str>) -> Self {
+        self.pager_flag = Some(name.unwrap_or("no-pager").to_string());
+        self
+    }
+
+    /// Removes the flag that suppresses paging, leaving the application no way
+    /// to turn a resolved pager off for one invocation.
+    pub fn no_pager_flag(mut self) -> Self {
+        self.pager_flag = None;
+        self
+    }
+
     pub fn config<C>(mut self, builder: clapfig::TypedBuilder<C>) -> Self
     where
         C: clapfig::DocumentRoot + serde::de::DeserializeOwned + 'static,

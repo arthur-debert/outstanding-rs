@@ -20,6 +20,7 @@ mod default_command;
 mod dispatch;
 mod emit;
 pub(crate) mod events;
+pub(crate) mod pager;
 mod questionnaire;
 mod result;
 
