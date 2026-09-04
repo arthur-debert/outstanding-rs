@@ -17,6 +17,11 @@
 >   term`. Its produced binary predates the change, so it leaves the per-PR
 >   corpus subset until #519 re-accepts it from a fresh blind run; an empty
 >   subset passes that workflow rather than failing it.
+> - The harness reads a run's values with `TestResult::results()`, every
+>   recorded value in order, and `TestResult::result()`, the last one — the
+>   summary for a command that returns one. ADR-0041's typed
+>   `TestResult::events::<E>()` was not built, so a test compares
+>   `serde_json::Value`s rather than deserializing into its own event type.
 > - #519 has not run.
 
 ## Problem

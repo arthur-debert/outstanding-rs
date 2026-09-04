@@ -377,9 +377,9 @@ Standout runs a pager only when all of these hold, and writes to stdout
 otherwise:
 
 - the command is eligible and the user did not pass `--no-pager`;
-- the representation is the human template — a structured encoding never pages,
-  and neither does incremental human output, which arrives while the command
-  runs rather than complete;
+- the representation is the human template: `term-debug` and the structured
+  encodings never page, and neither does incremental human output, which
+  arrives while the command runs rather than complete;
 - stdout is a terminal, and the user named no `--output-file-path`, which wins
   over paging;
 - an environment variable names a pager.
