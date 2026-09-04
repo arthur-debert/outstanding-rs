@@ -12,12 +12,9 @@
 //! - an encoding that carries a whole run as one document writes no event
 //!   while the command runs, and retains each record instead, so the caller
 //!   takes them with [`EventDestination::take_document_records`] once the
-//!   handler returns and writes the one array the run ends in. A run that
-//!   fails never asks for them, which is how nothing partial goes out.
-//!
-//! CSV is the encoding with no branch here yet: dispatch entry refuses an
-//! incremental command under it before the handler runs, and whether a command
-//! is incremental follows from its `Handler::Event` type.
+//!   handler returns and writes the document the run ends in: the array for
+//!   `json` and `yaml`, the rows for `csv`. A run that fails never asks for
+//!   them, which is how nothing partial goes out.
 //!
 //! Every reason an event does not reach the destination — a missing event
 //! template, a render failure, an unresolved style tag under strict mode, a
@@ -62,7 +59,10 @@ fn named_event_template(name: &str) -> standout_render::TemplateRef {
 /// The encodings that carry a whole run as one document, so an event is
 /// retained until the command ends rather than written as it arrives.
 pub(crate) fn retains_events(representation: Representation) -> bool {
-    matches!(representation, Representation::Json | Representation::Yaml)
+    matches!(
+        representation,
+        Representation::Json | Representation::Yaml | Representation::Csv
+    )
 }
 
 pub(crate) struct EventContext {

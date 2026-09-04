@@ -842,6 +842,13 @@ impl App {
         &self.registry
     }
 
+    fn emits_events_for(&self, path: &str) -> bool {
+        self.pending_commands
+            .borrow()
+            .get(path)
+            .is_some_and(|pending| pending.recipe.emits_events())
+    }
+
     fn csv_projection_for(&self, path: &str) -> Option<crate::CsvProjection> {
         self.pending_commands
             .borrow()
@@ -1548,13 +1555,6 @@ impl App {
             hooks.run_pre_dispatch(matches, &mut ctx)?;
         }
 
-        super::dispatch::reject_events_under_a_document_encoding(
-            emits_events::<H::Event>(),
-            path,
-            output_mode,
-        )
-        .map_err(|e| HookError::post_output("Render error").with_source(e))?;
-
         let destination = std::rc::Rc::new(crate::cli::events::EventDestination::new(
             sink,
             crate::cli::events::EventContext {
@@ -1597,7 +1597,33 @@ impl App {
             .map_err(|e| HookError::post_output("Render error").with_source(e))
         };
         reject_status_without_a_carrier(output.is_binary(), output.is_artifact())?;
-        reject_payload_from_an_emitting_command(output.is_binary(), output.is_artifact())?;
+
+        let render_value = |data: serde_json::Value| -> Result<RenderedOutput, HookError> {
+            let request = RenderRequest {
+                data,
+                template: template.clone(),
+                theme: self.theme.clone(),
+                format: output_mode,
+                color_policy,
+                target,
+                engine: self.template_engine.clone(),
+                registry: self.template_registry.clone(),
+                context_registry: Some(self.context_registry.clone()),
+                csv_projection: self.csv_projection_for(path),
+                extras: HashMap::new(),
+                warnings: Some(warnings.clone()),
+            };
+            render_request_split(&request)
+                .map(|rendered| {
+                    RenderedOutput::Text(TextOutput::new(rendered.formatted, rendered.raw))
+                })
+                .map_err(|e| HookError::post_output("Render error").with_source(e))
+        };
+        // CSV takes the retained events as its rows, through the command's
+        // `CsvProjection` when it declares one, so it goes down the render path
+        // a batch value takes and leaves the summary out; the other document
+        // encodings take the array of records.
+        let event_rows = output_mode == crate::Representation::Csv;
 
         let output = match output {
             HandlerOutput::Render(data) => {
@@ -1609,39 +1635,17 @@ impl App {
                 }
 
                 match document_records {
-                    Some(mut records) => {
+                    Some(mut records) if !event_rows => {
                         records.push(standout_render::result_record(json_data));
                         run_document(records, output_mode)?
                     }
-                    None => {
-                        let request = RenderRequest {
-                            data: json_data,
-                            template: template.clone(),
-                            theme: self.theme.clone(),
-                            format: output_mode,
-                            color_policy,
-                            target,
-                            engine: self.template_engine.clone(),
-                            registry: self.template_registry.clone(),
-                            context_registry: Some(self.context_registry.clone()),
-                            csv_projection: self.csv_projection_for(path),
-                            extras: HashMap::new(),
-                            warnings: Some(warnings),
-                        };
-                        match render_request_split(&request) {
-                            Ok(rendered) => RenderedOutput::Text(TextOutput::new(
-                                rendered.formatted,
-                                rendered.raw,
-                            )),
-                            Err(e) => {
-                                return Err(HookError::post_output("Render error").with_source(e))
-                            }
-                        }
-                    }
+                    Some(records) => render_value(serde_json::Value::Array(records))?,
+                    None => render_value(json_data)?,
                 }
             }
             HandlerOutput::Silent => match document_records {
-                Some(records) => run_document(records, output_mode)?,
+                Some(records) if !event_rows => run_document(records, output_mode)?,
+                Some(records) => render_value(serde_json::Value::Array(records))?,
                 None => RenderedOutput::Silent,
             },
             HandlerOutput::Binary { data, filename } => RenderedOutput::Binary(data, filename),
@@ -1704,9 +1708,9 @@ impl App {
     }
 }
 
-/// The one document an incremental command ends in under an encoding that
-/// carries a whole run. `run_command` owns no stdout of its own, so the run's
-/// warnings stay the caller's business and no warning record joins the array.
+/// The one document an incremental command ends in under `json` or `yaml`.
+/// `run_command` owns no stdout of its own, so the run's warnings stay the
+/// caller's business and no warning record joins the array.
 fn run_document(
     records: Vec<serde_json::Value>,
     output_mode: crate::Representation,
