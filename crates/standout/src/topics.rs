@@ -14,9 +14,7 @@
 use deunicode::deunicode;
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
 use std::path::Path;
-use std::process::{Command as ProcessCommand, Stdio};
 
 use console::Style;
 use serde::Serialize;
@@ -337,49 +335,6 @@ pub fn render_topics_list(
     )
 }
 
-pub fn display_with_pager(content: &str) -> std::io::Result<()> {
-    let pagers = get_pager_candidates();
-
-    for pager in pagers {
-        if try_pager(&pager, content).is_ok() {
-            return Ok(());
-        }
-    }
-
-    print!("{}", content);
-    std::io::stdout().flush()
-}
-
-fn get_pager_candidates() -> Vec<String> {
-    let mut pagers = Vec::new();
-
-    if let Ok(pager) = std::env::var("PAGER") {
-        if !pager.is_empty() {
-            pagers.push(pager);
-        }
-    }
-
-    pagers.push("less".to_string());
-    pagers.push("more".to_string());
-
-    pagers
-}
-
-fn try_pager(pager: &str, content: &str) -> std::io::Result<()> {
-    let mut child = ProcessCommand::new(pager).stdin(Stdio::piped()).spawn()?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(content.as_bytes())?;
-    }
-
-    let status = child.wait()?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(std::io::Error::other("pager exited with error"))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -586,13 +541,6 @@ mod tests {
             .lines()
             .find(|line| line.contains(needle))
             .unwrap_or_else(|| panic!("no row for {needle} in:\n{output}"))
-    }
-
-    #[test]
-    fn test_get_pager_candidates_includes_defaults() {
-        let candidates = get_pager_candidates();
-        assert!(candidates.contains(&"less".to_string()));
-        assert!(candidates.contains(&"more".to_string()));
     }
 
     #[test]

@@ -365,6 +365,7 @@ pub struct App {
     pub(crate) output_mode_fallback: Representation,
     pub(crate) output_file_flag: Option<String>,
     pub(crate) color_flag: Option<String>,
+    pub(crate) pager_flag: Option<String>,
     pub(crate) theme: Theme,
     pub(crate) stylesheet_registry: Option<crate::StylesheetRegistry>,
     pub(crate) template_registry: Option<Rc<TemplateRegistry>>,
@@ -401,6 +402,7 @@ pub struct AppBuilder {
     pub(crate) output_mode_fallback: Representation,
     pub(crate) output_file_flag: Option<String>,
     pub(crate) color_flag: Option<String>,
+    pub(crate) pager_flag: Option<String>,
     pub(crate) theme: Option<Theme>,
     pub(crate) stylesheet_registry: Option<crate::StylesheetRegistry>,
     pub(crate) template_registry: Option<TemplateRegistry>,
@@ -451,6 +453,7 @@ impl AppBuilder {
             output_mode_fallback: Representation::Human,
             output_file_flag: Some("output-file-path".to_string()),
             color_flag: Some("color".to_string()),
+            pager_flag: Some("no-pager".to_string()),
             theme: None,
             stylesheet_registry: None,
             template_registry: None,
@@ -589,6 +592,7 @@ impl AppBuilder {
                 self.output_flag.as_deref(),
                 self.output_file_flag.as_deref(),
                 self.color_flag.as_deref(),
+                self.pager_flag.as_deref(),
             ];
             if taken.contains(&Some(flag))
                 || (installs_config_command && config_tree_takes_long(flag))
@@ -612,6 +616,7 @@ impl AppBuilder {
                 ("output_flag", self.output_flag.as_deref()),
                 ("output_file_flag", self.output_file_flag.as_deref()),
                 ("color_flag", self.color_flag.as_deref()),
+                ("pager_flag", self.pager_flag.as_deref()),
             ]
             .into_iter()
             .find_map(|(option, flag)| {
@@ -657,6 +662,7 @@ impl AppBuilder {
             output_mode_fallback: self.output_mode_fallback,
             output_file_flag: self.output_file_flag,
             color_flag: self.color_flag,
+            pager_flag: self.pager_flag,
             theme: self
                 .theme
                 .take()
@@ -892,6 +898,7 @@ impl App {
     {
         if let Err(error) = self
             .config_override_flag_collision(&cmd)
+            .and_then(|()| self.framework_flag_collision(&cmd))
             .and_then(|()| self.config_command_collision(&cmd))
         {
             return HelpResult::Error(clap::Error::raw(
@@ -1429,10 +1436,10 @@ impl App {
 
     pub(crate) fn typed_output_mode(&self, matches: &ArgMatches) -> Option<Representation> {
         self.output_flag.as_ref()?;
-        match matches.try_get_one::<String>("_output_mode") {
+        match matches.try_get_one::<String>(OUTPUT_MODE_ARG) {
             // A `DefaultValue` source means the user never typed `--output`.
             Ok(Some(value))
-                if matches.value_source("_output_mode") != Some(ValueSource::DefaultValue) =>
+                if matches.value_source(OUTPUT_MODE_ARG) != Some(ValueSource::DefaultValue) =>
             {
                 parse_output_mode_flag(value.as_str())
             }
@@ -1490,6 +1497,27 @@ impl App {
             .as_deref()
             .and_then(|flag| last_unparsed_flag_value(flag, args))
             .and_then(parse_color_flag)
+    }
+
+    /// The pre-parse read the help path uses, where no `ArgMatches` exists yet.
+    /// A named file is the run's destination whatever else the invocation asks
+    /// for, so help lands there rather than in a pager.
+    pub(crate) fn output_file_from_unparsed(
+        &self,
+        args: &[std::ffi::OsString],
+    ) -> Option<std::path::PathBuf> {
+        self.output_file_flag
+            .as_deref()
+            .and_then(|flag| last_unparsed_flag_value(flag, args))
+            .map(std::path::PathBuf::from)
+    }
+
+    /// Read from the raw arguments: paging is decided at the process edge,
+    /// where `--help` short-circuits clap and leaves no `ArgMatches` behind.
+    pub(crate) fn paging_is_suppressed(&self, args: &[std::ffi::OsString]) -> bool {
+        self.pager_flag
+            .as_deref()
+            .is_some_and(|flag| unparsed_flag_is_present(flag, args))
     }
 
     pub(crate) fn extract_output_mode_from_unparsed(
@@ -1697,6 +1725,7 @@ impl App {
         self.validate_questionnaire_surfaces(cmd)?;
         self.unreachable_registrations(cmd)?;
         self.config_override_flag_collision(cmd)?;
+        self.framework_flag_collision(cmd)?;
         self.config_command_collision(cmd)?;
         let expected_args: HashMap<String, Vec<ExpectedArg>> = self
             .pending_commands
@@ -1783,6 +1812,9 @@ pub(crate) fn output_mode_flag_spelling(representation: Representation) -> Optio
 pub(crate) const COLOR_FLAG_VALUES: [&str; 3] = ["auto", "always", "never"];
 
 pub(crate) const COLOR_ARG: &str = "_color";
+pub(crate) const NO_PAGER_ARG: &str = "_no_pager";
+pub(crate) const OUTPUT_MODE_ARG: &str = "_output_mode";
+pub(crate) const OUTPUT_FILE_ARG: &str = "_output_file_path";
 
 pub(crate) const COLOR_FLAG_DEFAULT: &str = "auto";
 
@@ -1798,6 +1830,15 @@ fn parse_color_flag(value: &str) -> Option<ColorPolicy> {
         "never" => Some(ColorPolicy::Never),
         _ => None,
     }
+}
+
+fn unparsed_flag_is_present(flag: &str, args: &[std::ffi::OsString]) -> bool {
+    let long = format!("--{flag}");
+    args.iter()
+        .skip(1)
+        .filter_map(|arg| arg.to_str())
+        .take_while(|arg| *arg != "--")
+        .any(|arg| arg == long)
 }
 
 fn last_unparsed_flag_value<'a>(flag: &str, args: &'a [std::ffi::OsString]) -> Option<&'a str> {

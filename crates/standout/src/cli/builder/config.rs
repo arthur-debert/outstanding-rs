@@ -121,6 +121,19 @@ impl AppBuilder {
         self
     }
 
+    /// Renames the flag that suppresses paging, installed as `--no-pager`.
+    pub fn pager_flag(mut self, name: Option<&str>) -> Self {
+        self.pager_flag = Some(name.unwrap_or("no-pager").to_string());
+        self
+    }
+
+    /// Removes the flag that suppresses paging, leaving the application no way
+    /// to turn a resolved pager off for one invocation.
+    pub fn no_pager_flag(mut self) -> Self {
+        self.pager_flag = None;
+        self
+    }
+
     pub fn config<C>(mut self, builder: clapfig::TypedBuilder<C>) -> Self
     where
         C: clapfig::DocumentRoot + serde::de::DeserializeOwned + 'static,
@@ -197,6 +210,7 @@ impl AppBuilder {
 
 #[cfg(test)]
 mod tests {
+    use super::super::OUTPUT_MODE_ARG;
     use super::*;
     use crate::EmbeddedTemplates;
 
@@ -788,7 +802,7 @@ mod tests {
             let augmented = app.augment_framework_surface(Command::new("app"));
             let defaults = augmented
                 .get_arguments()
-                .find(|arg| arg.get_id() == "_output_mode")
+                .find(|arg| arg.get_id() == OUTPUT_MODE_ARG)
                 .expect("the output flag is declared")
                 .get_default_values()
                 .to_vec();

@@ -269,7 +269,6 @@ Help Topics:
   - TopicRegistry: collection of topics with lookup
   - TopicType: Text or Markdown (affects rendering)
   - render_topic() / render_topics_list(): topic rendering
-  - display_with_pager(): show long content through pager
   - Load from files: add_from_directory(), add_from_directory_if_exists()
 
 
