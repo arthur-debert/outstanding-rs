@@ -520,24 +520,30 @@ impl App {
             output
         };
 
-        // Byte equality with the document the hooks were given, not the return
-        // variant: only then does the framework own the text and append the
-        // warnings standing now. Anything else is the hook's own document, and
-        // every warning goes to the stderr block instead.
+        // Byte equality of both texts with the document the hooks were given,
+        // not the return variant: only then does the framework still own the
+        // document and append the warnings standing now. Anything else is the
+        // hook's, and every warning goes to the stderr block instead.
         let mut warnings_included = false;
         if let Some((mut records, unhooked)) = pending_records {
-            if matches!(&final_output, RenderedOutput::Text(t) if t.formatted == unhooked) {
-                records.extend(crate::cli::warning_records(&warnings.snapshot()));
-                let document = match standout_render::serialize_record_array(records, output_mode) {
-                    Ok(document) => document,
-                    Err(error) => {
-                        return DispatchResult::Error(RunError::new(
-                            error.to_string(),
-                            RunErrorKind::Render,
-                        ))
-                    }
-                };
-                final_output = RenderedOutput::Text(TextOutput::new(document.clone(), document));
+            if matches!(&final_output, RenderedOutput::Text(t) if t.formatted == unhooked && t.raw == unhooked)
+            {
+                let snapshot = warnings.snapshot();
+                if !snapshot.is_empty() {
+                    records.extend(crate::cli::warning_records(&snapshot));
+                    let document =
+                        match standout_render::serialize_record_array(records, output_mode) {
+                            Ok(document) => document,
+                            Err(error) => {
+                                return DispatchResult::Error(RunError::new(
+                                    error.to_string(),
+                                    RunErrorKind::Render,
+                                ))
+                            }
+                        };
+                    final_output =
+                        RenderedOutput::Text(TextOutput::new(document.clone(), document));
+                }
                 warnings_included = true;
             }
         }

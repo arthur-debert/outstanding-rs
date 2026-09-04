@@ -38,6 +38,7 @@ enum PostOutput {
     Replaces,
     Warns,
     Unchanged,
+    ChangesRawOnly,
 }
 
 fn events(results: &mut Results<Value>) -> Result<(), anyhow::Error> {
@@ -85,6 +86,15 @@ fn app(ending: Ending, hook: PostOutput) -> App {
                     Ok(output)
                 }),
                 PostOutput::Unchanged => cfg.post_output(|_, _, output| Ok(output)),
+                PostOutput::ChangesRawOnly => cfg.post_output(|_, _, output| {
+                    Ok(match output {
+                        RenderedOutput::Text(text) => RenderedOutput::Text(TextOutput::new(
+                            text.formatted,
+                            format!("{REPLACEMENT}{}", text.raw),
+                        )),
+                        output => output,
+                    })
+                }),
             },
         )
         .unwrap()
@@ -224,6 +234,30 @@ fn a_post_output_hook_that_returns_the_document_unchanged_changes_nothing() {
         hooked.assert_success();
         assert_eq!(hooked.stdout(), unhooked.stdout(), "{representation:?}");
         assert_eq!(hooked.stderr(), "", "{representation:?}");
+    }
+}
+
+#[test]
+fn a_post_output_hook_that_changes_only_raw_keeps_its_output() {
+    for representation in DOCUMENT_ENCODINGS {
+        let hooked = run_hooked(
+            Ending::SummaryAndWarning,
+            PostOutput::ChangesRawOnly,
+            representation,
+        );
+        let unwarned = run(Ending::Summary, representation);
+
+        hooked.assert_success();
+        assert_eq!(
+            hooked.stdout(),
+            unwarned.stdout(),
+            "{representation:?}: the framework does not append to a document the hook changed"
+        );
+        assert!(
+            hooked.stderr().contains(WARNING),
+            "{representation:?}: the warning is prose again: {}",
+            hooked.stderr()
+        );
     }
 }
 
