@@ -16,11 +16,15 @@ Settings from files, environment and flags through clapfig. Covers the precedenc
 
 ### [Output Modes](output-modes.md)
 
-The `--output` flag, the `Representation` enum and the separate style decision. Covers the human page, the structured encodings (JSON, YAML, CSV, NDJSON), file output, and why the representation stays out of handlers.
+The `--output` flag, the `Representation` enum, the separate style decision and where the bytes go. Covers the human page, the structured encodings (JSON, YAML, CSV, NDJSON), `--color`, file output, the pager, and why the representation stays out of handlers.
+
+### [Incremental Commands](incremental-commands.md)
+
+A command that produces its result while it runs. Covers the `Results` channel and `emit`, the `.event` template, what each encoding builds from the events and the summary, and what a failure part-way through leaves behind.
 
 ### [Topics System](topics-system.md)
 
-Adding help topics to your CLI. Covers the `Topic` struct, `TopicRegistry`, loading topics from directories, help integration, pager support, and custom rendering.
+Adding help topics to your CLI. Covers the `Topic` struct, `TopicRegistry`, loading topics from directories, help integration, and custom rendering.
 
 ---
 

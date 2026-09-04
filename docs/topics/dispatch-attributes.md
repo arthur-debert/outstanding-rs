@@ -77,6 +77,7 @@ anything reads them.
 | `silent` | flag | The command renders nothing. Excludes `binary`, `structured_only`, `template_name`. |
 | `binary` | flag | The command writes bytes rather than a rendered page. Same exclusions. |
 | `structured_only` | flag | The command has output only in the structured modes. Same exclusions. |
+| `pageable` | flag | The command's complete human output may reach the user through a pager ([Paging](./output-modes.md#paging)). |
 | `list_view` | flag | Renders through the framework's built-in `standout/list-view` template, unless `template_name` also appears, and attaches a tabular spec to the handler's `Output::Render`. |
 | `item_type` | `item_type = "…"` | Names the `Tabular`-implementing item type `list_view` builds its spec from. |
 | `questionnaire` | `questionnaire = <path>` | Resolves this questionnaire type before the handler runs. |
