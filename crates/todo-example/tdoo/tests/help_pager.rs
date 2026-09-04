@@ -107,6 +107,26 @@ fn a_named_output_file_takes_the_page_the_pager_would_have() {
     }
 }
 
+/// A file name starting with `-` is spelled `--output-file-path=<name>`, the
+/// way clap itself requires it: the space form reads the next word as a flag.
+#[cfg(unix)]
+#[test]
+fn a_file_named_like_a_flag_is_honored_in_the_joined_form() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let result = help(&[("TDOO_PAGER", MARKING)]).cwd(dir.path()).run_pty(
+        env!("CARGO_BIN_EXE_tdoo"),
+        ["--output-file-path=-page", "--help"],
+    );
+
+    result.assert_success();
+    let written = std::fs::read_to_string(dir.path().join("-page")).unwrap();
+    assert!(
+        written.contains("USAGE") && !written.contains("PAGED "),
+        "expected the unpaged page in the file, got:\n{written}"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn a_pager_that_cannot_start_leaves_the_page_and_the_status_alone() {

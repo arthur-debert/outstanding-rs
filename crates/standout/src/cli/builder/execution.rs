@@ -896,9 +896,27 @@ impl App {
             ("color_flag", "no_color_flag()", self.color_flag.as_deref()),
             ("pager_flag", "no_pager_flag()", self.pager_flag.as_deref()),
         ];
+        // Generated `--help`/`--version` only exist per command once clap
+        // builds the tree, and building is also what honors a command that
+        // turns one of them off.
+        let built = installed
+            .iter()
+            .any(|(_, _, flag)| matches!(*flag, Some("help" | "version")))
+            .then(|| {
+                let mut built = cmd.clone();
+                if let Some(version) = &self.version {
+                    built = built.version(version.clone());
+                }
+                built.build();
+                built
+            });
         for (seam, removal, flag) in installed {
             let Some(flag) = flag else { continue };
-            if let Some(owner) = command_declaring_long(cmd, flag, &[]) {
+            let searched = match flag {
+                "help" | "version" => built.as_ref().unwrap_or(cmd),
+                _ => cmd,
+            };
+            if let Some(owner) = command_declaring_long(searched, flag, &[]) {
                 return Err(SetupError::Config(format!(
                     "{seam} installs `--{flag}`, which this application already declares on \
                      `{owner}`. Rename standout's with {seam}(Some(\"...\")), drop it with \
@@ -1564,34 +1582,26 @@ const FRAMEWORK_ARG_IDS: [&str; 5] = [
     CONFIG_OVERRIDE_ARG,
 ];
 
-/// The path of the first command in the tree declaring `flag` as a long name
-/// or long alias, `path` naming the ancestors reached so far.
+/// The path of the first command in the tree declaring `flag`, as its own long
+/// invocation name or as one of its arguments' long names or aliases; `path`
+/// names the ancestors reached so far.
 fn command_declaring_long(cmd: &Command, flag: &str, path: &[&str]) -> Option<String> {
-    let here = || {
-        let mut names: Vec<&str> = path.to_vec();
-        names.push(cmd.get_name());
-        names.join(" ")
-    };
-    let declared = cmd.get_arguments().any(|arg| {
-        !FRAMEWORK_ARG_IDS.contains(&arg.get_id().as_str())
-            && (arg.get_long() == Some(flag)
-                || arg
-                    .get_all_aliases()
-                    .is_some_and(|aliases| aliases.contains(&flag)))
-    });
+    let mut here: Vec<&str> = path.to_vec();
+    here.push(cmd.get_name());
+    let declared = cmd.get_long_flag() == Some(flag)
+        || cmd.get_all_long_flag_aliases().any(|alias| alias == flag)
+        || cmd.get_arguments().any(|arg| {
+            !FRAMEWORK_ARG_IDS.contains(&arg.get_id().as_str())
+                && (arg.get_long() == Some(flag)
+                    || arg
+                        .get_all_aliases()
+                        .is_some_and(|aliases| aliases.contains(&flag)))
+        });
     if declared {
-        return Some(here());
+        return Some(here.join(" "));
     }
-    let mut path = path.to_vec();
-    path.push(cmd.get_name());
-    cmd.get_subcommands().find_map(|sub| {
-        if sub.get_long_flag() == Some(flag)
-            || sub.get_all_long_flag_aliases().any(|alias| alias == flag)
-        {
-            return Some(path.join(" "));
-        }
-        command_declaring_long(sub, flag, &path)
-    })
+    cmd.get_subcommands()
+        .find_map(|sub| command_declaring_long(sub, flag, &here))
 }
 
 pub(crate) fn command_takes_flag(cmd: &Command, flag: &str) -> bool {
@@ -3169,6 +3179,55 @@ mod tests {
         assert!(result.error().is_some_and(|error| error
             .to_string()
             .contains("pager_flag installs `--no-pager`")));
+    }
+
+    /// clap grows `--help` and `--version` per command only while building, so
+    /// the search runs against a built clone for those two spellings.
+    #[test]
+    fn a_framework_flag_spelled_like_a_generated_one_is_a_setup_error() {
+        let generated = |builder: AppBuilder| {
+            builder
+                .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+                .build()
+                .unwrap()
+                .verify_command(&Command::new("app").subcommand(Command::new("list")))
+                .unwrap_err()
+                .to_string()
+        };
+
+        let help = generated(AppBuilder::new().output_flag(Some("help")));
+        assert!(
+            help.contains("output_flag installs `--help`") && help.contains("`app`"),
+            "expected the generated help flag named, got: {help}"
+        );
+
+        let version = generated(
+            AppBuilder::new()
+                .version("1.0.0")
+                .color_flag(Some("version")),
+        );
+        assert!(
+            version.contains("color_flag installs `--version`") && version.contains("`app`"),
+            "expected the generated version flag named, got: {version}"
+        );
+    }
+
+    /// The command to rename is the one declaring the name, not its parent.
+    #[test]
+    fn a_colliding_subcommand_invocation_name_reports_the_subcommand() {
+        let app = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .build()
+            .unwrap();
+
+        let cmd = Command::new("app")
+            .subcommand(Command::new("list").subcommand(Command::new("all").long_flag("no-pager")));
+
+        let error = app.verify_command(&cmd).unwrap_err().to_string();
+        assert!(
+            error.contains("pager_flag installs `--no-pager`") && error.contains("`app list all`"),
+            "expected the declaring subcommand named, got: {error}"
+        );
     }
 
     #[test]
