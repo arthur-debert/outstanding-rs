@@ -503,22 +503,26 @@ Bytes are owned; streaming is deliberately not part of this contract.
 
 ## Incremental commands
 
-`Handler` carries two associated types. `Output` is the batch value or the
-summary; `Event` is the type of the values the command produces while it runs.
-A batch command sets `Event = NoEvents`, whose uninhabited type leaves `emit`
-with no argument that can be constructed, and ignores the third parameter.
+`Handler` carries three associated types. `Output` is the batch value or the
+summary; `Event` is the type of the values the command produces while it runs;
+`Outcome` is what `handle` wraps the value in, and `HandlerOutcome` admits
+`Output<T>` only under `NoEvents`, so a command that declares events has
+`Summary<T>` and no payload variant to return. A batch command sets
+`Event = NoEvents`, whose uninhabited type leaves `emit` with no argument that
+can be constructed, and ignores the third parameter.
 
 ```rust,ignore
 pub trait Handler {
     type Event: Serialize + 'static;
     type Output: Serialize;
+    type Outcome: HandlerOutcome<Self::Output, Self::Event>;
 
     fn handle(
         &mut self,
         matches: &ArgMatches,
         ctx: &CommandContext,
         results: &mut Results<Self::Event>,
-    ) -> HandlerResult<Self::Output>;
+    ) -> Result<Self::Outcome, anyhow::Error>;
 }
 ```
 
@@ -528,10 +532,9 @@ comes from the handler's own signature rather than a declaration beside it, so
 no handler can say one thing and do another, and the framework can decide
 before the handler runs what counting one invocation's events could only tell
 it afterwards. It decides at build time that the command needs its
-`<name>.event` template; it refuses `Output::Binary` and `Output::Artifact`
-from an incremental command on the run that emits nothing too; and it refuses
-an incremental command under an encoding that carries a command's results as
-one document before the handler runs.
+`<name>.event` template; and it refuses an incremental command under an
+encoding that carries a command's results as one document before the handler
+runs.
 
 `Event` is `'static` because an associated type carries no lifetime from
 `handle`'s parameters: an event holding a borrow of something the handler was
@@ -550,8 +553,10 @@ cannot ask which representation is running or where the bytes go.
 
 The adapter behind a two-argument closure (`FnHandler`) sets `Event = NoEvents`;
 `EventsFnHandler` is the adapter behind a three-argument closure taking
-`&mut Results<E>`. `#[handler]` picks between them from whether the function
-declares a `Results` parameter.
+`&mut Results<E>`, and that closure returns `Summary<T>` — `Render` or
+`Silent`, with an exit status — rather than `Output<T>`. `#[handler]` picks
+between the two adapters, and between the two outcomes, from whether the
+function declares a `Results` parameter.
 
 `RunRecorder` is the framework's own retention of the same values, passed to
 the dispatch closure rather than held on the context, so a handler cannot

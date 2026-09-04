@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde_json::json;
 use standout::cli::{
     App, CommandContext, Diagnostic, DiagnosticKind, DispatchResult, EventsFnHandler, ExitStatus,
-    Handler, HandlerResult, Output, OutputKind, Results, RunErrorKind, StreamSink,
+    Handler, OutputKind, Results, RunErrorKind, StreamSink, Summary, SummaryResult,
 };
 use standout::{
     AmbiguousWidth, ColorMode, ColorPolicy, EmbeddedTemplates, IconMode, InputSources,
@@ -40,13 +40,13 @@ fn app(seen: Rc<RefCell<Vec<String>>>, written: Rc<RefCell<Vec<u8>>>) -> App {
         .command_with(
             "apply",
             EventsFnHandler::new(
-                move |_, _ctx, results: &mut Results<Event>| -> HandlerResult<serde_json::Value> {
+                move |_, _ctx, results: &mut Results<Event>| -> SummaryResult<serde_json::Value> {
                     for resource in RESOURCES {
                         results.emit(Event::ApplyStart { resource })?;
                         seen.borrow_mut()
                             .push(String::from_utf8_lossy(&written.borrow()).into_owned());
                     }
-                    Ok(Output::Render(json!({ "add": RESOURCES.len() })))
+                    Ok(Summary::Render(json!({ "add": RESOURCES.len() })))
                 },
             ),
             |cfg| cfg,
@@ -169,12 +169,12 @@ fn a_reader_that_leaves_lets_the_handler_finish_and_keeps_the_command_s_status()
         .command_with(
             "apply",
             EventsFnHandler::new(
-                move |_, _ctx, results: &mut Results<Event>| -> HandlerResult<serde_json::Value> {
+                move |_, _ctx, results: &mut Results<Event>| -> SummaryResult<serde_json::Value> {
                     for resource in RESOURCES {
                         results.emit(Event::ApplyStart { resource })?;
                         handler_reached.borrow_mut().push(resource);
                     }
-                    Ok(Output::Render(json!({ "add": RESOURCES.len() })))
+                    Ok(Summary::Render(json!({ "add": RESOURCES.len() })))
                 },
             ),
             |cfg| cfg,
@@ -209,42 +209,6 @@ fn a_reader_that_leaves_lets_the_handler_finish_and_keeps_the_command_s_status()
     );
 }
 
-fn payload_command<T>(
-    templates: &'static [(&'static str, &'static str)],
-    emits: usize,
-    payload: fn() -> Output<T>,
-    destination: Shared,
-) -> DispatchResult
-where
-    T: serde::Serialize + 'static,
-{
-    let app = App::builder()
-        .templates(EmbeddedTemplates::new(templates, ""))
-        .command_with(
-            "apply",
-            EventsFnHandler::new(move |_, _ctx, results: &mut Results<Event>| {
-                for resource in RESOURCES.iter().take(emits) {
-                    results.emit(Event::ApplyStart { resource })?;
-                }
-                Ok::<_, anyhow::Error>(payload())
-            }),
-            |cfg| cfg,
-        )
-        .unwrap()
-        .build()
-        .unwrap();
-
-    app.run_with_sink(
-        command(),
-        ["app", "apply"],
-        target(),
-        ColorPolicy::Never,
-        InputSources::from_process(),
-        StreamSink::new(destination),
-    )
-    .into_outcome()
-}
-
 fn render_error(outcome: &DispatchResult) -> String {
     match outcome {
         DispatchResult::Error(error) => {
@@ -253,67 +217,6 @@ fn render_error(outcome: &DispatchResult) -> String {
         }
         other => panic!("expected a render error, got {other:?}"),
     }
-}
-
-#[test]
-fn a_command_that_declares_events_cannot_return_a_binary_payload_when_it_emits_none() {
-    let destination = Shared::default();
-    let outcome = payload_command(
-        TEMPLATES,
-        0,
-        || -> Output<serde_json::Value> {
-            Output::Binary {
-                data: vec![0xDE, 0xAD],
-                filename: "apply.bin".into(),
-            }
-        },
-        destination.clone(),
-    );
-
-    assert!(render_error(&outcome).contains("binary output was produced by a command that emits"));
-    assert!(
-        destination.0.borrow().is_empty(),
-        "the run that never emitted wrote nothing"
-    );
-}
-
-#[test]
-fn a_command_that_declares_events_cannot_return_an_artifact_payload_when_it_emits_none() {
-    let destination = Shared::default();
-    let outcome = payload_command(
-        TEMPLATES,
-        0,
-        || -> Output<serde_json::Value> {
-            Output::Artifact(standout::cli::Artifact::new(vec![1u8]).suggest_destination("out.bin"))
-        },
-        destination.clone(),
-    );
-
-    assert!(render_error(&outcome).contains("artifact output was produced by a command that emits"));
-    assert!(destination.0.borrow().is_empty());
-}
-
-#[test]
-fn a_command_that_emitted_an_event_cannot_return_a_binary_payload_either() {
-    let destination = Shared::default();
-    let outcome = payload_command(
-        TEMPLATES,
-        1,
-        || -> Output<serde_json::Value> {
-            Output::Binary {
-                data: vec![0xDE, 0xAD],
-                filename: "apply.bin".into(),
-            }
-        },
-        destination.clone(),
-    );
-
-    assert!(render_error(&outcome).contains("binary output was produced by a command that emits"));
-    assert_eq!(
-        String::from_utf8_lossy(&destination.0.borrow()),
-        "starting web\n",
-        "the event it did emit stands; the payload is what the run refuses"
-    );
 }
 
 const UNRESOLVED_TAG_TEMPLATES: &[(&str, &str)] = &[
@@ -330,9 +233,9 @@ fn strict_mode_fails_an_event_with_an_unresolved_style_tag_before_it_is_written(
         .command_with(
             "apply",
             EventsFnHandler::new(
-                |_, _ctx, results: &mut Results<Event>| -> HandlerResult<serde_json::Value> {
+                |_, _ctx, results: &mut Results<Event>| -> SummaryResult<serde_json::Value> {
                     results.emit(Event::ApplyStart { resource: "web" })?;
-                    Ok(Output::Render(json!({ "add": 1 })))
+                    Ok(Summary::Render(json!({ "add": 1 })))
                 },
             ),
             |cfg| cfg,
@@ -369,10 +272,10 @@ fn csv_takes_the_events_as_its_rows_once_the_command_ends() {
         .command_with(
             "apply",
             EventsFnHandler::new(
-                move |_, _ctx, results: &mut Results<Event>| -> HandlerResult<serde_json::Value> {
+                move |_, _ctx, results: &mut Results<Event>| -> SummaryResult<serde_json::Value> {
                     *handler_ran.borrow_mut() = true;
                     results.emit(Event::ApplyStart { resource: "web" })?;
-                    Ok(Output::Render(json!({ "add": 1 })))
+                    Ok(Summary::Render(json!({ "add": 1 })))
                 },
             ),
             |cfg| cfg,
@@ -409,9 +312,9 @@ fn an_emit_failure_the_handler_swallows_still_fails_the_run() {
         .command_with(
             "apply",
             EventsFnHandler::new(
-                |_, _ctx, results: &mut Results<Event>| -> HandlerResult<serde_json::Value> {
+                |_, _ctx, results: &mut Results<Event>| -> SummaryResult<serde_json::Value> {
                     let _ = results.emit(Event::ApplyStart { resource: "web" });
-                    Ok(Output::Render(json!({ "add": 1 })))
+                    Ok(Summary::Render(json!({ "add": 1 })))
                 },
             ),
             |cfg| cfg,
@@ -488,25 +391,22 @@ fn an_event_the_destination_refuses_fails_the_run_as_a_final_write() {
 
 struct HandWritten {
     ran: Rc<RefCell<bool>>,
-    emit: bool,
-    output: fn() -> Output<serde_json::Value>,
 }
 
 impl Handler for HandWritten {
     type Event = Event<'static>;
     type Output = serde_json::Value;
+    type Outcome = Summary<serde_json::Value>;
 
     fn handle(
         &mut self,
         _: &ArgMatches,
         _: &CommandContext,
         results: &mut Results<Self::Event>,
-    ) -> HandlerResult<serde_json::Value> {
+    ) -> SummaryResult<serde_json::Value> {
         *self.ran.borrow_mut() = true;
-        if self.emit {
-            results.emit(Event::ApplyStart { resource: "web" })?;
-        }
-        Ok((self.output)())
+        results.emit(Event::ApplyStart { resource: "web" })?;
+        Ok(Summary::Render(json!({ "add": 1 })))
     }
 }
 
@@ -535,37 +435,11 @@ fn a_hand_written_emitter_writes_its_events_as_csv_rows() {
     let ran = Rc::new(RefCell::new(false));
     let outcome = hand_written_run(
         &["app", "--output=csv", "apply"],
-        HandWritten {
-            ran: ran.clone(),
-            emit: true,
-            output: || Output::Render(json!({ "add": 1 })),
-        },
+        HandWritten { ran: ran.clone() },
         destination.clone(),
     );
 
     assert!(*ran.borrow());
     assert_eq!(outcome.output(), Some("type,resource\napply_start,web\n"));
-    assert!(destination.0.borrow().is_empty());
-}
-
-#[test]
-fn a_hand_written_emitter_cannot_return_a_payload_on_the_run_that_emits_none() {
-    let destination = Shared::default();
-    let ran = Rc::new(RefCell::new(false));
-    let outcome = hand_written_run(
-        &["app", "apply"],
-        HandWritten {
-            ran: ran.clone(),
-            emit: false,
-            output: || Output::Binary {
-                data: vec![0xDE, 0xAD],
-                filename: "apply.bin".into(),
-            },
-        },
-        destination.clone(),
-    );
-
-    assert!(render_error(&outcome).contains("binary output was produced by a command that emits"));
-    assert!(*ran.borrow());
     assert!(destination.0.borrow().is_empty());
 }

@@ -51,8 +51,9 @@ derives `thiserror::Error` — the same shape as the `StreamError` it replaces �
 `HandlerResult`'s error is `anyhow::Error`, which converts only from a
 `std::error::Error`, and `?` on an `emit` is how a handler propagates.
 
-`Handler::Output` keeps its name and its meaning: the summary an incremental command
-returns is the same `Output<S>` a batch command returns. `Handler::Event` is new. A batch
+`Handler::Output` keeps its name and its meaning, the type of the value the command
+produces; `Handler::Outcome` is what wraps it, `Output<S>` for a batch command and
+`Summary<S>` for an incremental one. `Handler::Event` is new. A batch
 command sets it to `NoEvents` and ignores the parameter, so there is one trait rather
 than a batch trait and an incremental one, and whether a command is incremental is read
 from that type rather than declared beside it. It is `'static` because an associated type
@@ -104,10 +105,11 @@ retain nothing, and the encodings that produce one document retain the serialize
 until the command ends. A recorder, which the test harness and the in-process capture
 entry points install, retains the records under any representation.
 
-The summary is the `Output<S>` the handler returns, with the meanings it already has:
-`Silent` produces no summary record and no summary render, leaving the events alone;
-`with_exit_status` applies as it does to a batch value; `Binary` and `Artifact` from a
-command that declares events are a render error decided before anything is written.
+The summary is the `Summary<S>` the handler returns as its `Handler::Outcome` — `Render`
+or `Silent`, either of them carrying an exit status — and `HandlerOutcome` admits
+`Output<S>` as an outcome only under `NoEvents`, so a command that declares events cannot
+return a payload at all: `Silent` produces no summary record and no summary render,
+leaving the events alone, and `with_exit_status` applies as it does to a batch value.
 
 ## Failure after emitted events
 

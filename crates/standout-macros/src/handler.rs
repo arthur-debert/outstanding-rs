@@ -282,10 +282,15 @@ fn generate_call_arg(param: &ParamInfo) -> TokenStream {
     }
 }
 
-fn extract_output_type(ty: &Type) -> Option<&Type> {
+/// The `Results` parameter alone decides which wrapper a handler returns, so a
+/// batch function returning an application's own `Summary<T>` keeps that as its
+/// output type. An emitting function still unwraps `Output<T>`, the batch
+/// wrapper written by mistake, so it reads as the `Summary`-not-`Output`
+/// diagnostic rather than as `Output<T>` failing to be `Serialize`.
+fn extract_output_type(ty: &Type, emits: bool) -> Option<&Type> {
     if let Type::Path(type_path) = ty {
         if let Some(segment) = type_path.path.segments.last() {
-            if segment.ident == "Output" {
+            if segment.ident == "Output" || (emits && segment.ident == "Summary") {
                 if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
                     if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
                         return Some(inner);
@@ -400,10 +405,17 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
 
     let return_type = &fn_item.sig.output;
 
+    let emits = event_type.is_some();
+
     let call_and_return = if is_unit_result(&fn_item) {
+        let empty = if emits {
+            quote! { #dispatch::Summary::Silent }
+        } else {
+            quote! { #dispatch::Output::Silent }
+        };
         quote! {
             #fn_name(#(#call_args),*)?;
-            Ok(#dispatch::Output::Silent)
+            Ok(#empty)
         }
     } else {
         quote! {
@@ -412,7 +424,11 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
     };
 
     let wrapper_return_type = if is_unit_result(&fn_item) {
-        quote! { -> #dispatch::HandlerResult<()> }
+        if emits {
+            quote! { -> #dispatch::SummaryResult<()> }
+        } else {
+            quote! { -> #dispatch::HandlerResult<()> }
+        }
     } else {
         quote! { #return_type }
     };
@@ -439,10 +455,28 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
 
     let output_type = if is_unit_result(&fn_item) {
         quote! { () }
-    } else if let Some(inner) = extract_output_type(&ok_type) {
+    } else if let Some(inner) = extract_output_type(&ok_type, emits) {
         quote! { #inner }
     } else {
         quote! { #ok_type }
+    };
+
+    let (handler_outcome, handle_result, into_outcome) = if emits {
+        (
+            quote! { #dispatch::Summary<#output_type> },
+            quote! { #dispatch::SummaryResult<Self::Output> },
+            quote! {
+                #dispatch::IntoSummaryResult::into_summary_result(#wrapper_name(matches, ctx #event_argument))
+            },
+        )
+    } else {
+        (
+            quote! { #dispatch::Output<#output_type> },
+            quote! { #dispatch::HandlerResult<Self::Output> },
+            quote! {
+                #dispatch::IntoHandlerResult::into_handler_result(#wrapper_name(matches, ctx #event_argument))
+            },
+        )
     };
 
     Ok(quote! {
@@ -466,15 +500,16 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
         impl #dispatch::Handler for #handler_struct_name {
             type Event = #handler_event;
             type Output = #output_type;
+            type Outcome = #handler_outcome;
 
             fn handle(
                 &mut self,
                 matches: &::clap::ArgMatches,
                 ctx: &#dispatch::CommandContext,
                 #handler_results: &mut #dispatch::Results<Self::Event>,
-            ) -> #dispatch::HandlerResult<Self::Output>
+            ) -> #handle_result
             {
-                #dispatch::IntoHandlerResult::into_handler_result(#wrapper_name(matches, ctx #event_argument))
+                #into_outcome
             }
 
             fn expected_args(&self) -> ::std::vec::Vec<#dispatch::verify::ExpectedArg> {
@@ -495,6 +530,17 @@ mod tests {
 
         let ty: Type = syn::parse_quote!(String);
         assert!(!is_option_type(&ty));
+    }
+
+    #[test]
+    fn a_batch_return_type_named_summary_stays_the_output_type() {
+        let summary: Type = syn::parse_quote!(domain::Summary<Row>);
+        let output: Type = syn::parse_quote!(Output<Row>);
+
+        assert!(extract_output_type(&summary, false).is_none());
+        assert!(extract_output_type(&output, false).is_some());
+        assert!(extract_output_type(&summary, true).is_some());
+        assert!(extract_output_type(&output, true).is_some());
     }
 
     #[test]

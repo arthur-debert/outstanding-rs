@@ -86,12 +86,13 @@ pub(crate) fn payload_without_a_stream(output: &str) -> RunError {
     )
 }
 
-/// A command that produces its result while it runs writes it to the
-/// destination as it goes, so a payload cannot follow: it would be a second
-/// document sharing one file or one stdout. `emits_events` comes from the
-/// command's `Handler::Event` type, so an invocation that emitted nothing is
-/// refused the same way.
-pub(crate) fn reject_payload_from_an_emitting_command(
+/// A post-output hook hands back a `RenderedOutput`, which it may build as
+/// `Binary` or `Artifact`, and it builds it while the run is under way. On a
+/// command whose event type is not `NoEvents` the events already carried the
+/// run's results, so a payload from the hook would be a second document sharing
+/// one file or one stdout. The handler's own return cannot reach this shape:
+/// `Handler::Outcome` is a `Summary` for every event type but `NoEvents`.
+pub(crate) fn reject_payload_from_a_post_output_hook(
     emits_events: bool,
     is_binary: bool,
     is_artifact: bool,
@@ -108,8 +109,8 @@ pub(crate) fn reject_payload_from_an_emitting_command(
     };
     Err(RunError::new(
         format!(
-            "{payload} output was produced by a command that emits events; a command \
-             producing events carries Output::Render and Output::Silent only"
+            "{payload} output was produced by the post_output hook of a command that emits \
+             events; the events carried the run's results, so the hook returns text or silence"
         ),
         RunErrorKind::Render,
     ))

@@ -33,9 +33,9 @@ pub use dispatch::{
 };
 pub use handler::{
     AppFailure, CommandContext, DispatchResult, EventsFnHandler, ExitStatus, Extensions,
-    ExternalFailure, FnHandler, Handler, HandlerResult, IntoHandlerResult, InvalidAppStatus,
-    InvalidExternalStatus, Output, OutputKind, RunError, RunErrorKind, RunOutput, SimpleFnHandler,
-    SuccessKind,
+    ExternalFailure, FnHandler, Handler, HandlerOutcome, HandlerResult, IntoHandlerResult,
+    IntoSummaryResult, InvalidAppStatus, InvalidExternalStatus, Output, OutputKind, RunError,
+    RunErrorKind, RunOutput, SimpleFnHandler, SuccessKind, Summary, SummaryResult,
 };
 pub use hooks::{
     ArtifactOutput, HookError, HookPhase, Hooks, PostDispatchFn, PostOutputFn, PreDispatchFn,

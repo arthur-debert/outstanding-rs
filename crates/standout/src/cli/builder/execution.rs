@@ -590,7 +590,7 @@ impl App {
             sink.cancel_pending_redirect();
         }
 
-        if let Err(error) = super::super::dispatch::reject_payload_from_an_emitting_command(
+        if let Err(error) = super::super::dispatch::reject_payload_from_a_post_output_hook(
             emits_events,
             final_output.is_binary(),
             final_output.is_artifact(),
@@ -1725,6 +1725,7 @@ mod tests {
     use crate::cli::handler::FnHandler;
     use crate::cli::handler::HandlerResult;
     use crate::cli::handler::Output as HandlerOutput;
+    use crate::cli::handler::Summary as HandlerSummary;
     use crate::cli::hooks::{HookError, Hooks, RenderedOutput};
 
     #[test]
@@ -4124,7 +4125,7 @@ header:
                                 resource: format!("r{n}"),
                             })?;
                         }
-                        Ok::<_, anyhow::Error>(HandlerOutput::Render(
+                        Ok::<_, anyhow::Error>(HandlerSummary::Render(
                             serde_json::json!({"done": 64}),
                         ))
                     },

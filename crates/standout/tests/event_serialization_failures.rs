@@ -4,8 +4,8 @@
 use clap::{ArgMatches, Command};
 use serde::Serialize;
 use standout::cli::{
-    App, CommandContext, DiagnosticKind, EventsFnHandler, HandlerResult, Output, Results,
-    RunErrorKind,
+    App, CommandContext, DiagnosticKind, EventsFnHandler, Results, RunErrorKind, Summary,
+    SummaryResult,
 };
 use standout::{ColorPolicy, EmbeddedTemplates, Representation};
 use standout_test::{TestHarness, TestResult};
@@ -30,13 +30,13 @@ fn run(propagates: bool, representation: Representation) -> TestResult {
                 move |_: &ArgMatches,
                       _: &CommandContext,
                       results: &mut Results<Unserializable>|
-                      -> HandlerResult<serde_json::Value> {
+                      -> SummaryResult<serde_json::Value> {
                     let event = Unserializable([((1u8, 2u8), 3u8)].into_iter().collect());
                     let emitted = results.emit(event);
                     if propagates {
                         emitted?;
                     }
-                    Ok(Output::Render(serde_json::json!({ "add": 1 })))
+                    Ok(Summary::Render(serde_json::json!({ "add": 1 })))
                 },
             ),
             |cfg| cfg,

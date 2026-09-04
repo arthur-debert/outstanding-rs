@@ -10,8 +10,8 @@ use super::builder::{SharedTemplateEngine, TemplateAbsence, TemplateRef};
 use super::dispatch::{render_handler_output, DispatchFn};
 use super::events::{event_template, EventContext, EventDestination};
 use crate::cli::handler::{
-    emits_events, CommandContext, FnHandler, Handler, HandlerResult, Results, RunRecorder,
-    StreamSink,
+    emits_events, CommandContext, FnHandler, Handler, HandlerOutcome, HandlerResult, Results,
+    RunRecorder, StreamSink,
 };
 use crate::cli::hooks::{Hooks, RenderedOutput, TextOutput};
 use crate::cli::questionnaire::{
@@ -118,7 +118,10 @@ where
             ));
             let mut results =
                 Results::<H::Event>::for_run(Some(recorder.clone()), destination.clone());
-            let result = handler.borrow_mut().handle(matches, ctx, &mut results);
+            let result = handler
+                .borrow_mut()
+                .handle(matches, ctx, &mut results)
+                .map(HandlerOutcome::into_output);
             if let Some(failure) = destination.take_failure() {
                 return Err(failure);
             }

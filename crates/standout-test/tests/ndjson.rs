@@ -7,7 +7,7 @@ use serde::Serialize;
 use serde_json::json;
 use standout::cli::{
     App, Artifact, CommandContextInput, Diagnostic, DiagnosticKind, EventsFnHandler, ExitStatus,
-    FnHandler, HandlerResult, Output, Results, RunErrorKind, Severity,
+    FnHandler, HandlerResult, Output, Results, RunErrorKind, Severity, Summary, SummaryResult,
 };
 use standout::ColorPolicy;
 use standout::{EmbeddedTemplates, Representation};
@@ -28,7 +28,6 @@ const TEMPLATES: &[(&str, &str)] = &[
     ("silent-stream.event", EVENT_TEMPLATE),
     ("warn", "{{ ok }}"),
     ("artifact", "wrote {{ report.entries }} entries"),
-    ("artifact.event", EVENT_TEMPLATE),
 ];
 
 #[derive(Serialize)]
@@ -55,11 +54,11 @@ fn app() -> App {
         .command_with(
             "stream",
             EventsFnHandler::new(
-                |_, _ctx, results: &mut Results<Entry>| -> HandlerResult<serde_json::Value> {
+                |_, _ctx, results: &mut Results<Entry>| -> SummaryResult<serde_json::Value> {
                     results.emit(Entry::Version { format_version: 1 })?;
                     results.emit(Entry::ApplyStart { resource: "web" })?;
                     results.emit(Entry::ApplyComplete { resource: "web" })?;
-                    Ok(Output::Render(json!({ "applied": 1 })))
+                    Ok(Summary::Render(json!({ "applied": 1 })))
                 },
             ),
             |cfg| cfg,
@@ -68,7 +67,7 @@ fn app() -> App {
         .command_with(
             "fail-mid-stream",
             EventsFnHandler::new(
-                |_, _ctx, results: &mut Results<Entry>| -> HandlerResult<serde_json::Value> {
+                |_, _ctx, results: &mut Results<Entry>| -> SummaryResult<serde_json::Value> {
                     results.emit(Entry::Version { format_version: 1 })?;
                     results.emit(Entry::ApplyStart { resource: "web" })?;
                     Err(Diagnostic::error("web: refused")
@@ -91,9 +90,9 @@ fn app() -> App {
         .command_with(
             "silent-stream",
             EventsFnHandler::new(
-                |_, _ctx, results: &mut Results<Entry>| -> HandlerResult<()> {
+                |_, _ctx, results: &mut Results<Entry>| -> SummaryResult<()> {
                     results.emit(Entry::Version { format_version: 1 })?;
-                    Ok(Output::Silent)
+                    Ok(Summary::Silent)
                 },
             ),
             |cfg| cfg,
@@ -101,22 +100,18 @@ fn app() -> App {
         .unwrap()
         .command_with(
             "binary",
-            EventsFnHandler::new(
-                |_, _ctx, results: &mut Results<Entry>| -> HandlerResult<()> {
-                    results.emit(Entry::Version { format_version: 1 })?;
-                    Ok(Output::Binary {
-                        data: vec![0, 1, 2],
-                        filename: "out.bin".into(),
-                    })
-                },
-            ),
+            FnHandler::new(|_, _| -> HandlerResult<()> {
+                Ok(Output::Binary {
+                    data: vec![0, 1, 2],
+                    filename: "out.bin".into(),
+                })
+            }),
             |cfg| cfg.binary(),
         )
         .unwrap()
         .command_with(
             "artifact",
-            EventsFnHandler::new(|_, _ctx, results: &mut Results<Entry>| {
-                results.emit(Entry::Version { format_version: 1 })?;
+            FnHandler::new(|_, _| -> HandlerResult<serde_json::Value> {
                 Ok(Output::Artifact(
                     Artifact::new(vec![0, 1, 2]).with_report(json!({ "entries": 3 })),
                 ))
@@ -387,25 +382,19 @@ fn assert_payload_is_a_render_error(result: &standout_test::TestResult) {
     result.assert_stderr_empty();
 }
 
-fn assert_entries_are_the_version_then_the_render_error(
-    entries: &[serde_json::Value],
-    payload: &str,
-) {
-    assert_eq!(entries.len(), 2, "{payload}: {entries:?}");
-    assert_eq!(entries[0]["type"], "version");
-    assert_eq!(entries[1]["type"], "diagnostic");
-    assert_eq!(entries[1]["kind"], "render");
-    let summary = entries[1]["summary"].as_str().unwrap_or_default();
+fn assert_the_only_entry_is_the_render_error(entries: &[serde_json::Value], payload: &str) {
+    assert_eq!(entries.len(), 1, "{payload}: {entries:?}");
+    assert_eq!(entries[0]["type"], "diagnostic");
+    assert_eq!(entries[0]["kind"], "render");
+    let summary = entries[0]["summary"].as_str().unwrap_or_default();
     assert!(
-        summary.contains(&format!(
-            "{payload} output was produced by a command that emits events"
-        )),
+        summary.contains(&format!("{payload} output was produced under ndjson")),
         "{payload}: {summary}"
     );
 }
 
 #[test]
-fn binary_and_artifact_output_under_ndjson_are_render_errors_after_the_entries() {
+fn binary_and_artifact_output_under_ndjson_are_render_errors() {
     for payload in ["binary", "artifact"] {
         let result = TestHarness::new().output_mode(Representation::Ndjson).run(
             &app(),
@@ -414,16 +403,16 @@ fn binary_and_artifact_output_under_ndjson_are_render_errors_after_the_entries()
         );
         assert_payload_is_a_render_error(&result);
         assert_eq!(result.expect_diagnostic().kind, DiagnosticKind::Render);
-        assert_entries_are_the_version_then_the_render_error(&lines(result.stdout()), payload);
+        assert_the_only_entry_is_the_render_error(&lines(result.stdout()), payload);
     }
 }
 
 #[test]
-fn binary_and_artifact_output_under_ndjson_with_an_output_file_leave_only_the_stream_in_it() {
+fn binary_and_artifact_output_under_ndjson_with_an_output_file_leave_only_the_diagnostic_in_it() {
     for payload in ["binary", "artifact"] {
         let (result, file) = run_to_file(payload);
         assert_payload_is_a_render_error(&result);
         assert_eq!(result.stdout_bytes(), b"", "{payload}: {}", result.stdout());
-        assert_entries_are_the_version_then_the_render_error(&lines(&file), payload);
+        assert_the_only_entry_is_the_render_error(&lines(&file), payload);
     }
 }
