@@ -26,7 +26,9 @@
 >   exit status, rather than the batch `Output<S>`. `Handler` carries the choice
 >   as a third associated type, `Outcome`, whose bound admits `Output<S>` only
 >   under `NoEvents`, so a payload from a command that declares events is a type
->   error rather than the runtime refusal this Spec and ADR-0041 describe.
+>   error rather than the runtime refusal this Spec and ADR-0041 describe. A
+>   `post_output` hook returns its `RenderedOutput` at run time, so that one
+>   seam keeps the runtime refusal.
 > - WS08 (#519) has not run in full. The documentation, the help text and this
 >   Spec's filing as implemented are done; what it still owes is the adopter half — the corpus
 >   applications replacing their own `--no-pager` flag and `PAGER` reading with

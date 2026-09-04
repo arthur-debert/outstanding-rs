@@ -5,8 +5,9 @@ use clap::{ArgMatches, Command};
 use serde_json::{json, Value};
 use standout::cli::hooks::TextOutput;
 use standout::cli::{
-    App, CommandContext, CommandContextInput, EventsFnHandler, ExitStatus, RenderedOutput, Results,
-    RunErrorKind, Summary, SummaryResult,
+    App, ArtifactOutput, CommandContext, CommandContextInput, DispatchResult, EventsFnHandler,
+    ExitStatus, FnHandler, HandlerResult, Output, RenderedOutput, Results, RunErrorKind, Summary,
+    SummaryResult,
 };
 use standout::tabular::{Column, Width};
 use standout::{
@@ -27,6 +28,8 @@ const HOOK_WARNING: &str = "a warning the post-output hook raised";
 
 const REPLACEMENT: &str = "the hook's own document";
 
+const PAYLOAD: &[u8] = b"the hook's own bytes";
+
 #[derive(Clone, Copy, PartialEq)]
 enum Ending {
     Summary,
@@ -42,6 +45,21 @@ enum PostOutput {
     Warns,
     Unchanged,
     ChangesRawOnly,
+    ReturnsBinary,
+    ReturnsArtifact,
+}
+
+fn payload_hook(hook: PostOutput) -> RenderedOutput {
+    match hook {
+        PostOutput::ReturnsBinary => RenderedOutput::Binary(PAYLOAD.to_vec(), "run.bin".into()),
+        PostOutput::ReturnsArtifact => RenderedOutput::Artifact(ArtifactOutput {
+            bytes: PAYLOAD.to_vec(),
+            suggested_destination: None,
+            stdout_allowed: true,
+            report: None,
+        }),
+        _ => unreachable!("only the payload hooks build a payload"),
+    }
 }
 
 fn events(results: &mut Results<Value>) -> Result<(), anyhow::Error> {
@@ -98,6 +116,9 @@ fn app(ending: Ending, hook: PostOutput) -> App {
                         output => output,
                     })
                 }),
+                PostOutput::ReturnsBinary | PostOutput::ReturnsArtifact => {
+                    cfg.post_output(move |_, _, _| Ok(payload_hook(hook)))
+                }
             },
         )
         .unwrap()
@@ -704,5 +725,73 @@ fn a_successful_run_puts_its_results_on_stdout_and_writes_nothing_to_stderr() {
             Representation::Csv => assert_eq!(result.stdout(), EVENT_ROWS),
             _ => assert_eq!(records(&result), stream_records(), "{representation:?}"),
         }
+    }
+}
+
+const PAYLOAD_ENCODINGS: [Representation; 4] = [
+    Representation::Human,
+    Representation::Csv,
+    Representation::Json,
+    Representation::Yaml,
+];
+
+#[test]
+fn a_post_output_hook_cannot_turn_an_emitting_run_into_a_payload() {
+    for (hook, payload) in [
+        (PostOutput::ReturnsBinary, "binary"),
+        (PostOutput::ReturnsArtifact, "artifact"),
+    ] {
+        for representation in PAYLOAD_ENCODINGS {
+            let result = run_hooked(Ending::Summary, hook, representation);
+
+            let DispatchResult::Error(error) = result.outcome() else {
+                panic!(
+                    "{payload} {representation:?}: expected a render error, got {}",
+                    result.stdout()
+                );
+            };
+            assert_eq!(
+                error.kind(),
+                RunErrorKind::Render,
+                "{payload} {representation:?}"
+            );
+            assert!(
+                error.as_str().contains(&format!(
+                    "{payload} output was produced by the post_output hook of a command that \
+                     emits events"
+                )),
+                "{payload} {representation:?}: {}",
+                error.as_str()
+            );
+        }
+    }
+}
+
+fn batch_app(hook: PostOutput) -> App {
+    App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "apply",
+            FnHandler::new(
+                |_: &ArgMatches, _: &CommandContext| -> HandlerResult<Value> {
+                    Ok(Output::Render(json!({ "add": RESOURCES.len() })))
+                },
+            ),
+            move |cfg| cfg.post_output(move |_, _, _| Ok(payload_hook(hook))),
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+#[test]
+fn the_same_hook_on_a_command_that_emits_nothing_still_delivers_its_payload() {
+    for hook in [PostOutput::ReturnsBinary, PostOutput::ReturnsArtifact] {
+        let result = TestHarness::new()
+            .color(ColorPolicy::Never)
+            .output_mode(Representation::Human)
+            .run(&batch_app(hook), command(), ["app", "apply"]);
+
+        result.assert_success();
     }
 }

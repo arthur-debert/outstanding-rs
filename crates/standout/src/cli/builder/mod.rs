@@ -1667,6 +1667,12 @@ impl App {
             None => output,
         };
         reject_status_without_a_carrier(output.is_binary(), output.is_artifact())?;
+        super::dispatch::reject_payload_from_a_post_output_hook(
+            emits_events::<H::Event>(),
+            output.is_binary(),
+            output.is_artifact(),
+        )
+        .map_err(|e| HookError::post_output("Render error").with_source(e))?;
         super::dispatch::reject_payload_under_stream(
             output_mode,
             output.is_binary(),

@@ -394,7 +394,7 @@ fn assert_the_only_entry_is_the_render_error(entries: &[serde_json::Value], payl
 }
 
 #[test]
-fn binary_and_artifact_output_under_ndjson_are_render_errors_after_the_entries() {
+fn binary_and_artifact_output_under_ndjson_are_render_errors() {
     for payload in ["binary", "artifact"] {
         let result = TestHarness::new().output_mode(Representation::Ndjson).run(
             &app(),

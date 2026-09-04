@@ -273,9 +273,13 @@ where
     }
 }
 
-impl<T: Serialize> IntoSummaryResult<T> for SummaryResult<T> {
+impl<T, E> IntoSummaryResult<T> for Result<Summary<T>, E>
+where
+    T: Serialize,
+    E: Into<anyhow::Error>,
+{
     fn into_summary_result(self) -> SummaryResult<T> {
-        self
+        self.map_err(Into::into)
     }
 }
 
@@ -937,6 +941,25 @@ mod tests {
         };
         assert_eq!(ctx.command_path, vec!["config", "get"]);
     }
+    #[derive(Debug, thiserror::Error)]
+    #[error("the store refused")]
+    struct StoreRefused;
+
+    #[test]
+    fn a_summary_carrying_an_error_of_its_own_converts_to_a_summary_result() {
+        let rendered: Result<Summary<u8>, StoreRefused> = Ok(Summary::Render(7));
+        assert!(matches!(
+            rendered.into_summary_result(),
+            Ok(Summary::Render(7))
+        ));
+
+        let refused: Result<Summary<u8>, StoreRefused> = Err(StoreRefused);
+        assert_eq!(
+            refused.into_summary_result().unwrap_err().to_string(),
+            "the store refused"
+        );
+    }
+
     #[test]
     fn external_failure_rejects_success_and_preserves_metadata() {
         assert_eq!(

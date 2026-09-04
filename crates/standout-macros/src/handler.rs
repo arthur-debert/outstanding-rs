@@ -282,10 +282,15 @@ fn generate_call_arg(param: &ParamInfo) -> TokenStream {
     }
 }
 
-fn extract_output_type(ty: &Type) -> Option<&Type> {
+/// The `Results` parameter alone decides which wrapper a handler returns, so a
+/// batch function returning an application's own `Summary<T>` keeps that as its
+/// output type. An emitting function still unwraps `Output<T>`, the batch
+/// wrapper written by mistake, so it reads as the `Summary`-not-`Output`
+/// diagnostic rather than as `Output<T>` failing to be `Serialize`.
+fn extract_output_type(ty: &Type, emits: bool) -> Option<&Type> {
     if let Type::Path(type_path) = ty {
         if let Some(segment) = type_path.path.segments.last() {
-            if segment.ident == "Output" || segment.ident == "Summary" {
+            if segment.ident == "Output" || (emits && segment.ident == "Summary") {
                 if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
                     if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
                         return Some(inner);
@@ -450,7 +455,7 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
 
     let output_type = if is_unit_result(&fn_item) {
         quote! { () }
-    } else if let Some(inner) = extract_output_type(&ok_type) {
+    } else if let Some(inner) = extract_output_type(&ok_type, emits) {
         quote! { #inner }
     } else {
         quote! { #ok_type }
@@ -525,6 +530,17 @@ mod tests {
 
         let ty: Type = syn::parse_quote!(String);
         assert!(!is_option_type(&ty));
+    }
+
+    #[test]
+    fn a_batch_return_type_named_summary_stays_the_output_type() {
+        let summary: Type = syn::parse_quote!(domain::Summary<Row>);
+        let output: Type = syn::parse_quote!(Output<Row>);
+
+        assert!(extract_output_type(&summary, false).is_none());
+        assert!(extract_output_type(&output, false).is_some());
+        assert!(extract_output_type(&summary, true).is_some());
+        assert!(extract_output_type(&output, true).is_some());
     }
 
     #[test]

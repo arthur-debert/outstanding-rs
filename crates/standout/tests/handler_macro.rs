@@ -482,3 +482,34 @@ fn a_handler_without_a_results_parameter_declares_no_events() {
     fn assert_no_events<H: Handler<Event = NoEvents>>(_: &H) {}
     assert_no_events(&batch_Handler);
 }
+
+mod domain {
+    #[derive(Debug, PartialEq, serde::Serialize)]
+    pub struct Summary<T> {
+        pub rows: Vec<T>,
+    }
+}
+
+#[handler]
+fn report(#[flag] verbose: bool) -> Result<domain::Summary<bool>, anyhow::Error> {
+    Ok(domain::Summary {
+        rows: vec![verbose],
+    })
+}
+
+#[test]
+fn a_batch_handler_keeps_an_application_type_named_summary_as_its_output() {
+    fn assert_output<H: Handler<Output = domain::Summary<bool>>>(_: &H) {}
+    assert_output(&report_Handler);
+
+    let matches = verbose_matches(&["test", "-v"]);
+    let ctx = CommandContext::default();
+    let mut results = Results::<NoEvents>::recording(RunRecorder::new());
+
+    let output = report_Handler.handle(&matches, &ctx, &mut results).unwrap();
+
+    assert!(matches!(
+        output,
+        Output::Render(domain::Summary { ref rows }) if rows == &[true]
+    ));
+}

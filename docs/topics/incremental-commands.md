@@ -139,7 +139,10 @@ status, so a command that changes things is never left half done by a pipe.
 A command whose event type is not `NoEvents` returns `Summary`, which has
 `Render` and `Silent` and no payload variant, so a handler that tries to return
 one does not compile — on the run that emits nothing too, since the type
-follows the declaration rather than the count. Under `ndjson` a payload is a
+follows the declaration rather than the count. A `post_output` hook builds its
+value while the run is under way, so that one seam stays a render error: a hook
+returning either payload on a command that declares events fails the run under
+every representation. Under `ndjson` a payload is a
 render error whether or not the command declares events: a stream of JSON lines
 has no room for one.
 

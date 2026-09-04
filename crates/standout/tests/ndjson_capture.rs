@@ -1,8 +1,8 @@
 use clap::{Arg, Command};
 use serde_json::json;
 use standout::cli::{
-    App, EventsFnHandler, FnHandler, HandlerResult, Output, Results, StreamCapture, StreamSink,
-    Summary, SummaryResult,
+    App, ArtifactOutput, EventsFnHandler, FnHandler, HandlerResult, Output, RenderedOutput,
+    Results, StreamCapture, StreamSink, Summary, SummaryResult,
 };
 use standout::ColorPolicy;
 use standout::{
@@ -208,4 +208,56 @@ fn run_command_rejects_binary_output_under_ndjson() {
         source.contains("binary output was produced under ndjson"),
         "{error}: {source}"
     );
+}
+
+fn app_with_a_payload_hook(binary: bool) -> App {
+    App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with("stream", EventsFnHandler::new(stream_handler), move |cfg| {
+            cfg.post_output(move |_, _, _| {
+                Ok(if binary {
+                    RenderedOutput::Binary(vec![0, 1, 2], "out.bin".into())
+                } else {
+                    RenderedOutput::Artifact(ArtifactOutput {
+                        bytes: vec![0, 1, 2],
+                        suggested_destination: None,
+                        stdout_allowed: true,
+                        report: None,
+                    })
+                })
+            })
+        })
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+#[test]
+fn run_command_rejects_a_payload_a_post_output_hook_puts_after_the_events() {
+    for (binary, payload) in [(true, "binary"), (false, "artifact")] {
+        let matches = command_with_output_flag()
+            .try_get_matches_from(["app", "--output=json", "stream"])
+            .unwrap();
+        let sub = matches.subcommand_matches("stream").unwrap();
+        let error = app_with_a_payload_hook(binary)
+            .run_command(
+                "stream",
+                sub,
+                EventsFnHandler::new(stream_handler),
+                TemplateRef::Named("stream".to_string()),
+                ColorPolicy::Auto,
+                StreamSink::new(Vec::new()),
+            )
+            .unwrap_err();
+        let source = std::error::Error::source(&error)
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        assert!(
+            source.contains(&format!(
+                "{payload} output was produced by the post_output hook of a command that emits \
+                 events"
+            )),
+            "{error}: {source}"
+        );
+    }
 }

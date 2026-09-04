@@ -327,6 +327,7 @@ impl App {
 
         let hooks = self.command_hooks.get(&path_str);
         let sub_matches = get_deepest_matches(&matches);
+        let emits_events = self.emits_events_for(&path_str);
 
         if let Some(hooks) = hooks {
             if let Err(e) = hooks.run_pre_dispatch(sub_matches, &mut ctx) {
@@ -359,6 +360,7 @@ impl App {
             sub_matches,
             &ctx,
             output_mode,
+            emits_events,
             override_path,
             &sink,
             &warnings,
@@ -443,6 +445,7 @@ impl App {
             sub_matches,
             &ctx,
             output_mode,
+            false,
             override_path,
             sink,
             warnings,
@@ -499,6 +502,7 @@ impl App {
         sub_matches: &ArgMatches,
         ctx: &CommandContext,
         output_mode: Representation,
+        emits_events: bool,
         override_path: Option<PathBuf>,
         sink: &StreamSink,
         warnings: &WarningBuffer,
@@ -584,6 +588,14 @@ impl App {
         // A payload and an artifact own the named file themselves.
         if !matches!(final_output, RenderedOutput::Text(_)) {
             sink.cancel_pending_redirect();
+        }
+
+        if let Err(error) = super::super::dispatch::reject_payload_from_a_post_output_hook(
+            emits_events,
+            final_output.is_binary(),
+            final_output.is_artifact(),
+        ) {
+            return DispatchResult::Error(error);
         }
 
         if let Err(error) = super::super::dispatch::reject_payload_under_stream(
