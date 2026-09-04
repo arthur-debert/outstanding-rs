@@ -348,7 +348,7 @@ framework-rendered or intentionally opaque bytes:
 
 ```toml
 [invariants]
-modes = ["text", "term", "json"]
+modes = ["text", "term", "json"]      # `--color never`, `--color always`, `--output json`
 colors = ["off", "on"]
 
 [[invariants.theme]]

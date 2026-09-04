@@ -20,9 +20,10 @@
 //! section and this module does not look for a field by name in someone else's
 //! struct. [`TermSettings`] holds the keys the framework reads for itself;
 //! `output` names one of the four structured encodings and fills
-//! `extract_output_mode`'s fallback arm when `--output` was not typed. It has no
+//! `resolve_run`'s fallback arm when `--output` was not typed. It has no
 //! spelling for the human representation, which is what a bare invocation
-//! renders, and none for `term-debug`.
+//! renders, and none for `term-debug`. `color` is the same three values
+//! `--color` takes and fills the same arm of the color resolution.
 //!
 //! The `config` command is clapfig's `ConfigCommand` tree, installed beside the help
 //! word. clapfig executes the action; this module only projects the `ConfigResult`
@@ -51,6 +52,7 @@ use crate::cli::builder::TemplateRef;
 use crate::cli::handler::{Artifact, Diagnostic, Extensions, Output, RunError, RunErrorKind};
 use crate::setup::SetupError;
 use crate::Representation;
+use standout_render::ColorPolicy;
 
 pub(crate) const CONFIG_COMMAND: &str = "config";
 
@@ -202,6 +204,7 @@ fn escape_style_tags(text: &str) -> String {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, clapfig::Schema)]
 pub struct TermSettings {
     pub output: Option<TermOutput>,
+    pub color: Option<TermColor>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clapfig::Schema)]
@@ -211,6 +214,24 @@ pub enum TermOutput {
     Yaml,
     Csv,
     Ndjson,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clapfig::Schema)]
+#[serde(rename_all = "kebab-case")]
+pub enum TermColor {
+    Auto,
+    Always,
+    Never,
+}
+
+impl From<TermColor> for ColorPolicy {
+    fn from(color: TermColor) -> Self {
+        match color {
+            TermColor::Auto => ColorPolicy::Auto,
+            TermColor::Always => ColorPolicy::Always,
+            TermColor::Never => ColorPolicy::Never,
+        }
+    }
 }
 
 impl From<TermOutput> for Representation {

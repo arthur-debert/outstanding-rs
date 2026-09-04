@@ -22,7 +22,7 @@ use crate::topics::{
 use crate::TemplateRegistry;
 use crate::{
     render_request_split, ColorPolicy, InputSources, RenderError, RenderRequest, Representation,
-    TargetProperties, Theme, TEMPLATE_EXTENSIONS,
+    Theme, TEMPLATE_EXTENSIONS,
 };
 use clap::parser::ValueSource;
 use clap::{Arg, ArgAction, ArgMatches, Command};
@@ -364,6 +364,7 @@ pub struct App {
     pub(crate) output_flag: Option<String>,
     pub(crate) output_mode_fallback: Representation,
     pub(crate) output_file_flag: Option<String>,
+    pub(crate) color_flag: Option<String>,
     pub(crate) theme: Theme,
     pub(crate) stylesheet_registry: Option<crate::StylesheetRegistry>,
     pub(crate) template_registry: Option<Rc<TemplateRegistry>>,
@@ -399,6 +400,7 @@ pub struct AppBuilder {
     pub(crate) output_flag: Option<String>,
     pub(crate) output_mode_fallback: Representation,
     pub(crate) output_file_flag: Option<String>,
+    pub(crate) color_flag: Option<String>,
     pub(crate) theme: Option<Theme>,
     pub(crate) stylesheet_registry: Option<crate::StylesheetRegistry>,
     pub(crate) template_registry: Option<TemplateRegistry>,
@@ -448,6 +450,7 @@ impl AppBuilder {
             output_flag: Some("output".to_string()),
             output_mode_fallback: Representation::Human,
             output_file_flag: Some("output-file-path".to_string()),
+            color_flag: Some("color".to_string()),
             theme: None,
             stylesheet_registry: None,
             template_registry: None,
@@ -585,6 +588,7 @@ impl AppBuilder {
             let taken = [
                 self.output_flag.as_deref(),
                 self.output_file_flag.as_deref(),
+                self.color_flag.as_deref(),
             ];
             if taken.contains(&Some(flag))
                 || (installs_config_command && config_tree_takes_long(flag))
@@ -607,6 +611,7 @@ impl AppBuilder {
             let taken = [
                 ("output_flag", self.output_flag.as_deref()),
                 ("output_file_flag", self.output_file_flag.as_deref()),
+                ("color_flag", self.color_flag.as_deref()),
             ]
             .into_iter()
             .find_map(|(option, flag)| {
@@ -651,6 +656,7 @@ impl AppBuilder {
             output_flag: self.output_flag,
             output_mode_fallback: self.output_mode_fallback,
             output_file_flag: self.output_file_flag,
+            color_flag: self.color_flag,
             theme: self
                 .theme
                 .take()
@@ -907,21 +913,28 @@ impl App {
                 )
             }
             Err(ParseFailure::Clap(e)) => {
+                let color_policy = self.resolve_color_policy(
+                    self.typed_color_from_unparsed(&args),
+                    ColorPolicy::Auto,
+                    None,
+                );
                 return match self.intercept_display_help(
                     &mut cmd,
                     &args,
                     &e,
                     None,
-                    ColorPolicy::Auto,
+                    color_policy,
                     None,
                 ) {
                     Some(display) => display.into(),
                     None => HelpResult::Error(e),
-                }
+                };
             }
         };
 
-        match self.intercept_help_word(&mut cmd, &matches, None, ColorPolicy::Auto, None) {
+        let color_policy =
+            self.resolve_color_policy(self.typed_color_policy(&matches), ColorPolicy::Auto, None);
+        match self.intercept_help_word(&mut cmd, &matches, None, color_policy, None) {
             Some(display) => display.into(),
             None => HelpResult::Matches(matches),
         }
@@ -1403,18 +1416,8 @@ impl App {
     }
 
     pub fn extract_output_mode(&self, matches: &ArgMatches) -> Representation {
-        self.extract_output_mode_over(matches, None)
-    }
-
-    pub(crate) fn extract_output_mode_over(
-        &self,
-        matches: &ArgMatches,
-        term: Option<&crate::TermSettings>,
-    ) -> Representation {
-        self.typed_output_mode(matches).unwrap_or_else(|| {
-            term.and_then(|term| term.output)
-                .map_or(self.output_mode_fallback, Representation::from)
-        })
+        self.typed_output_mode(matches)
+            .unwrap_or(self.output_mode_fallback)
     }
 
     pub(crate) fn typed_output_mode(&self, matches: &ArgMatches) -> Option<Representation> {
@@ -1430,6 +1433,58 @@ impl App {
         }
     }
 
+    /// The run's color policy, in the Spec's order: an explicit `--color`, the
+    /// policy the caller named (`run_with_color`, the harness), `NO_COLOR`, the
+    /// resolved `[term] color`, and last the destination, which `Auto` leaves to
+    /// `resolve_style_mode`.
+    ///
+    /// `NO_COLOR` is read here only to outrank a configured `always`. Below the
+    /// key it is a destination fact, which the process edge already probes as
+    /// part of stdout's color capability and an application may name for itself
+    /// on `TargetProperties`.
+    pub(crate) fn resolve_color_policy(
+        &self,
+        typed: Option<ColorPolicy>,
+        named: ColorPolicy,
+        term: Option<&crate::TermSettings>,
+    ) -> ColorPolicy {
+        if let Some(policy) = typed {
+            return policy;
+        }
+        if named != ColorPolicy::Auto {
+            return named;
+        }
+        match term.and_then(|term| term.color).map(ColorPolicy::from) {
+            Some(ColorPolicy::Always) if no_color_is_set() => ColorPolicy::Never,
+            Some(policy) => policy,
+            None => ColorPolicy::Auto,
+        }
+    }
+
+    pub(crate) fn typed_color_policy(&self, matches: &ArgMatches) -> Option<ColorPolicy> {
+        self.color_flag.as_ref()?;
+        match matches.try_get_one::<String>(COLOR_ARG) {
+            // A `DefaultValue` source means the user never typed `--color`.
+            Ok(Some(value))
+                if matches.value_source(COLOR_ARG) != Some(ValueSource::DefaultValue) =>
+            {
+                parse_color_flag(value.as_str())
+            }
+            _ => None,
+        }
+    }
+
+    /// The pre-parse read the help and usage paths use, where no `ArgMatches` exists yet.
+    pub(crate) fn typed_color_from_unparsed(
+        &self,
+        args: &[std::ffi::OsString],
+    ) -> Option<ColorPolicy> {
+        self.color_flag
+            .as_deref()
+            .and_then(|flag| last_unparsed_flag_value(flag, args))
+            .and_then(parse_color_flag)
+    }
+
     pub(crate) fn extract_output_mode_from_unparsed(
         &self,
         args: &[std::ffi::OsString],
@@ -1442,9 +1497,10 @@ impl App {
             .unwrap_or(self.output_mode_fallback)
     }
 
-    /// One handler, hooks and render included; `color_policy` decides whether the
-    /// rendered human text carries escape sequences, and `sink` is where the
-    /// handler's events are written as it emits them.
+    /// One handler, hooks and render included; `color_policy` is the policy the
+    /// caller names, which a typed `--color` and `[term] color` outrank through
+    /// `resolve_run`, and `sink` is where the handler's events are written as it
+    /// emits them.
     #[allow(clippy::too_many_arguments)]
     pub fn run_command<H>(
         &self,
@@ -1461,9 +1517,18 @@ impl App {
         let config = self
             .resolve_config(matches)
             .map_err(|error| HookError::pre_dispatch("Config error").with_source(error))?;
-        let output_mode = self.extract_output_mode_over(
+        let resolved = self.resolve_run(
             matches,
             config.as_ref().and_then(|config| config.term.as_ref()),
+            None,
+            color_policy,
+            self.output_mode_fallback,
+            self.process_edge_target(),
+        );
+        let (output_mode, color_policy, target) = (
+            resolved.representation,
+            resolved.color_policy,
+            resolved.target,
         );
         let mut ctx = CommandContext::new(
             path.split('.').map(String::from).collect(),
@@ -1490,8 +1555,6 @@ impl App {
         )
         .map_err(|e| HookError::post_output("Render error").with_source(e))?;
 
-        let mut target = TargetProperties::detect();
-        target.ambiguous_width = self.ambiguous_width;
         let destination = std::rc::Rc::new(crate::cli::events::EventDestination::new(
             sink,
             crate::cli::events::EventContext {
@@ -1677,6 +1740,28 @@ pub(crate) fn output_mode_flag_spelling(representation: Representation) -> Optio
     OUTPUT_MODE_FLAG_VALUES
         .into_iter()
         .find(|value| parse_output_mode_flag(value) == Some(representation))
+}
+
+/// `--color` decides whether human text carries escape sequences, on its own
+/// and whatever `--output` names.
+pub(crate) const COLOR_FLAG_VALUES: [&str; 3] = ["auto", "always", "never"];
+
+pub(crate) const COLOR_ARG: &str = "_color";
+
+pub(crate) const COLOR_FLAG_DEFAULT: &str = "auto";
+
+/// The convention: set and non-empty asks for no color.
+fn no_color_is_set() -> bool {
+    std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty())
+}
+
+fn parse_color_flag(value: &str) -> Option<ColorPolicy> {
+    match value {
+        "auto" => Some(ColorPolicy::Auto),
+        "always" => Some(ColorPolicy::Always),
+        "never" => Some(ColorPolicy::Never),
+        _ => None,
+    }
 }
 
 fn last_unparsed_flag_value<'a>(flag: &str, args: &'a [std::ffi::OsString]) -> Option<&'a str> {

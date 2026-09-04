@@ -17,5 +17,8 @@ OPTIONS
   --all                      Include archived notes
   --output <MODE>            Structured output encoding
                              possible values: json, yaml, csv, ndjson, term-debug
+  --color <WHEN>             When to color human output
+                             default: auto
+                             possible values: auto, always, never
   --output-file-path <PATH>  Write output to file instead of stdout
   -h, --help                 Print help

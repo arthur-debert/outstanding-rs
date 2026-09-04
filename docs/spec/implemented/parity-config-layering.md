@@ -224,6 +224,10 @@ someone else's struct. Theme is not a key: the theme is resolved at `build()`
 (ADR-0020) and there is no post-parse seam to change it. Cost: an app that forgets the
 accessor gets no `[term]`, which is explicit.
 
+As built after TERM01-WS05: `TermSettings` also holds `color: Option<TermColor>`,
+the same `auto`/`always`/`never` `--color` takes, consumed by the same resolution
+the flag feeds.
+
 As built after TERM01-WS02: `TermOutput` spells the four structured encodings —
 `json`, `yaml`, `csv` and `ndjson` — and nothing else. `auto`, `term` and `text` are
 retired with the flag values of the same names, and `term-debug` is a diagnostic view

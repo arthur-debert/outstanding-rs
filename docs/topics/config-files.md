@@ -136,11 +136,12 @@ count as the flag being present.
 ## The `[term]` section
 
 `standout::TermSettings` is the framework's own section. In this release it holds
-one key:
+two keys:
 
 ```toml
 [term]
 output = "json"     # the structured encoding a bare run produces
+color = "auto"      # auto | always | never: whether human text carries escapes
 ```
 
 `output` names one of the four structured encodings — `json`, `yaml`, `csv` or
@@ -155,9 +156,13 @@ error, which are emitted before configuration exists; for the same reason the
 when that fallback is a structured encoding, and absent when it is the human
 representation, which the flag cannot name. An application that used to read its own file into
 `output_mode_fallback` at build time should stop doing so and let `[term] output`
-carry the setting. Color, pager and verbosity
-keys join this section with the terminal-citizenship work; the theme is not a key,
-because the theme is resolved when the application is built.
+carry the setting.
+
+`color` takes the same three values as `--color` and fills the same arm of the
+color resolution: an explicit `--color` outranks it, `NO_COLOR` outranks a
+configured `always`, and `auto` leaves the answer to the destination. Pager and
+verbosity keys join this section with the terminal-citizenship work; the theme is
+not a key, because the theme is resolved when the application is built.
 
 ## The `config` command
 
