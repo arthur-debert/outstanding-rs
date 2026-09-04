@@ -27,11 +27,11 @@ armed = 0
 
 [[gate]]
 name = "tflike/progress"
-epic = "not yet minted (docs/spec/typed-command-output.md; codes are human-assigned)"
+epic = "TERM01 (typed command output)"
 env = "CORPUS_TFLIKE_BIN"
 tests = "tests/tflike_progress.rs"
-status = "open"
-armed = 3
+status = "closed"
+armed = 0
 
 [[gate]]
 name = "jjlike/runtime-templates"

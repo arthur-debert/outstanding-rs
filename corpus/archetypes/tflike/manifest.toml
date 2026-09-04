@@ -1,10 +1,11 @@
 # Feature/interaction manifest for `tflike`. Format: corpus/README.md.
 #
-# Gap-only archetype (ROB03-WS03): every acceptance case is expected-fail —
-# the spec deliberately describes capability standout does not have. The
-# byte-precise, runnable-today form of this suite is the workspace crate
-# `corpus/gap-suites` (tests/tflike_diagnostic.rs, tests/tflike_progress.rs),
-# which reports expected-fail under plain `pixi run test`.
+# Gap archetype (ROB03-WS03): the spec deliberately describes capability
+# standout did not have. The diagnostic-group cases are still expected-fail;
+# the progress group passes since TERM01. The byte-precise, runnable-today form
+# of this suite is the workspace crate `corpus/gap-suites`
+# (tests/tflike_diagnostic.rs, tests/tflike_progress.rs), which runs under
+# plain `pixi run test`.
 
 [archetype]
 name = "tflike"
@@ -43,7 +44,7 @@ cases = [
 [[interactions]]
 id = "progress-vs-stream-integrity"
 stresses = ["progress reporting", "NDJSON stream integrity", "mode-aware suppression"]
-description = "Apply-lifecycle events are typed incremental results on the same stream the diagnostics ride, and human progress rendering must vanish entirely under structured encodings — standout has no incremental result model outside ndjson, so nothing owns that suppression."
+description = "Apply-lifecycle events are typed incremental results on the same stream the diagnostics ride, and human progress rendering must vanish entirely under structured encodings — TERM01 gave standout the incremental result model that carries both."
 cases = [
     "apply-lifecycle-events-ride-the-stream",
     "apply-deletion-emits-lifecycle-and-summary",
@@ -52,4 +53,4 @@ cases = [
 
 [gaps]
 PAR02 = "The machine contract (docs/spec/implemented/parity-machine-contract.md): NDJSON stream mode, diagnostics as stream entries with severity and range, -detailed-exitcode's 0/2/1 vocabulary, handler-error-as-diagnostic. The diagnostic-milestone cases are its executable shape; PAR02 is done when they turn green."
-typed-command-output = "Typed command output (docs/spec/typed-command-output.md): apply_start and apply_complete as typed incremental result events on the command's stream, with human progress rendering absent under structured encodings. The progress-milestone cases are its executable shape; the owning epic is not yet minted (codes are human-assigned) and is done when they turn green."
+typed-command-output = "Typed command output (docs/spec/typed-command-output.md): apply_start and apply_complete as typed incremental result events on the command's stream, with human progress rendering absent under structured encodings. The progress-milestone cases were its executable shape; TERM01 closed them."

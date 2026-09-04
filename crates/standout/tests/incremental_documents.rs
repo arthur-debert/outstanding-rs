@@ -162,19 +162,22 @@ fn records(result: &TestResult) -> Vec<Value> {
 
 const DOCUMENT_ENCODINGS: [Representation; 2] = [Representation::Json, Representation::Yaml];
 
+/// The records a successful two-resource run puts on stdout under any JSON-shaped
+/// encoding: the four events, then the summary in the machine contract's envelope.
+fn stream_records() -> Vec<Value> {
+    vec![
+        json!({"type": "apply_start", "resource": "web"}),
+        json!({"type": "apply_complete", "resource": "web"}),
+        json!({"type": "apply_start", "resource": "db"}),
+        json!({"type": "apply_complete", "resource": "db"}),
+        json!({"type": "result", "data": {"add": 2}}),
+    ]
+}
+
 #[test]
 fn the_document_is_what_jq_s_makes_of_the_ndjson_run() {
     let framed = records(&run(Ending::Summary, Representation::Ndjson));
-    assert_eq!(
-        framed,
-        vec![
-            json!({"type": "apply_start", "resource": "web"}),
-            json!({"type": "apply_complete", "resource": "web"}),
-            json!({"type": "apply_start", "resource": "db"}),
-            json!({"type": "apply_complete", "resource": "db"}),
-            json!({"type": "result", "data": {"add": 2}}),
-        ]
-    );
+    assert_eq!(framed, stream_records());
     for representation in DOCUMENT_ENCODINGS {
         let result = run(Ending::Summary, representation);
         result.assert_success();
@@ -692,6 +695,41 @@ fn a_command_with_no_summary_template_still_has_its_csv_rows() {
                 EVENT_ROWS,
                 "renders_summary={renders_summary}"
             );
+        }
+    }
+}
+
+/// The human render of the same run: one line per event, then the summary.
+const HUMAN_LINES: &str = "apply_start web\n\
+                           apply_complete web\n\
+                           apply_start db\n\
+                           apply_complete db\n\
+                           2 added";
+
+const EVERY_REPRESENTATION: [Representation; 5] = [
+    Representation::Human,
+    Representation::Ndjson,
+    Representation::Json,
+    Representation::Yaml,
+    Representation::Csv,
+];
+
+#[test]
+fn a_successful_run_puts_its_results_on_stdout_and_writes_nothing_to_stderr() {
+    for representation in EVERY_REPRESENTATION {
+        let result = run(Ending::Summary, representation);
+
+        result.assert_success();
+        assert_eq!(result.stderr(), "", "{representation:?}");
+        assert!(
+            !result.stdout().contains('\u{1b}'),
+            "{representation:?} put escape sequences on stdout: {:?}",
+            result.stdout()
+        );
+        match representation {
+            Representation::Human => assert_eq!(result.stdout(), HUMAN_LINES),
+            Representation::Csv => assert_eq!(result.stdout(), EVENT_ROWS),
+            _ => assert_eq!(records(&result), stream_records(), "{representation:?}"),
         }
     }
 }
