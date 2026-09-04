@@ -37,19 +37,19 @@ Register it with `EventsFnHandler::new(apply)`, or write the same three
 parameters under `#[handler]`, which reads the `Results` parameter and derives
 the command's event type from it.
 
-`emit` takes the event by value and returns once the value has been rendered,
-written or retained, so the handler's next statement runs after the user has
-seen it. It fails when the value does not serialize, does not render, or cannot
-be written; propagate with `?` and the run fails with it. Standout reports that
+`emit` takes the event by value and returns once the framework has rendered,
+written or retained it, so the handler's next statement runs after the event
+has left the handler for good. It fails when the value does not serialize, does
+not render, or cannot be written; propagate with `?` and the run fails with it. Standout reports that
 failure as a render error whether or not the handler propagates it. The event
 type is `'static`, so an event owns what it carries rather than borrowing from
 the invocation.
 
 `Results` exposes `emit` and nothing else. A handler cannot ask which
 representation is running or where the bytes go, and emits the same events
-under every representation. Standout never reads an event: its shape, including
-whether it carries a `type` key, is the application's contract with its
-consumers. The Rust contract — the signatures, who owns `Results<E>`, and what
+under every representation. Standout serializes and renders an event without
+interpreting it: its shape, including whether it carries a `type` key, is the
+application's contract with its consumers. The Rust contract — the signatures, who owns `Results<E>`, and what
 a failure after an emitted event means — is
 [ADR-0041](../adr/0041-hand-the-handler-a-typed-results-sink.md).
 
