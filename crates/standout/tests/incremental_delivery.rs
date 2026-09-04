@@ -5,8 +5,9 @@ use clap::{ArgMatches, Command};
 use serde::Serialize;
 use serde_json::json;
 use standout::cli::{
-    App, CommandContext, DispatchResult, EventsFnHandler, ExitStatus, Handler, HandlerResult,
-    Output, Results, RunErrorKind, StreamSink, Summary, SummaryResult,
+    App, CommandContext, Diagnostic, DiagnosticKind, DispatchResult, EventsFnHandler, ExitStatus,
+    Handler, HandlerResult, Output, OutputKind, Results, RunErrorKind, StreamSink, Summary,
+    SummaryResult,
 };
 use standout::{
     AmbiguousWidth, ColorMode, ColorPolicy, EmbeddedTemplates, IconMode, InputSources,
@@ -335,7 +336,58 @@ fn an_emit_failure_the_handler_swallows_still_fails_the_run() {
         .into_outcome();
 
     assert!(render_error(&outcome).contains("left 1 style tag unresolved: nope"));
+    assert_eq!(outcome.error_kind(), Some(RunErrorKind::Render));
     assert!(destination.0.borrow().is_empty());
+}
+
+/// Refuses every write for a reason that is not the reader walking away.
+struct NoRoom;
+
+impl Write for NoRoom {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::other("no room"))
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// The diagnostic a process writes for this outcome, read back off the bytes.
+fn wire_diagnostic(outcome: &DispatchResult, representation: Representation) -> Diagnostic {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    standout::cli::emit_run_result(outcome, representation, &mut stdout, &mut stderr)
+        .expect("an in-memory destination never fails a write");
+    let stdout = String::from_utf8(stdout).unwrap();
+    standout::cli::parse_diagnostic(representation, &stdout).unwrap()
+}
+
+#[test]
+fn an_event_the_destination_refuses_fails_the_run_as_a_final_write() {
+    let app = app(
+        Rc::new(RefCell::new(Vec::new())),
+        Rc::new(RefCell::new(Vec::new())),
+    );
+
+    let outcome = app
+        .run_with_sink(
+            command(),
+            ["app", "--output=ndjson", "apply"],
+            target(),
+            ColorPolicy::Never,
+            InputSources::from_process(),
+            StreamSink::new(NoRoom),
+        )
+        .into_outcome();
+
+    assert_eq!(
+        outcome.error_kind(),
+        Some(RunErrorKind::FinalWrite(OutputKind::Text))
+    );
+    assert_eq!(
+        wire_diagnostic(&outcome, Representation::Ndjson).kind,
+        DiagnosticKind::FinalWrite
+    );
 }
 
 struct HandWritten {
