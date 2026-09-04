@@ -102,7 +102,6 @@ fn the_ordered_events_and_the_summary_are_the_same_values_under_either_represent
     assert_eq!(stream.results(), human.results());
     assert_eq!(stream.result(), human.result());
 
-    // The same values; the bytes are what the representation decides.
     assert_eq!(
         human.stdout(),
         "starting web\ndone web\nstarting db\ndone db\n2 added, 0 removed"

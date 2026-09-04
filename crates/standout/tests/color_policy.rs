@@ -513,7 +513,6 @@ fn the_harness_names_the_policy_and_the_destination_separately() {
         refused.stdout()
     );
 
-    // The values are the same either way: only the presentation moved.
     assert_eq!(console::strip_ansi_codes(forced.stdout()), refused.stdout());
     assert_eq!(forced.result(), refused.result());
 }

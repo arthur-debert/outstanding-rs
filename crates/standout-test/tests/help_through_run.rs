@@ -302,7 +302,6 @@ fn app_with_a_broken_theme() -> App {
     App::builder()
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .help_handling(true)
-        // Runs the downstream command, which spells `--color` itself.
         .no_color_flag()
         .include_framework_templates(false)
         .theme(broken_theme())

@@ -1,3 +1,12 @@
+//! The run's presentation and destination: the framework flags the builder
+//! installs, the entry points that dispatch a command, and the write of what
+//! the run produced.
+//!
+//! The payload and delivery decisions read the post-output hooks' final
+//! result, and the pager delivery is recorded on the final outcome, because a
+//! hook can still turn a document into a payload or add a report to an
+//! artifact whose handler returned none.
+
 use crate::{
     open_output_file, write_binary_output, write_output, ColorPolicy, InputSources,
     OutputDestination, Representation, TargetProperties,
@@ -174,8 +183,6 @@ impl App {
         let capture = StreamCapture::default();
         let recorder = RunRecorder::new();
         let run = self.collect_run_warnings(&recorder, |warnings| {
-            // Resolved before the config outcome is unwrapped, so a run that
-            // fails to load one still reports the policy its flags asked for.
             let config = self.resolve_config_for(&matches);
             let resolved = self.resolve_run(
                 &matches,
@@ -468,7 +475,6 @@ impl App {
             Some(path) => Delivery::File(path.to_path_buf()),
             None => Delivery::Stdout,
         });
-        // Retargeted before the handler runs, so its events land in the file too.
         if let Some(path) = override_path.filter(|_| writes_through_the_sink(output_mode)) {
             if output_mode.is_stream() {
                 let file = open_output_file(path).map_err(|e| {
@@ -501,8 +507,6 @@ impl App {
         sink: &StreamSink,
         warnings: &WarningBuffer,
     ) -> DispatchResult {
-        // The document the post-output hooks see carries no warnings; its tail is
-        // assembled from the snapshot standing after they return.
         let mut pending_records: Option<(Vec<serde_json::Value>, String)> = None;
         let (output, render, status) = match dispatch_output {
             DispatchOutput::Text {
@@ -557,8 +561,6 @@ impl App {
             output
         };
 
-        // Byte equality with the document the hooks were given, not the return
-        // variant: anything else is the hook's, and its warnings go to stderr.
         let mut warnings_included = false;
         if let Some((mut records, unhooked)) = pending_records {
             if matches!(&final_output, RenderedOutput::Text(t) if t.formatted == unhooked && t.raw == unhooked)
@@ -588,7 +590,6 @@ impl App {
             sink.cancel_pending_redirect();
         }
 
-        // On the hooks' final result: a hook can turn the document into a payload.
         if let Err(error) = super::super::dispatch::reject_payload_from_an_emitting_command(
             emits_events,
             final_output.is_binary(),
@@ -1056,8 +1057,6 @@ impl App {
         let sources = InputSources::from_process();
         let sink = StreamSink::process_stdout();
         let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
-        // Help short-circuits before an `ArgMatches` exists, so the named file is
-        // read from argv, early enough to render the page for a file.
         let output_file = self.output_file_from_unparsed(&args);
         let result = self.run_recording(
             cmd,
@@ -1072,7 +1071,6 @@ impl App {
         let warnings = result.warnings().to_vec();
         let output_mode = result.output_mode();
 
-        // A named output file wins over the pager, and over stdout.
         let help_to_file = output_file
             .zip(help_page(result.outcome()))
             .map(|(path, page)| {
@@ -1303,8 +1301,6 @@ impl App {
                 .global(true)
                 .value_parser(OUTPUT_MODE_FLAG_VALUES)
                 .help("Structured output encoding");
-            // The human representation has no spelling, so falling back to it
-            // leaves the flag with no default at all.
             if let Some(spelling) = output_mode_flag_spelling(self.output_mode_fallback) {
                 arg = arg.default_value(spelling);
             }
@@ -1573,8 +1569,6 @@ impl App {
 
         let receipt = ArtifactReceipt::new(destination.clone(), artifact.bytes.len());
 
-        // Resolved here and not before: a post-output hook can add a report to
-        // an artifact whose handler returned none.
         let report = match artifact.report {
             None => None,
             Some(report) => {

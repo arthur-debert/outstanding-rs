@@ -119,8 +119,6 @@ where
             let mut results =
                 Results::<H::Event>::for_run(Some(recorder.clone()), destination.clone());
             let result = handler.borrow_mut().handle(matches, ctx, &mut results);
-            // An event the framework could not carry outranks whatever the
-            // handler went on to return, a swallowed `emit` error included.
             if let Some(failure) = destination.take_failure() {
                 return Err(failure);
             }

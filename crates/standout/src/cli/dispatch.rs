@@ -316,10 +316,6 @@ pub(crate) fn render_handler_output<T: Serialize>(
         warnings,
     };
 
-    // The document an incremental run ends in. `json` and `yaml` take the array
-    // of records, the summary's among them. CSV takes the events as its rows and
-    // leaves the summary out: a `result` record is not a row shape, and the rows
-    // come from the projection, so a silent or binary command still has them.
     let event_document = |events: Vec<serde_json::Value>,
                           summary: Option<serde_json::Value>|
      -> Result<DispatchOutput, RunError> {

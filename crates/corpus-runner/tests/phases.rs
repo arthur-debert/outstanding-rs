@@ -495,7 +495,6 @@ fi
 echo 'irrelevant'
 "#;
 
-// Honors `--output json` and `--color always`; colored output adds only ANSI bold.
 const WELL_BEHAVED: &str = r#"
 if [ "$1" = "--help" ]; then echo 'Usage: fake [--output <mode>]'; exit 0; fi
 mode=text

@@ -1613,8 +1613,6 @@ impl App {
                 })
                 .map_err(|e| HookError::post_output("Render error").with_source(e))
         };
-        // CSV takes the retained events as its rows and leaves the summary out;
-        // the other document encodings take the array of records.
         let event_rows = output_mode == crate::Representation::Csv;
 
         let output = match output {
