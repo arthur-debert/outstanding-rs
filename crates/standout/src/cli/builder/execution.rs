@@ -1,6 +1,6 @@
 use crate::{
     open_output_file, write_binary_output, write_output, ColorPolicy, InputSources,
-    OutputDestination, RenderRequest, Representation, TargetProperties,
+    OutputDestination, Representation, TargetProperties,
 };
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use standout_render::warnings::WarningBuffer;
@@ -17,6 +17,7 @@ use crate::cli::config::{
 use crate::cli::default_command::ParseFailure;
 use crate::cli::dispatch::{
     dispatch, extract_command_path, get_deepest_matches, render_handler_output, DispatchOutput,
+    PendingRender,
 };
 use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
 use crate::cli::handler::{
@@ -470,7 +471,7 @@ impl App {
         // warnings; its tail is assembled after they return, from the snapshot
         // standing then.
         let mut pending_records: Option<(Vec<serde_json::Value>, String)> = None;
-        let (output, request, status) = match dispatch_output {
+        let (output, render, status) = match dispatch_output {
             DispatchOutput::Text {
                 formatted,
                 raw,
@@ -483,9 +484,9 @@ impl App {
             DispatchOutput::Binary(b, f) => {
                 (RenderedOutput::Binary(b, f), None, ExitStatus::SUCCESS)
             }
-            DispatchOutput::Artifact { output, request } => (
+            DispatchOutput::Artifact { output, render } => (
                 RenderedOutput::Artifact(output),
-                request,
+                Some(render),
                 ExitStatus::SUCCESS,
             ),
             DispatchOutput::Silent { status } => (RenderedOutput::Silent, None, status),
@@ -581,7 +582,7 @@ impl App {
                     status, "artifact",
                 ));
             }
-            return self.complete_artifact(artifact, request, override_path, warnings);
+            return self.complete_artifact(artifact, render, override_path, warnings);
         }
 
         // Before committing to stdout or a file, so a strict failure leaves no output.
@@ -1373,7 +1374,7 @@ impl App {
     fn complete_artifact(
         &self,
         artifact: ArtifactOutput,
-        request: Option<Box<RenderRequest>>,
+        render: Option<Box<PendingRender>>,
         override_path: Option<PathBuf>,
         warnings: &WarningBuffer,
     ) -> DispatchResult {
@@ -1384,10 +1385,13 @@ impl App {
 
         let receipt = ArtifactReceipt::new(destination.clone(), artifact.bytes.len());
 
+        // The template is resolved here and not before: a run that ends without
+        // a report never needed one, and a post-output hook can add a report to
+        // an artifact whose handler returned none.
         let report = match artifact.report {
             None => None,
             Some(report) => {
-                let Some(mut request) = request else {
+                let Some(render) = render else {
                     return DispatchResult::Error(RunError::new(
                         "Cannot render artifact report: the artifact carries a report but was \
                          not produced by a handler, so no template configuration is available",
@@ -1398,7 +1402,10 @@ impl App {
                     Ok(envelope) => envelope,
                     Err(error) => return DispatchResult::Error(error),
                 };
-                request.data = envelope;
+                let request = match render.resolved(envelope) {
+                    Ok(request) => request,
+                    Err(error) => return DispatchResult::Error(error),
+                };
                 match standout_render::render_request_split(&request) {
                     Ok(rendered) => Some(rendered.formatted),
                     Err(error) => {

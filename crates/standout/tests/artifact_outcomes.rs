@@ -626,3 +626,46 @@ fn an_artifact_without_a_report_resolves_no_summary_template() {
     let run = result.artifact().expect("artifact run");
     assert_eq!(run.report(), None);
 }
+
+#[test]
+fn a_post_output_hook_can_add_a_report_to_an_artifact_that_returned_without_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("export.csv");
+    let target = path.clone();
+
+    let result = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "export",
+            FnHandler::new(move |_matches, _ctx| -> HandlerResult<ExportReport> {
+                Ok(Output::Artifact(
+                    Artifact::new(BYTES.to_vec()).suggest_destination(&target),
+                ))
+            }),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .hooks(
+            "export",
+            Hooks::new().post_output(|_matches, _ctx, mut output| {
+                let artifact = output.as_artifact_mut().expect("artifact output");
+                artifact.report = Some(json!({ "entries": 1, "warnings": [] }));
+                Ok(output)
+            }),
+        )
+        .build()
+        .unwrap()
+        .run_with(
+            command(),
+            ["app", "export"],
+            standout::TargetProperties::detect(),
+            standout::InputSources::from_process(),
+        );
+
+    assert_eq!(std::fs::read(&path).unwrap(), BYTES);
+    let run = result.artifact().expect("artifact run");
+    assert_eq!(
+        run.report(),
+        Some(format!("Wrote 1 entries to {}", path.display()).as_str())
+    );
+}

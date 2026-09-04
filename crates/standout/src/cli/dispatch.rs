@@ -27,9 +27,10 @@ pub enum DispatchOutput {
     Binary(Vec<u8>, String),
     Artifact {
         output: ArtifactOutput,
-        /// The request the artifact's report renders through, present only
-        /// when the artifact carries one.
-        request: Option<Box<RenderRequest>>,
+        /// What the artifact's report renders through, if the run ends with
+        /// one. The post-output hooks can still add a report or take it away,
+        /// so nothing here is resolved until they have returned.
+        render: Box<PendingRender>,
     },
     Silent {
         status: ExitStatus,
@@ -176,34 +177,61 @@ fn render_time_template(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_render_request(
-    json_data: serde_json::Value,
-    template: standout_render::TemplateRef,
-    theme: &Theme,
-    context_registry: &ContextRegistry,
-    template_engine: &SharedTemplateEngine,
-    template_registry: Option<&Rc<crate::TemplateRegistry>>,
+/// Everything a render needs but its data and its resolved template. An
+/// artifact's report is rendered after the post-output hooks, which are free to
+/// add a report to an artifact that returned without one, so the configuration
+/// travels to presentation unresolved and only a run that ends with a report
+/// resolves a template.
+pub(crate) struct PendingRender {
+    command_path: String,
+    template: TemplateRef,
+    theme: Theme,
+    context_registry: ContextRegistry,
+    template_engine: SharedTemplateEngine,
+    template_registry: Option<Rc<crate::TemplateRegistry>>,
     output_mode: crate::Representation,
     color_policy: ColorPolicy,
-    structured_output_projection: Option<&StructuredOutputProjection>,
+    csv_projection: Option<crate::CsvProjection>,
     target: TargetProperties,
     warnings: Option<standout_render::warnings::WarningBuffer>,
-) -> RenderRequest {
-    RenderRequest {
-        data: json_data,
-        template,
-        theme: theme.clone(),
-        format: output_mode,
-        color_policy,
-        target,
-        engine: template_engine.clone(),
-        registry: template_registry.cloned(),
-        context_registry: Some(context_registry.clone()),
-        csv_projection: structured_output_projection
-            .map(|projection| projection.csv_projection().clone()),
-        extras: HashMap::new(),
-        warnings,
+}
+
+impl PendingRender {
+    fn request(
+        &self,
+        data: serde_json::Value,
+        template: standout_render::TemplateRef,
+    ) -> RenderRequest {
+        RenderRequest {
+            data,
+            template,
+            theme: self.theme.clone(),
+            format: self.output_mode,
+            color_policy: self.color_policy,
+            target: self.target,
+            engine: self.template_engine.clone(),
+            registry: self.template_registry.clone(),
+            context_registry: Some(self.context_registry.clone()),
+            csv_projection: self.csv_projection.clone(),
+            extras: HashMap::new(),
+            warnings: self.warnings.clone(),
+        }
+    }
+
+    /// The request the command's own template renders through.
+    pub(crate) fn resolved(&self, data: serde_json::Value) -> Result<RenderRequest, RunError> {
+        let template = render_time_template(
+            &self.command_path,
+            &self.template,
+            self.template_registry.as_ref(),
+            self.output_mode,
+        )?;
+        Ok(self.request(data, template))
+    }
+
+    /// The request a render that consults no template goes through.
+    fn untemplated(&self, data: serde_json::Value) -> RenderRequest {
+        self.request(data, standout_render::TemplateRef::Absent)
     }
 }
 
@@ -279,25 +307,19 @@ pub(crate) fn render_handler_output<T: Serialize>(
         .extensions
         .get::<standout_render::warnings::WarningBuffer>()
         .cloned();
-    let request_with = |json_data: serde_json::Value, resolved: standout_render::TemplateRef| {
-        build_render_request(
-            json_data,
-            resolved,
-            theme,
-            context_registry,
-            template_engine,
-            template_registry,
-            output_mode,
-            color_policy,
-            structured_output_projection,
-            target,
-            warnings.clone(),
-        )
-    };
-    let request_for = |json_data: serde_json::Value| -> Result<RenderRequest, RunError> {
-        let resolved =
-            render_time_template(&command_path, template, template_registry, output_mode)?;
-        Ok(request_with(json_data, resolved))
+    let render = PendingRender {
+        command_path,
+        template: template.clone(),
+        theme: theme.clone(),
+        context_registry: context_registry.clone(),
+        template_engine: template_engine.clone(),
+        template_registry: template_registry.cloned(),
+        output_mode,
+        color_policy,
+        csv_projection: structured_output_projection
+            .map(|projection| projection.csv_projection().clone()),
+        target,
+        warnings,
     };
 
     // The document an incremental run ends in. `json` and `yaml` take the
@@ -311,10 +333,7 @@ pub(crate) fn render_handler_output<T: Serialize>(
                           summary: Option<serde_json::Value>|
      -> Result<DispatchOutput, RunError> {
         if output_mode == crate::Representation::Csv {
-            let request = request_with(
-                serde_json::Value::Array(events),
-                standout_render::TemplateRef::Absent,
-            );
+            let request = render.untemplated(serde_json::Value::Array(events));
             let (formatted, raw) = render_via_request(&request)?;
             return Ok(DispatchOutput::Text {
                 formatted,
@@ -335,7 +354,7 @@ pub(crate) fn render_handler_output<T: Serialize>(
             if let Some(events) = document_records {
                 return event_document(events, Some(json_data));
             }
-            let request = request_for(json_data)?;
+            let request = render.resolved(json_data)?;
             let (formatted, raw) = render_via_request(&request)?;
             Ok(DispatchOutput::Text {
                 formatted,
@@ -359,14 +378,8 @@ pub(crate) fn render_handler_output<T: Serialize>(
                 None => None,
             };
 
-            // Only a report renders, so a report-less artifact needs no template.
-            let request = if report.is_some() {
-                Some(Box::new(request_for(serde_json::Value::Null)?))
-            } else {
-                None
-            };
             Ok(DispatchOutput::Artifact {
-                request,
+                render: Box::new(render),
                 output: ArtifactOutput {
                     bytes,
                     suggested_destination,
