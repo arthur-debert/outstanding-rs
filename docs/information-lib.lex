@@ -179,19 +179,29 @@ THEME: Handlers
 6. What is the Handler trait?
 
 	The Handler trait defines the interface for command logic. It lives in
-	[./crates/standout/src/cli/handler.rs].
+	[./crates/standout-dispatch/src/handler.rs].
 
 	The trait definition:
-		pub trait Handler: Send + Sync {
+		pub trait Handler {
+		    type Event: Serialize + 'static;
 		    type Output: Serialize;
-		    fn handle(&self, matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Self::Output>;
+		    fn handle(
+		        &mut self,
+		        matches: &ArgMatches,
+		        ctx: &CommandContext,
+		        results: &mut Results<Self::Event>,
+		    ) -> HandlerResult<Self::Output>;
+		    fn expected_args(&self) -> Vec<ExpectedArg> { Vec::new() }
 		}
 	:: rust ::
 
 	Key constraints:
-	  - Send + Sync required: handlers may be called from multiple threads
-	  - Output must be Serialize: needed for JSON/YAML modes and template context
-	  - Both parameters are immutable references: handlers cannot modify args or context
+	  - Output must be Serialize: the summary is serialized for the structured
+	    encodings and passed to the template as context
+	  - Event must be Serialize and 'static: a command that produces nothing
+	    while it runs sets it to NoEvents and ignores the third parameter
+	  - matches and ctx are immutable references: a handler cannot modify args
+	    or context, and holds borrows out of matches across every emit
 
 	Implementing the trait directly is useful when your handler needs internal
 	state (database connections, configuration, etc.). For stateless logic,
@@ -204,12 +214,12 @@ THEME: Handlers
 	This is done automatically when you use .command().
 
 	The closure signature:
-		fn(&ArgMatches, &CommandContext) -> HandlerResult<T>
-		where T: Serialize + Send + Sync
+		FnMut(&ArgMatches, &CommandContext) -> HandlerResult<T>
+		where T: Serialize
 	:: rust ::
 
-	The closure must be Fn (not FnMut or FnOnce) because Standout may
-	need to call it multiple times in certain scenarios.
+	FnHandler sets Event = NoEvents, so a two-argument closure is a command
+	that produces one batch value.
 
 	Registering a closure handler:
 		App::builder()
@@ -218,6 +228,16 @@ THEME: Handlers
 		        Ok(Output::Render(ListResult { items, verbose }))
 		    })
 	:: rust ::
+
+	A command that produces its result while it runs takes a third parameter
+	and is wrapped by EventsFnHandler<F, E, T>:
+		FnMut(&ArgMatches, &CommandContext, &mut Results<E>) -> HandlerResult<T>
+		where E: Serialize + 'static, T: Serialize
+	:: rust ::
+
+	Results::emit(event) renders or writes one value before it returns, so the
+	user sees the command moving; the returned Output is the summary. #[handler]
+	picks the adapter from whether the function declares a Results parameter.
 
 
 8. What is HandlerResult?
@@ -240,49 +260,55 @@ THEME: Handlers
 
 9. What is the Output enum?
 
-	Output<T> represents what a handler produces. Defined in
-	[./crates/standout/src/cli/handler.rs]:
+	Output<T> represents what a handler returns. Defined in
+	[./crates/standout-dispatch/src/handler.rs]:
 		pub enum Output<T: Serialize> {
 		    Render(T),
 		    Silent,
 		    Binary { data: Vec<u8>, filename: String },
+		    Artifact(Artifact<T>),
+		    WithStatus { output: Box<Output<T>>, status: ExitStatus },
 		}
 	:: rust ::
 
 	Render(T): The common case. Data is serialized to JSON, passed to the
-	template engine, and rendered with styles. In structured output modes
+	template engine, and rendered with styles. Under a structured encoding
 	(--output json), the template is skipped and data serializes directly.
 
 	Silent: No output produced. Useful for commands with side effects only
 	(delete, update). Post-output hooks still run and can transform Silent
-	into something else if needed.
+	into something else if needed. A command whose emitted events are its
+	whole result returns Silent as its summary.
 
 	Binary: Raw bytes written to a file. The filename is used directly as a
 	path (relative or absolute). The bytes are written via std::fs::write(),
 	overwriting any existing file. A confirmation message prints to stderr:
 	"Wrote N bytes to filename".
 
+	A command that emits events carries Render and Silent only: Binary and
+	Artifact from one are a render error under every representation.
+
 
 10. What is CommandContext?
 
 	CommandContext provides execution environment information to handlers.
-	It has exactly two fields:
+	It has three fields:
 		pub struct CommandContext {
-		    pub representation: Representation,
-		    pub style: StyleMode,
 		    pub command_path: Vec<String>,
+		    pub app_state: Rc<Extensions>,
+		    pub extensions: Extensions,
 		}
 	:: rust ::
-
-	output_mode: The resolved output format (Term, Text, Json, etc.). Handlers
-	can inspect this to adjust behavior - for example, skipping interactive
-	prompts in JSON mode.
 
 	command_path: The subcommand chain as a vector, e.g., ["db", "migrate"].
 	Useful for logging or conditional logic based on which command is running.
 
-	Note: CommandContext is intentionally minimal. Application-specific context
-	(config, connections) should be captured in struct handlers or closures.
+	app_state: immutable state the application registered at build time.
+
+	extensions: request-scoped state a pre-dispatch hook can add to.
+
+	The representation is not here. A handler returns the same data whatever
+	the run produces, so there is nothing on the context to branch on.
 
 
 11. How do I access CLI arguments in a handler?
@@ -1144,7 +1170,9 @@ THEME: Output Modes
 	:: text ::
 
 	The flag is global - it applies to all subcommands. Standout adds
-	it automatically via augment_command().
+	it automatically via augment_command(), alongside two siblings that are
+	global the same way: --color auto|always|never, which decides the escape
+	sequences in human text, and --no-pager, which writes straight to stdout.
 
 
 48. What is TermDebug mode for?
@@ -1164,7 +1192,10 @@ THEME: Output Modes
 	and does not check whether a tag is defined.
 
 
-49. How does --output-file work?
+49. Where do the rendered bytes go?
+
+	Rendering produces bytes; delivery places them on stdout, in a file the
+	user names, or in an external pager.
 
 	The --output-file-path flag redirects output to a file instead of stdout:
 		myapp list --output-file-path=results.txt
@@ -1178,31 +1209,41 @@ THEME: Output Modes
 	After writing to file, the internal output becomes Silent to prevent
 	double-printing. The file is overwritten if it exists.
 
+	A pager reads complete human output when every one of these holds, and
+	stdout takes it otherwise:
+	  - the command declares `pageable`, or the bytes are a help or topic page
+	  - the user did not pass --no-pager
+	  - the representation is the human template, and the command emits no
+	    events (incremental output arrives while the command runs)
+	  - stdout is a terminal, and no --output-file-path was named
+	  - <APP>_PAGER, then PAGER, names a non-empty command
 
-50. Where is output_mode stored and passed?
+	<APP> is AppBuilder::name upper-cased with every character outside A-Z0-9
+	written as _. The value is a shell word list run through `sh -c`, so
+	`less -FRX` works as it does for git; Windows never pages. Standout sets
+	LESS=FRX and LV=-c for the child when the user has not. There is no
+	configuration key for the pager, because Standout executes the value.
 
-	output_mode flows through several layers:
 
-	1. App struct stores the default:
+50. Where is the representation decided and passed?
+
+	The representation is resolved once per run and reaches the renderer, never
+	the handler:
+
+	1. App struct stores the fallback:
 		pub struct App {
 		    pub(crate) output_mode_fallback: Representation,  // Default: Human
 		}
 	:: rust ::
 
-	2. CLI parsing overrides from --output flag
+	2. The resolved [term] output key overrides that fallback
 
-	3. CommandContext carries it to handlers:
-		pub struct CommandContext {
-		    pub representation: Representation,
-		    pub style: StyleMode,
-		    pub command_path: Vec<String>,
-		}
-	:: rust ::
+	3. An explicit --output on the command line overrides both
 
-	4. Render functions receive it as parameter
+	4. Render functions receive the answer as a parameter
 
-	Handlers can inspect ctx.output_mode to adjust behavior - for example,
-	skipping interactive prompts when output is Json.
+	No handler sees it. A command whose behavior genuinely differs models that
+	as its own command or argument.
 
 
 51. What do should_use_color() and is_structured() do?
@@ -1228,19 +1269,11 @@ THEME: App Configuration
 
 52. What is the App struct?
 
-	App is the runtime container for Standout configuration. The theme
-	`build()` merged is always present; `get_default_theme()` returns `&Theme`.
-	It holds:
-		pub struct App {
-		    registry: TopicRegistry,              // Help topics
-		    output_flag: Option<String>,          // --output flag name
-		    output_file_flag: Option<String>,     // --output-file-path flag name
-		    theme: Theme,                         // Merged at build(); get_default_theme() -> &Theme
-		    command_hooks: HashMap<String, Hooks>, // Path -> hooks
-		    template_registry: Option<TemplateRegistry>,
-		    stylesheet_registry: Option<StylesheetRegistry>,
-		}
-	:: rust ::
+	App is the runtime container for everything AppBuilder resolved: the
+	application's name, the names of the flags it installs, the output-mode
+	fallback, the topic, template and stylesheet registries, the hooks per
+	command path, and the theme. The theme `build()` merged is always present;
+	`get_default_theme()` returns `&Theme`. Its fields are private.
 
 	App is created via AppBuilder.build() and is typically used via run()
 	or dispatch() methods.
@@ -1275,9 +1308,16 @@ THEME: App Configuration
 	  .context(key, value)        - Static context for templates
 	  .context_fn(key, provider)  - Dynamic context computed at render
 
+	Identity:
+	  .name("myapp")              - Read MYAPP_PAGER before PAGER
+
 	Flags:
 	  .output_flag(Some("format"))    - Rename --output flag
 	  .no_output_flag()               - Disable --output flag
+	  .color_flag(Some("colour"))     - Rename --color flag
+	  .no_color_flag()                - Disable --color flag
+	  .pager_flag(Some("plain"))      - Rename --no-pager flag
+	  .no_pager_flag()                - Disable --no-pager flag
 	  .output_file_flag(Some("out"))  - Rename --output-file-path
 	  .no_output_file_flag()          - Disable file output flag
 
@@ -1359,7 +1399,6 @@ THEME: App Configuration
 	1. Custom help subcommand:
 		myapp help           # Show main help
 		myapp help topic     # Show specific topic
-		myapp help --page    # Use pager for long help
 	:: shell ::
 
 	2. Global --output flag:
@@ -1367,7 +1406,15 @@ THEME: App Configuration
 		myapp db migrate --output=yaml
 	:: shell ::
 
-	3. Global --output-file-path flag:
+	3. Global --color flag:
+		myapp list --color never
+	:: shell ::
+
+	4. Global --no-pager flag:
+		myapp log --no-pager
+	:: shell ::
+
+	5. Global --output-file-path flag:
 		myapp list --output-file-path=results.txt
 	:: shell ::
 
