@@ -8,8 +8,8 @@ use standout_bbparser::{BBParser, TagTransform, UnknownTagKind};
 use crate::assets::HELP_TEMPLATE_NAME;
 use crate::topics::TopicRegistry;
 use crate::{
-    default_template_engine, render_request, ColorPolicy, OutputMode, RenderError, RenderRequest,
-    SharedTemplateEngine, TargetProperties, TemplateRef, Theme,
+    default_template_engine, render_request, ColorPolicy, RenderError, RenderRequest,
+    Representation, SharedTemplateEngine, TargetProperties, TemplateRef, Theme,
 };
 
 use super::config::{default_help_theme, HelpConfig, HelpLength};
@@ -19,14 +19,17 @@ use super::document::HelpDocument;
 pub(crate) const DEFAULT_HELP_TEMPLATE: &str = include_str!("template.txt");
 
 /// `csv` has no help projection and is a render error.
-pub(crate) fn help_is_a_document(mode: OutputMode) -> bool {
-    matches!(mode, OutputMode::Json | OutputMode::Yaml | OutputMode::Csv)
+pub(crate) fn help_is_a_document(mode: Representation) -> bool {
+    matches!(
+        mode,
+        Representation::Json | Representation::Yaml | Representation::Csv
+    )
 }
 
 /// A structured mode with no help document falls back to the terminal's resolution.
-pub(crate) fn human_help_format(mode: OutputMode) -> OutputMode {
+pub(crate) fn human_help_format(mode: Representation) -> Representation {
     if mode.is_structured() {
-        OutputMode::Auto
+        Representation::Human
     } else {
         mode
     }
@@ -37,9 +40,9 @@ pub(crate) fn render_help_document(
     root: &Command,
     path: &[&str],
     length: HelpLength,
-    mode: OutputMode,
+    mode: Representation,
 ) -> Result<Option<String>, RenderError> {
-    if !matches!(mode, OutputMode::Json | OutputMode::Yaml) {
+    if !matches!(mode, Representation::Json | Representation::Yaml) {
         return Err(RenderError::OperationError(format!(
             "the help document has no {mode:?} projection"
         )));
@@ -142,7 +145,8 @@ pub(crate) fn render_via_request<T: Serialize>(
     data: &T,
     template: TemplateRef,
     theme: Theme,
-    format: OutputMode,
+    format: Representation,
+    color_policy: ColorPolicy,
     target: TargetProperties,
     engine: SharedTemplateEngine,
     registry: Option<Rc<crate::TemplateRegistry>>,
@@ -154,7 +158,7 @@ pub(crate) fn render_via_request<T: Serialize>(
         template,
         theme,
         format: human_help_format(format),
-        color_policy: ColorPolicy::Auto,
+        color_policy,
         target,
         engine,
         registry,
@@ -167,7 +171,7 @@ pub(crate) fn render_via_request<T: Serialize>(
 }
 
 fn standalone_document(cmd: &Command, config: &HelpConfig) -> Option<Result<String, RenderError>> {
-    let mode = config.output_mode.unwrap_or(OutputMode::Auto);
+    let mode = config.output_mode.unwrap_or(Representation::Human);
     help_is_a_document(mode).then(|| {
         render_help_document(cmd, &[], config.length, mode)
             .map(|document| document.expect("the root is always at the empty path"))
@@ -197,7 +201,8 @@ pub fn render_help(cmd: &Command, config: Option<HelpConfig>) -> Result<String, 
         &data,
         template,
         theme,
-        config.output_mode.unwrap_or(OutputMode::Auto),
+        config.output_mode.unwrap_or(Representation::Human),
+        config.color,
         target,
         default_template_engine(),
         None,
@@ -234,7 +239,8 @@ pub fn render_help_with_topics(
         &data,
         template,
         theme,
-        config.output_mode.unwrap_or(OutputMode::Auto),
+        config.output_mode.unwrap_or(Representation::Human),
+        config.color,
         target,
         default_template_engine(),
         None,
@@ -253,7 +259,7 @@ mod tests {
         Command::new("app").about("Demo")
     }
 
-    fn help_in(mode: OutputMode) -> Result<String, RenderError> {
+    fn help_in(mode: Representation) -> Result<String, RenderError> {
         render_help(
             &cmd(),
             Some(HelpConfig {
@@ -265,38 +271,38 @@ mod tests {
 
     #[test]
     fn json_and_yaml_answer_with_the_help_document() {
-        let json = help_in(OutputMode::Json).unwrap();
+        let json = help_in(Representation::Json).unwrap();
         let document: HelpDocument = serde_json::from_str(&json).unwrap();
         assert_eq!(document.schema_version, 1);
         assert_eq!(document.path, ["app"]);
         assert!(!json.contains("USAGE"), "{json}");
         assert!(!json.ends_with('\n'), "{json:?}");
 
-        let yaml = help_in(OutputMode::Yaml).unwrap();
+        let yaml = help_in(Representation::Yaml).unwrap();
         assert!(yaml.starts_with("schema_version: 1\nname: app\n"), "{yaml}");
     }
 
     #[test]
     fn csv_has_no_help_projection() {
-        let error = help_in(OutputMode::Csv).unwrap_err().to_string();
+        let error = help_in(Representation::Csv).unwrap_err().to_string();
         assert!(error.contains("no Csv projection"), "{error}");
     }
 
     #[test]
     fn ndjson_prints_the_human_help_page() {
-        let output = help_in(OutputMode::Ndjson).unwrap();
+        let output = help_in(Representation::Ndjson).unwrap();
         assert!(output.contains("USAGE"), "{output}");
         assert!(!output.trim_start().starts_with('{'), "{output}");
     }
 
     #[test]
     fn a_mode_is_either_the_page_or_the_document() {
-        assert!(help_is_a_document(OutputMode::Json));
-        assert!(help_is_a_document(OutputMode::Yaml));
-        assert!(help_is_a_document(OutputMode::Csv));
-        assert!(!help_is_a_document(OutputMode::Ndjson));
-        assert!(!help_is_a_document(OutputMode::Text));
-        assert!(!help_is_a_document(OutputMode::Auto));
+        assert!(help_is_a_document(Representation::Json));
+        assert!(help_is_a_document(Representation::Yaml));
+        assert!(help_is_a_document(Representation::Csv));
+        assert!(!help_is_a_document(Representation::Ndjson));
+        assert!(!help_is_a_document(Representation::Human));
+        assert!(!help_is_a_document(Representation::Human));
     }
 
     #[test]
@@ -305,7 +311,7 @@ mod tests {
             &cmd(),
             Some(HelpConfig {
                 template: Some("[nope]hello[/nope]".into()),
-                output_mode: Some(OutputMode::Text),
+                output_mode: Some(Representation::Human),
                 ..Default::default()
             }),
         )
@@ -321,7 +327,7 @@ mod tests {
             &cmd(),
             Some(HelpConfig {
                 template: Some("[header]HELLO[/header]".into()),
-                output_mode: Some(OutputMode::Text),
+                output_mode: Some(Representation::Human),
                 theme: Some(Theme::new().add("header", Style::new().bold())),
                 ..Default::default()
             }),
@@ -332,13 +338,34 @@ mod tests {
 
     #[test]
     fn human_help_format_maps_structured_to_auto() {
-        assert_eq!(human_help_format(OutputMode::Json), OutputMode::Auto);
-        assert_eq!(human_help_format(OutputMode::Yaml), OutputMode::Auto);
-        assert_eq!(human_help_format(OutputMode::Csv), OutputMode::Auto);
-        assert_eq!(human_help_format(OutputMode::Ndjson), OutputMode::Auto);
-        assert_eq!(human_help_format(OutputMode::Term), OutputMode::Term);
-        assert_eq!(human_help_format(OutputMode::Text), OutputMode::Text);
-        assert_eq!(human_help_format(OutputMode::Auto), OutputMode::Auto);
+        assert_eq!(
+            human_help_format(Representation::Json),
+            Representation::Human
+        );
+        assert_eq!(
+            human_help_format(Representation::Yaml),
+            Representation::Human
+        );
+        assert_eq!(
+            human_help_format(Representation::Csv),
+            Representation::Human
+        );
+        assert_eq!(
+            human_help_format(Representation::Ndjson),
+            Representation::Human
+        );
+        assert_eq!(
+            human_help_format(Representation::Human),
+            Representation::Human
+        );
+        assert_eq!(
+            human_help_format(Representation::Human),
+            Representation::Human
+        );
+        assert_eq!(
+            human_help_format(Representation::Human),
+            Representation::Human
+        );
     }
 
     #[test]

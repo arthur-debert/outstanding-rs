@@ -53,8 +53,8 @@ still reports the binary and artifact case as an error), so a declared status
 is visible through `run`, `run_emitted`, `dispatch`, `run_with` and the test
 harness, which report it through `exit_status()`.
 
-The failure rows describe the human modes (`auto`, `term`, `text` and
-`term-debug`); under a structured mode a failure is the stdout document
+The failure rows describe the human representation and its `term-debug`
+diagnostic view; under a structured encoding a failure is the stdout document
 instead, [below](#failures-under-a-structured-mode).
 
 Framework warnings flush after the primary output and do not change its
@@ -63,7 +63,7 @@ status. A final write failure does replace a successful status with `1`
 
 ## Failures under a structured mode
 
-When the resolved output mode is `json`, `yaml`, `csv` or `ndjson`, stdout
+When the resolved representation is `json`, `yaml`, `csv` or `ndjson`, stdout
 carries the result or the diagnostic, never both, and stderr carries nothing
 the framework wrote for the failure. In the single-document modes that is one
 document per run; under `ndjson` the diagnostic is one compact line at the
@@ -114,7 +114,8 @@ on stderr, exit 2.
 ## Emitting without exiting
 
 `run_emitted` is `run` up to the exit: it detects the destination, dispatches,
-pages help, writes both streams, flushes warnings, and then returns a
+writes both streams through whichever delivery the run chose, flushes warnings,
+and then returns a
 `ProcessOutcome` instead of ending the process. `run` calls it and exits with
 the status it reports, so the two never differ in what reaches stdout, stderr,
 a file, or the pager.
@@ -132,13 +133,18 @@ process edge can too. It returns `Ok(handled)` or the final-write failure whose
 status replaces the run's own. Under `ndjson` the warnings follow through
 `standout::cli::emit_warning_entries`; every other mode flushes them as stderr
 prose, and so does a `NoMatch` handoff in every mode, since Standout then owns
-no stdout. Entries a handler emits through `ctx.stream()` reach stdout while
-the handler runs, before either: `run_emitted` calls `run_with_sink` with a
-`StreamSink` over the process's stdout and writes the result and the warning
+no stdout. Events a handler emits through its `Results` channel reach stdout
+while the handler runs, before either: `run_emitted` dispatches over a
+`StreamSink` around the process's stdout and writes the result and the warning
 entries through the same sink, so a `--output-file-path` that retargeted the
-sink receives the whole stream (entries, result or diagnostic, warnings) and
-stdout nothing. `run_with` captures the entries instead and returns them as
-`CompletedRun::entries()`.
+sink receives the whole run (events, result or diagnostic, warnings) and stdout
+nothing. Nothing reads that run's values back, so under the human template and
+`ndjson` it writes each event without keeping it and a long run costs no memory
+for its length; `json`, `yaml` and `csv` hold the records until the command
+ends, because there is no document to write before then. `run_with` and
+`run_with_sink` capture the events instead and
+return them as `CompletedRun::entries()`, alongside the values in
+`CompletedRun::results()`.
 
 `ProcessOutcome` has two public fields. `handled` is the `bool` that `run`
 returns: `false` only for a `NoMatch` handoff. `status` is the final
@@ -152,9 +158,11 @@ output and the exit.
 ## Capturing typed metadata
 
 `run_with` keeps output in-process and returns `CompletedRun`: the dispatch
-outcome, any framework warnings collected during the run, and under `ndjson`
-the lines the handler streamed (`entries()`, each with its newline), which a
-process would have written before the result. `App::dispatch` captures the
+outcome, any framework warnings collected during the run, and the lines a
+handler's events put on the sink as it emitted them (`entries()`, each with its
+newline), which a process would have written before the result — the rendered
+lines under the human template, the JSON records under `ndjson`, and nothing
+under an encoding that writes one document at the end. `App::dispatch` captures the
 same way; `run_command` takes the `StreamSink` as a parameter. `Deref` keeps
 string-oriented accessors and typed methods (`exit_status()`, `success_kind()`,
 `error_kind()`) working on the wrapper. Pattern matching needs `outcome()` or
@@ -223,9 +231,9 @@ Use `into_outcome()` when the fallback needs owned `ArgMatches`
 `RunOutput` and `RunError` dereference to `str`, implement `Display`, and expose
 `as_str()` / `into_string()` for callers that used the tuple payloads as text.
 `RunOutput::kind()` names a success the same way: `Command` for a handler's
-output, `ClapHelp` / `ClapVersion` for a help or version display, and
-`PagedHelp` for a `help --page` display — the text is identical, but the kind
-tells a printing caller the user asked for a pager.
+output, and `ClapHelp` / `ClapVersion` for a help or version display. Whether
+those bytes went to stdout, a file or a pager is a separate question, answered
+by `CompletedRun::delivery()`.
 `RunError::kind()` identifies `ClapUsage`, `Handler`, `Hook(phase)`, `Render`, or
 `FinalWrite(Text|Binary|Artifact)`. `External` identifies the narrow
 application-declared external path; its `exit_status()` is the exact declared
@@ -257,10 +265,10 @@ is reached by neither spelling and is reported as unreachable. Registering
 
 `run()` writes successful text and binary bytes to stdout, diagnostics to
 stderr in a human mode and to stdout as a document in a structured one, and
-exits with the typed non-zero status when execution fails. The one
-exception is a paged help display (`SuccessKind::PagedHelp`), which goes to the
-pager instead; if no pager is available it falls back to stdout, so help is
-never lost. A closed
+exits with the typed non-zero status when execution fails. Complete human
+output on a terminal may go to a pager instead of stdout, on the rule
+[Paging](./output-modes.md#paging) states; a pager that cannot start leaves
+the bytes for stdout, so nothing is lost. A closed
 downstream pipe is not an error only for final rendered command text:
 `BrokenPipe` there means the consumer stopped reading early. Binary stdout
 writes and artifact report writes keep their typed final-write failures. The

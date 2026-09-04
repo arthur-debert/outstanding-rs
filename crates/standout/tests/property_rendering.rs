@@ -3,20 +3,18 @@ use console::Style;
 use proptest::prelude::*;
 use serde_json::{json, Value};
 use standout::cli::{App, DispatchResult, Output, RunErrorKind};
-use standout::{OutputMode, Theme};
+use standout::{Representation, Theme};
 use standout_test::invariants::{
     assert_no_unresolved_tag_markers_in_page, assert_styling_preserves_layout_in_pages,
 };
 
-fn output_mode_strategy() -> impl Strategy<Value = OutputMode> {
+fn output_mode_strategy() -> impl Strategy<Value = Representation> {
     prop_oneof![
-        Just(OutputMode::Auto),
-        Just(OutputMode::Term),
-        Just(OutputMode::Text),
-        Just(OutputMode::TermDebug),
-        Just(OutputMode::Json),
-        Just(OutputMode::Yaml),
-        Just(OutputMode::Csv),
+        Just(Representation::Human),
+        Just(Representation::TermDebug),
+        Just(Representation::Json),
+        Just(Representation::Yaml),
+        Just(Representation::Csv),
     ]
 }
 
@@ -89,7 +87,7 @@ fn json_data_strategy() -> impl Strategy<Value = Value> {
 }
 
 fn dispatch(
-    mode: OutputMode,
+    mode: Representation,
     theme: &ThemeCase,
     template: &TemplateCase,
     data: &Value,
@@ -119,9 +117,9 @@ fn dispatch(
     app.dispatch(matches, mode).into_outcome()
 }
 
-fn validate_structured_output(output: &str, mode: OutputMode) {
+fn validate_structured_output(output: &str, mode: Representation) {
     match mode {
-        OutputMode::Json => {
+        Representation::Json => {
             let parsed: Result<Value, _> = serde_json::from_str(output);
             assert!(
                 parsed.is_ok(),
@@ -129,7 +127,7 @@ fn validate_structured_output(output: &str, mode: OutputMode) {
                 output
             );
         }
-        OutputMode::Yaml => {
+        Representation::Yaml => {
             let parsed: Result<Value, _> = serde_yaml::from_str(output);
             assert!(
                 parsed.is_ok(),
@@ -137,7 +135,7 @@ fn validate_structured_output(output: &str, mode: OutputMode) {
                 output
             );
         }
-        OutputMode::Csv => {
+        Representation::Csv => {
             let mut reader = csv::ReaderBuilder::new()
                 .has_headers(false)
                 .flexible(false)
@@ -150,15 +148,15 @@ fn validate_structured_output(output: &str, mode: OutputMode) {
     }
 }
 
-fn assert_agrees_with_text_mode(
+fn assert_agrees_with_the_plain_page(
     styled_page: &str,
     theme: &ThemeCase,
     template: &TemplateCase,
     data: &Value,
 ) {
-    let text = dispatch(OutputMode::Text, theme, template, data);
+    let text = dispatch(Representation::Human, theme, template, data);
     let Some(text_page) = text.output() else {
-        panic!("Text mode must render the same input: {text:?}");
+        panic!("the plain page must render the same input: {text:?}");
     };
     assert_styling_preserves_layout_in_pages(&console::strip_ansi_codes(styled_page), text_page);
 }
@@ -181,7 +179,7 @@ proptest! {
 
         if mode.is_structured() {
             match mode {
-                OutputMode::Json | OutputMode::Yaml => {
+                Representation::Json | Representation::Yaml => {
                     prop_assert!(
                         result.is_handled(),
                         "{:?} must serialize any generated value, got {:?}",
@@ -211,8 +209,8 @@ proptest! {
 
             let output = result.output().expect("a handled render has output");
             assert_no_unresolved_tag_markers_in_page(output);
-            if matches!(mode, OutputMode::Term | OutputMode::Auto) {
-                assert_agrees_with_text_mode(output, &theme, &template, &data);
+            if matches!(mode, Representation::Human) {
+                assert_agrees_with_the_plain_page(output, &theme, &template, &data);
             }
         }
     }
@@ -223,10 +221,10 @@ proptest! {
         template in template_strategy(),
         data in json_data_strategy()
     ) {
-        let term = dispatch(OutputMode::Term, &theme, &template, &data);
+        let term = dispatch(Representation::Human, &theme, &template, &data);
         prop_assert!(term.is_handled(), "expected a render, got {:?}", term);
         let term_page = term.output().unwrap();
         assert_no_unresolved_tag_markers_in_page(term_page);
-        assert_agrees_with_text_mode(term_page, &theme, &template, &data);
+        assert_agrees_with_the_plain_page(term_page, &theme, &template, &data);
     }
 }

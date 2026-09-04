@@ -4,6 +4,7 @@ use serde_json::json;
 use standout::cli::FnHandler;
 use standout::cli::{App, Output};
 use standout::dispatch;
+use standout::ColorPolicy;
 use standout::EmbeddedTemplates;
 use standout::Theme;
 
@@ -34,10 +35,11 @@ fn test_late_binding_theme_sequencing() {
 
     let cmd = Command::new("app").subcommand(Command::new("late_bind"));
 
-    let result = app.run_with(
+    let result = app.run_with_color(
         cmd,
-        ["app", "--output=term", "late_bind"],
+        ["app", "late_bind"],
         standout::TargetProperties::detect(),
+        ColorPolicy::Always,
         standout::InputSources::from_process(),
     );
 
@@ -72,10 +74,11 @@ fn test_late_binding_with_dispatch_macro() {
         .expect("Failed to build app");
 
     let cmd = Command::new("app").subcommand(Command::new("macro_cmd"));
-    let result = app.run_with(
+    let result = app.run_with_color(
         cmd,
-        ["app", "--output=term", "macro_cmd"],
+        ["app", "macro_cmd"],
         standout::TargetProperties::detect(),
+        ColorPolicy::Always,
         standout::InputSources::from_process(),
     );
 
@@ -135,10 +138,11 @@ fn test_late_binding_with_nested_groups() {
             Command::new("app").subcommand(Command::new("config").subcommand(Command::new("get"))),
         );
 
-    let result = app.run_with(
+    let result = app.run_with_color(
         cmd,
-        ["test", "--output=term", "app", "config", "get"],
+        ["test", "app", "config", "get"],
         standout::TargetProperties::detect(),
+        ColorPolicy::Always,
         standout::InputSources::from_process(),
     );
 
@@ -173,10 +177,11 @@ fn test_unknown_style_degrades_to_unstyled_text() {
         .expect("Failed to build app");
 
     let cmd = Command::new("app").subcommand(Command::new("test"));
-    let result = app.run_with(
+    let result = app.run_with_color(
         cmd,
-        ["app", "--output=term", "test"],
+        ["app", "test"],
         standout::TargetProperties::detect(),
+        ColorPolicy::Always,
         standout::InputSources::from_process(),
     );
 
@@ -207,10 +212,11 @@ fn test_defined_style_does_not_render_as_tag_question_mark() {
         .expect("Failed to build app");
 
     let cmd = Command::new("app").subcommand(Command::new("test"));
-    let result = app.run_with(
+    let result = app.run_with_color(
         cmd,
-        ["app", "--output=term", "test"],
+        ["app", "test"],
         standout::TargetProperties::detect(),
+        ColorPolicy::Always,
         standout::InputSources::from_process(),
     );
 

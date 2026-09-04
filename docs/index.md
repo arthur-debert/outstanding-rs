@@ -171,10 +171,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 Run it:
 
 ```bash
-myapp list              # Rich terminal output with colors
+myapp list                  # Rich terminal output with colors
+myapp list --color never    # The same page without escape sequences
 myapp list --output json    # JSON for scripting
 myapp list --output yaml    # YAML for config files
-myapp list --output text    # Plain text, no ANSI codes
 ```
 
 ## Features

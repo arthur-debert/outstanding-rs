@@ -46,16 +46,17 @@ flowchart TB
     end
 
     subgraph RenderDispatch["Render Dispatch"]
-        MODE{"OutputMode?"}
+        MODE{"Representation?"}
 
-        subgraph Structured["Structured Modes"]
+        subgraph Structured["Structured Encodings"]
             STRUCT_SER["Direct Serialization"]
             JSON_OUT["Json: serde_json::to_string_pretty()"]
             YAML_OUT["Yaml: serde_yaml::to_string()"]
             OTHER_OUT["Csv: flat records, or a CsvProjection"]
+            NDJSON_OUT["Ndjson: one compact record per line"]
         end
 
-        subgraph TextModes["Text Modes (Auto/Term/Text)"]
+        subgraph HumanText["Human Representation"]
             subgraph Pass1["Pass 1: Template Engine"]
                 JINJA["MiniJinjaEngine::render_template()<br/>Template + Value → String"]
                 TAGS["String with [style]tags[/style]"]
@@ -74,7 +75,7 @@ flowchart TB
 
     subgraph Result["Render Result"]
         RR["RenderResult<br/>{formatted: String, raw: String}"]
-        DO["DispatchOutput<br/>Text{formatted, raw} | Binary | Silent"]
+        DO["DispatchOutput<br/>Text{formatted, raw} | Records | Binary | Artifact | Silent"]
         RR --> DO
     end
 
@@ -83,8 +84,8 @@ flowchart TB
     end
 
     subgraph Final["Final Output"]
-        RUN["DispatchResult<br/>Handled(String) | Binary | Silent"]
-        PRINT["println!() or file write"]
+        RUN["DispatchResult<br/>Handled(RunOutput) | Binary | Artifact | Silent | Error | NoMatch"]
+        PRINT["stdout, the named output file, or the pager"]
         RUN --> PRINT
     end
 
@@ -96,18 +97,19 @@ flowchart TB
     JSON --> POST
     POST --> MODE
 
-    MODE -->|"Json/Yaml/Csv"| STRUCT_SER
+    MODE -->|"Json/Yaml/Csv/Ndjson"| STRUCT_SER
     STRUCT_SER --> JSON_OUT
     STRUCT_SER --> YAML_OUT
     STRUCT_SER --> OTHER_OUT
-    JSON_OUT & YAML_OUT & OTHER_OUT --> DO
+    STRUCT_SER --> NDJSON_OUT
+    JSON_OUT & YAML_OUT & OTHER_OUT & NDJSON_OUT --> DO
 
-    MODE -->|"Auto/Term/Text"| JINJA
+    MODE -->|"Human/TermDebug"| JINJA
     TAGS --> BB
     BB --> TRANSFORM
-    TRANSFORM -->|Term| ANSI
-    TRANSFORM -->|Text| PLAIN
-    TRANSFORM -->|TermDebug| KEEP
+    TRANSFORM -->|Apply| ANSI
+    TRANSFORM -->|Remove| PLAIN
+    TRANSFORM -->|Keep| KEEP
     ANSI & PLAIN & KEEP --> RR
 
     DO --> PO
@@ -134,15 +136,15 @@ flowchart TB
 | Parsing | `Vec<String>` + `clap::Command` | `ArgMatches` |
 | Routing | `ArgMatches` | `DispatchFn` lookup |
 | Pre-Hooks | `(&ArgMatches, &mut CommandContext)` | Modified `CommandContext` |
-| Handler | `(&ArgMatches, &CommandContext)` | `Result<Output<T>, Error>` |
+| Handler | `(&ArgMatches, &CommandContext, &mut Results<E>)` | `Result<Output<T>, Error>`, plus each emitted event |
 | Serialization | `Output<T>` | `serde_json::Value` |
 | Post-Hooks | `Value` | Transformed `Value` |
-| Render (Structured) | `Value` + `OutputMode` | Formatted string (JSON/YAML/etc) |
+| Render (Structured) | `Value` + `Representation` | Formatted string (JSON/YAML/etc) |
 | Render (Text Pass 1) | Template + `Value` | String with style tags |
 | Render (Text Pass 2) | Tagged string + `TagTransform` | ANSI/plain/debug string |
 | Result | `RenderResult` | `DispatchOutput` |
 | Post-Output | `RenderedOutput` | Transformed `RenderedOutput` |
-| Final | `DispatchResult` | Terminal output or file |
+| Final | `DispatchResult` | stdout, the named output file, or the pager |
 
 ## Key Components
 

@@ -1,0 +1,38 @@
+---
+source: crates/standout-test/tests/help_matrix.rs
+expression: result.stdout_plain()
+---
+Diff a git range
+
+USAGE
+  lookma [OPTIONS] [RANGE]
+       lookma [OPTIONS] [RANGE] <COMMAND>
+
+COMMANDS
+  review        Review a range hunk by hunk
+  stat          Summarize a range by file
+  export        Write the review to a file
+  help          Print this message or the help of the given subcommand(s)
+
+ARGUMENTS
+  RANGE         Git range to diff, e.g. main..HEAD
+
+OPTIONS
+  --staged                   Diff the staged changes
+  -v                         Raise the detail level
+  --threshold <RATIO>        Move/rename similarity threshold
+  -c, --color <BOOL>         Enable ANSI color
+                             possible values: true, false
+  -p, --pattern <pattern>    Only diff paths matching this glob
+  --summary <STYLE>          How much of each change to describe
+                             default: brief
+                             possible values: brief, full, none
+  --output <MODE>            Structured output encoding
+                             possible values: json, yaml, csv, ndjson, term-debug
+  --no-pager                 Do not page the output
+  --output-file-path <PATH>  Write output to file instead of stdout
+  -h, --help                 Print help (see more with '--help')
+
+LEARN MORE
+  naming        Naming
+  ranges        Ranges

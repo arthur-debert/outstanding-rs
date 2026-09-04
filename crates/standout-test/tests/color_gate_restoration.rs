@@ -25,7 +25,7 @@ fn console_color_state_restores_to_the_pre_run_environment() {
         let cmd = clap::Command::new("app").subcommand(clap::Command::new("say"));
         let result = TestHarness::new()
             .env("CLICOLOR_FORCE", "1")
-            .no_color()
+            .stdout_is_terminal(false)
             .run(&app, cmd, ["app", "say"]);
         assert_eq!(result.stdout_plain().trim_end(), "hello");
     }

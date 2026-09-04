@@ -9,12 +9,18 @@ use syn::{
     Error, Expr, FnArg, ItemFn, Meta, Pat, PatType, Result, Token, Type,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 enum ParamKind {
-    Flag { cli_name: Option<String> },
-    Arg { cli_name: Option<String> },
+    Flag {
+        cli_name: Option<String>,
+    },
+    Arg {
+        cli_name: Option<String>,
+    },
     Ctx,
     Matches,
+    /// `&mut Results<E>`: the command's typed results channel, carrying `E`.
+    Results(Type),
     None,
 }
 
@@ -143,6 +149,29 @@ fn is_reference_type(ty: &Type) -> bool {
     matches!(ty, Type::Reference(_))
 }
 
+/// The event type of a `&mut Results<E>` parameter, which is what makes a
+/// handler incremental; `None` for every other parameter type.
+fn results_event_type(ty: &Type) -> Option<Type> {
+    let Type::Reference(reference) = ty else {
+        return None;
+    };
+    reference.mutability?;
+    let Type::Path(path) = reference.elem.as_ref() else {
+        return None;
+    };
+    let segment = path.path.segments.last()?;
+    if segment.ident != "Results" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
+    match args.args.first()? {
+        syn::GenericArgument::Type(event) => Some(event.clone()),
+        _ => None,
+    }
+}
+
 fn is_unit_result(fn_item: &ItemFn) -> bool {
     matches!(extract_result_ok_type(fn_item), Some(Type::Tuple(t)) if t.elems.is_empty())
 }
@@ -188,7 +217,7 @@ fn generate_expected_arg(param: &ParamInfo, dispatch: &TokenStream) -> Option<To
                 })
             }
         }
-        ParamKind::Ctx | ParamKind::Matches | ParamKind::None => None,
+        ParamKind::Ctx | ParamKind::Matches | ParamKind::Results(_) | ParamKind::None => None,
     }
 }
 
@@ -225,7 +254,7 @@ fn generate_extraction(param: &ParamInfo) -> TokenStream {
                 }
             }
         }
-        ParamKind::Ctx | ParamKind::Matches | ParamKind::None => {
+        ParamKind::Ctx | ParamKind::Matches | ParamKind::Results(_) | ParamKind::None => {
             quote! {}
         }
     }
@@ -244,16 +273,24 @@ fn generate_call_arg(param: &ParamInfo) -> TokenStream {
         ParamKind::Matches => {
             quote! { __matches }
         }
+        ParamKind::Results(_) => {
+            quote! { __results }
+        }
         ParamKind::None => {
             quote! { #rust_name }
         }
     }
 }
 
-fn extract_output_type(ty: &Type) -> Option<&Type> {
+/// The `Results` parameter alone decides which wrapper a handler returns, so a
+/// batch function returning an application's own `Summary<T>` keeps that as its
+/// output type. An emitting function still unwraps `Output<T>`, the batch
+/// wrapper written by mistake, so it reads as the `Summary`-not-`Output`
+/// diagnostic rather than as `Output<T>` failing to be `Serialize`.
+fn extract_output_type(ty: &Type, emits: bool) -> Option<&Type> {
     if let Type::Path(type_path) = ty {
         if let Some(segment) = type_path.path.segments.last() {
-            if segment.ident == "Output" {
+            if segment.ident == "Output" || (emits && segment.ident == "Summary") {
                 if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
                     if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
                         return Some(inner);
@@ -279,11 +316,15 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
     let mut params: Vec<ParamInfo> = Vec::new();
     let mut has_ctx = false;
     let mut _has_matches = false;
+    let mut event_type: Option<Type> = None;
 
     for fn_arg in &fn_item.sig.inputs {
         match fn_arg {
             FnArg::Typed(pat_type) => {
-                let kind = parse_param_kind(pat_type)?;
+                let kind = match results_event_type(&pat_type.ty) {
+                    Some(event) => ParamKind::Results(event),
+                    None => parse_param_kind(pat_type)?,
+                };
                 let rust_name = extract_param_name(&pat_type.pat)?;
 
                 let cli_name = match &kind {
@@ -298,6 +339,15 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
                 }
                 if matches!(kind, ParamKind::Matches) {
                     _has_matches = true;
+                }
+                if let ParamKind::Results(event) = &kind {
+                    if event_type.is_some() {
+                        return Err(Error::new(
+                            pat_type.span(),
+                            "#[handler] functions take at most one Results parameter",
+                        ));
+                    }
+                    event_type = Some(event.clone());
                 }
 
                 if matches!(kind, ParamKind::None) && !is_reference_type(&pat_type.ty) {
@@ -338,13 +388,34 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
     } else {
         quote! { __matches: &::clap::ArgMatches }
     };
+    let (event_param, event_argument, handler_event, handler_results) = match &event_type {
+        Some(event) => (
+            quote! { , __results: &mut #dispatch::Results<#event> },
+            quote! { , results },
+            quote! { #event },
+            quote! { results },
+        ),
+        None => (
+            quote! {},
+            quote! {},
+            quote! { #dispatch::NoEvents },
+            quote! { _results },
+        ),
+    };
 
     let return_type = &fn_item.sig.output;
 
+    let emits = event_type.is_some();
+
     let call_and_return = if is_unit_result(&fn_item) {
+        let empty = if emits {
+            quote! { #dispatch::Summary::Silent }
+        } else {
+            quote! { #dispatch::Output::Silent }
+        };
         quote! {
             #fn_name(#(#call_args),*)?;
-            Ok(#dispatch::Output::Silent)
+            Ok(#empty)
         }
     } else {
         quote! {
@@ -353,7 +424,11 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
     };
 
     let wrapper_return_type = if is_unit_result(&fn_item) {
-        quote! { -> #dispatch::HandlerResult<()> }
+        if emits {
+            quote! { -> #dispatch::SummaryResult<()> }
+        } else {
+            quote! { -> #dispatch::HandlerResult<()> }
+        }
     } else {
         quote! { #return_type }
     };
@@ -380,17 +455,35 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
 
     let output_type = if is_unit_result(&fn_item) {
         quote! { () }
-    } else if let Some(inner) = extract_output_type(&ok_type) {
+    } else if let Some(inner) = extract_output_type(&ok_type, emits) {
         quote! { #inner }
     } else {
         quote! { #ok_type }
+    };
+
+    let (handler_outcome, handle_result, into_outcome) = if emits {
+        (
+            quote! { #dispatch::Summary<#output_type> },
+            quote! { #dispatch::SummaryResult<Self::Output> },
+            quote! {
+                #dispatch::IntoSummaryResult::into_summary_result(#wrapper_name(matches, ctx #event_argument))
+            },
+        )
+    } else {
+        (
+            quote! { #dispatch::Output<#output_type> },
+            quote! { #dispatch::HandlerResult<Self::Output> },
+            quote! {
+                #dispatch::IntoHandlerResult::into_handler_result(#wrapper_name(matches, ctx #event_argument))
+            },
+        )
     };
 
     Ok(quote! {
         #clean_fn
 
         #[allow(non_snake_case)]
-        #fn_vis fn #wrapper_name(__matches: &::clap::ArgMatches, __ctx: &#dispatch::CommandContext) #wrapper_return_type {
+        #fn_vis fn #wrapper_name(__matches: &::clap::ArgMatches, __ctx: &#dispatch::CommandContext #event_param) #wrapper_return_type {
             #(#extractions)*
             #call_and_return
         }
@@ -405,12 +498,18 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
         #fn_vis struct #handler_struct_name;
 
         impl #dispatch::Handler for #handler_struct_name {
+            type Event = #handler_event;
             type Output = #output_type;
+            type Outcome = #handler_outcome;
 
-            fn handle(&mut self, matches: &::clap::ArgMatches, ctx: &#dispatch::CommandContext)
-                -> #dispatch::HandlerResult<Self::Output>
+            fn handle(
+                &mut self,
+                matches: &::clap::ArgMatches,
+                ctx: &#dispatch::CommandContext,
+                #handler_results: &mut #dispatch::Results<Self::Event>,
+            ) -> #handle_result
             {
-                #dispatch::IntoHandlerResult::into_handler_result(#wrapper_name(matches, ctx))
+                #into_outcome
             }
 
             fn expected_args(&self) -> ::std::vec::Vec<#dispatch::verify::ExpectedArg> {
@@ -431,6 +530,17 @@ mod tests {
 
         let ty: Type = syn::parse_quote!(String);
         assert!(!is_option_type(&ty));
+    }
+
+    #[test]
+    fn a_batch_return_type_named_summary_stays_the_output_type() {
+        let summary: Type = syn::parse_quote!(domain::Summary<Row>);
+        let output: Type = syn::parse_quote!(Output<Row>);
+
+        assert!(extract_output_type(&summary, false).is_none());
+        assert!(extract_output_type(&output, false).is_some());
+        assert!(extract_output_type(&summary, true).is_some());
+        assert!(extract_output_type(&output, true).is_some());
     }
 
     #[test]

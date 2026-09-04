@@ -1,20 +1,22 @@
 use crate::{SnapshotCase, TestHarness};
-use standout_render::OutputMode;
+use standout::ColorPolicy;
+use standout_render::Representation;
 #[derive(Debug, Clone)]
 pub struct MatrixCell<T> {
-    pub mode: OutputMode,
+    pub mode: Representation,
     pub color: bool,
     pub theme_name: String,
     pub theme: T,
 }
 impl<T> MatrixCell<T> {
     pub fn harness(&self) -> TestHarness {
-        let harness = TestHarness::new().output_mode(self.mode);
-        if self.color {
-            harness.with_color()
-        } else {
-            harness.no_color()
-        }
+        TestHarness::new()
+            .output_mode(self.mode)
+            .color(if self.color {
+                ColorPolicy::Always
+            } else {
+                ColorPolicy::Never
+            })
     }
     pub fn snapshot_case(&self, subject: impl Into<String>) -> SnapshotCase {
         SnapshotCase::new(subject)
@@ -24,7 +26,7 @@ impl<T> MatrixCell<T> {
     }
 }
 pub fn matrix<T: Clone>(
-    modes: &[OutputMode],
+    modes: &[Representation],
     colors: &[bool],
     themes: &[(&str, T)],
 ) -> Vec<MatrixCell<T>> {
@@ -46,7 +48,7 @@ pub fn matrix<T: Clone>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    const MODES: [OutputMode; 2] = [OutputMode::Term, OutputMode::Text];
+    const MODES: [Representation; 2] = [Representation::Human, Representation::Json];
     #[test]
     fn the_matrix_is_the_full_cross_product_in_mode_major_order() {
         let cells = matrix(&MODES, &[false, true], &[("default", 0), ("downstream", 1)]);
@@ -58,14 +60,14 @@ mod tests {
         assert_eq!(
             spelled,
             [
-                "Term/false/default",
-                "Term/false/downstream",
-                "Term/true/default",
-                "Term/true/downstream",
-                "Text/false/default",
-                "Text/false/downstream",
-                "Text/true/default",
-                "Text/true/downstream",
+                "Human/false/default",
+                "Human/false/downstream",
+                "Human/true/default",
+                "Human/true/downstream",
+                "Json/false/default",
+                "Json/false/downstream",
+                "Json/true/default",
+                "Json/true/downstream",
             ]
         );
     }
@@ -86,15 +88,15 @@ mod tests {
     }
     #[test]
     fn a_cell_spells_its_axes_into_the_snapshot_key() {
-        let cells = matrix(&[OutputMode::Term], &[true], &[("downstream", ())]);
+        let cells = matrix(&[Representation::Json], &[true], &[("downstream", ())]);
         assert_eq!(
             cells[0].snapshot_case("help").key(),
-            "help__mode_term__color_on__theme_downstream"
+            "help__mode_json__color_on__theme_downstream"
         );
     }
     #[test]
     fn the_theme_payload_rides_along() {
-        let cells = matrix(&[OutputMode::Text], &[false], &[("a", 41), ("b", 42)]);
+        let cells = matrix(&[Representation::Human], &[false], &[("a", 41), ("b", 42)]);
         assert_eq!(cells[0].theme, 41);
         assert_eq!(cells[1].theme, 42);
     }

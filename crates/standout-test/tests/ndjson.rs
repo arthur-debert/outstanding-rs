@@ -1,15 +1,31 @@
+//! Line framing: one raw record per emitted event, the summary as the `result`
+//! record, and the diagnostic and warning entries the machine contract places
+//! around them.
+
 use clap::Command;
 use serde::Serialize;
 use serde_json::json;
 use standout::cli::{
-    App, Artifact, CommandContextInput, Diagnostic, DiagnosticKind, ExitStatus, FnHandler,
-    HandlerResult, Output, RunErrorKind, Severity,
+    App, Artifact, CommandContextInput, Diagnostic, DiagnosticKind, EventsFnHandler, ExitStatus,
+    FnHandler, HandlerResult, Output, Results, RunErrorKind, Severity, Summary, SummaryResult,
 };
-use standout::{EmbeddedTemplates, OutputMode};
+use standout::ColorPolicy;
+use standout::{EmbeddedTemplates, Representation};
 use standout_test::TestHarness;
+
+const EVENT_TEMPLATE: &str = concat!(
+    r#"{% if event.type == "version" %}v{{ event.format_version }}"#,
+    r#"{% elif event.type == "apply_start" %}starting {{ event.resource }}"#,
+    r#"{% else %}done {{ event.resource }}{% endif %}"#,
+);
 
 const TEMPLATES: &[(&str, &str)] = &[
     ("stream", "{{ applied }} applied"),
+    ("stream.event", EVENT_TEMPLATE),
+    ("fail-mid-stream", "{{ applied }} applied"),
+    ("fail-mid-stream.event", EVENT_TEMPLATE),
+    ("silent-stream", "unreachable"),
+    ("silent-stream.event", EVENT_TEMPLATE),
     ("warn", "{{ ok }}"),
     ("artifact", "wrote {{ report.entries }} entries"),
 ];
@@ -37,27 +53,29 @@ fn app() -> App {
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "stream",
-            FnHandler::new(|_, ctx| -> HandlerResult<serde_json::Value> {
-                let stream = ctx.stream();
-                stream.emit(&Entry::Version { format_version: 1 })?;
-                stream.emit(&Entry::ApplyStart { resource: "web" })?;
-                stream.emit(&Entry::ApplyComplete { resource: "web" })?;
-                Ok(Output::Render(json!({ "applied": 1 })))
-            }),
+            EventsFnHandler::new(
+                |_, _ctx, results: &mut Results<Entry>| -> SummaryResult<serde_json::Value> {
+                    results.emit(Entry::Version { format_version: 1 })?;
+                    results.emit(Entry::ApplyStart { resource: "web" })?;
+                    results.emit(Entry::ApplyComplete { resource: "web" })?;
+                    Ok(Summary::Render(json!({ "applied": 1 })))
+                },
+            ),
             |cfg| cfg,
         )
         .unwrap()
         .command_with(
             "fail-mid-stream",
-            FnHandler::new(|_, ctx| -> HandlerResult<serde_json::Value> {
-                let stream = ctx.stream();
-                stream.emit(&Entry::Version { format_version: 1 })?;
-                stream.emit(&Entry::ApplyStart { resource: "web" })?;
-                Err(Diagnostic::error("web: refused")
-                    .detail("the resource refuses every apply")
-                    .into())
-            }),
-            |cfg| cfg.structured_only(),
+            EventsFnHandler::new(
+                |_, _ctx, results: &mut Results<Entry>| -> SummaryResult<serde_json::Value> {
+                    results.emit(Entry::Version { format_version: 1 })?;
+                    results.emit(Entry::ApplyStart { resource: "web" })?;
+                    Err(Diagnostic::error("web: refused")
+                        .detail("the resource refuses every apply")
+                        .into())
+                },
+            ),
+            |cfg| cfg,
         )
         .unwrap()
         .command_with(
@@ -71,17 +89,18 @@ fn app() -> App {
         .unwrap()
         .command_with(
             "silent-stream",
-            FnHandler::new(|_, ctx| -> HandlerResult<()> {
-                ctx.stream().emit(&Entry::Version { format_version: 1 })?;
-                Ok(Output::Silent)
-            }),
-            |cfg| cfg.silent(),
+            EventsFnHandler::new(
+                |_, _ctx, results: &mut Results<Entry>| -> SummaryResult<()> {
+                    results.emit(Entry::Version { format_version: 1 })?;
+                    Ok(Summary::Silent)
+                },
+            ),
+            |cfg| cfg,
         )
         .unwrap()
         .command_with(
             "binary",
-            FnHandler::new(|_, ctx| -> HandlerResult<()> {
-                ctx.stream().emit(&Entry::Version { format_version: 1 })?;
+            FnHandler::new(|_, _| -> HandlerResult<()> {
                 Ok(Output::Binary {
                     data: vec![0, 1, 2],
                     filename: "out.bin".into(),
@@ -92,8 +111,7 @@ fn app() -> App {
         .unwrap()
         .command_with(
             "artifact",
-            FnHandler::new(|_, ctx| {
-                ctx.stream().emit(&Entry::Version { format_version: 1 })?;
+            FnHandler::new(|_, _| -> HandlerResult<serde_json::Value> {
                 Ok(Output::Artifact(
                     Artifact::new(vec![0, 1, 2]).with_report(json!({ "entries": 3 })),
                 ))
@@ -113,8 +131,8 @@ fn lines(stdout: &str) -> Vec<serde_json::Value> {
 }
 
 #[test]
-fn a_handler_streams_three_entries_then_its_result_as_a_result_entry() {
-    let result = TestHarness::new().output_mode(OutputMode::Ndjson).run(
+fn a_handler_emits_three_raw_records_then_its_summary_as_a_result_record() {
+    let result = TestHarness::new().output_mode(Representation::Ndjson).run(
         &app(),
         command(),
         ["app", "stream"],
@@ -132,7 +150,7 @@ fn a_handler_streams_three_entries_then_its_result_as_a_result_entry() {
 
 #[test]
 fn a_failure_mid_stream_is_a_diagnostic_entry_after_the_emitted_lines() {
-    let result = TestHarness::new().output_mode(OutputMode::Ndjson).run(
+    let result = TestHarness::new().output_mode(Representation::Ndjson).run(
         &app(),
         command(),
         ["app", "fail-mid-stream"],
@@ -162,10 +180,11 @@ fn a_failure_mid_stream_is_a_diagnostic_entry_after_the_emitted_lines() {
 
 #[test]
 fn a_warning_is_a_warning_entry_on_stdout_after_the_result() {
-    let result =
-        TestHarness::new()
-            .output_mode(OutputMode::Ndjson)
-            .run(&app(), command(), ["app", "warn"]);
+    let result = TestHarness::new().output_mode(Representation::Ndjson).run(
+        &app(),
+        command(),
+        ["app", "warn"],
+    );
     result.assert_success();
     result.assert_stderr_empty();
     let entries = lines(result.stdout());
@@ -191,10 +210,11 @@ fn a_warning_is_a_warning_entry_on_stdout_after_the_result() {
         "a warning is not the run's failure"
     );
 
-    let json =
-        TestHarness::new()
-            .output_mode(OutputMode::Json)
-            .run(&app(), command(), ["app", "warn"]);
+    let json = TestHarness::new().output_mode(Representation::Json).run(
+        &app(),
+        command(),
+        ["app", "warn"],
+    );
     json.assert_success();
     json.assert_stderr_contains("a soft warning");
     assert!(!json.stdout().contains("soft warning"), "{}", json.stdout());
@@ -202,10 +222,11 @@ fn a_warning_is_a_warning_entry_on_stdout_after_the_result() {
 
 #[test]
 fn a_warning_entry_reads_back_as_a_warning_severity_diagnostic() {
-    let result =
-        TestHarness::new()
-            .output_mode(OutputMode::Ndjson)
-            .run(&app(), command(), ["app", "warn"]);
+    let result = TestHarness::new().output_mode(Representation::Ndjson).run(
+        &app(),
+        command(),
+        ["app", "warn"],
+    );
     let warning: Diagnostic =
         serde_json::from_str(result.stdout().lines().nth(1).unwrap()).unwrap();
     assert_eq!(warning.severity, Severity::Warning);
@@ -213,36 +234,66 @@ fn a_warning_entry_reads_back_as_a_warning_severity_diagnostic() {
 }
 
 #[test]
-fn the_stream_discards_under_json_and_text() {
-    let json =
-        TestHarness::new()
-            .output_mode(OutputMode::Json)
-            .run(&app(), command(), ["app", "stream"]);
-    json.assert_success();
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(json.stdout()).unwrap(),
-        json!({ "applied": 1 })
-    );
-
+fn the_human_representation_renders_each_event_then_the_summary() {
     let text =
         TestHarness::new()
-            .output_mode(OutputMode::Text)
+            .color(ColorPolicy::Never)
             .run(&app(), command(), ["app", "stream"]);
     text.assert_success();
-    text.assert_stdout_eq("1 applied");
+    text.assert_stdout_eq("v1\nstarting web\ndone web\n1 applied");
 
-    let silent = TestHarness::new().output_mode(OutputMode::Text).run(
+    let silent = TestHarness::new().color(ColorPolicy::Never).run(
         &app(),
         command(),
         ["app", "silent-stream"],
     );
     silent.assert_success();
-    assert!(silent.stdout_bytes().is_empty());
+    silent.assert_stdout_eq("v1");
 }
 
 #[test]
-fn a_silent_streaming_handler_leaves_only_its_entries() {
-    let result = TestHarness::new().output_mode(OutputMode::Ndjson).run(
+fn csv_carries_the_events_as_rows_and_leaves_the_summary_out() {
+    let result = TestHarness::new().output_mode(Representation::Csv).run(
+        &app(),
+        command(),
+        ["app", "stream"],
+    );
+    result.assert_success();
+    assert_eq!(
+        result.stdout(),
+        "type,format_version,resource\nversion,1,\napply_start,,web\napply_complete,,web\n"
+    );
+}
+
+#[test]
+fn json_and_yaml_carry_the_run_as_the_array_of_the_framed_records() {
+    let framed: Vec<serde_json::Value> = TestHarness::new()
+        .output_mode(Representation::Ndjson)
+        .run(&app(), command(), ["app", "stream"])
+        .stdout()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+
+    for representation in [Representation::Json, Representation::Yaml] {
+        let result = TestHarness::new().output_mode(representation).run(
+            &app(),
+            command(),
+            ["app", "stream"],
+        );
+        result.assert_success();
+        let document: Vec<serde_json::Value> = if representation == Representation::Yaml {
+            serde_yaml::from_str(result.stdout()).unwrap()
+        } else {
+            serde_json::from_str(result.stdout()).unwrap()
+        };
+        assert_eq!(document, framed, "{representation:?}");
+    }
+}
+
+#[test]
+fn a_silent_summary_leaves_only_the_events() {
+    let result = TestHarness::new().output_mode(Representation::Ndjson).run(
         &app(),
         command(),
         ["app", "silent-stream"],
@@ -256,7 +307,7 @@ fn a_silent_streaming_handler_leaves_only_its_entries() {
 
 #[test]
 fn a_usage_error_under_ndjson_is_a_diagnostic_line_exiting_two() {
-    let result = TestHarness::new().output_mode(OutputMode::Ndjson).run(
+    let result = TestHarness::new().output_mode(Representation::Ndjson).run(
         &app(),
         command(),
         ["app", "stream", "--bogus"],
@@ -271,7 +322,7 @@ fn a_usage_error_under_ndjson_is_a_diagnostic_line_exiting_two() {
 fn run_to_file(subcommand: &str) -> (standout_test::TestResult, String) {
     let dir = tempfile::TempDir::new().unwrap();
     let path = dir.path().join("out.ndjson");
-    let result = TestHarness::new().output_mode(OutputMode::Ndjson).run(
+    let result = TestHarness::new().output_mode(Representation::Ndjson).run(
         &app(),
         command(),
         [
@@ -285,7 +336,7 @@ fn run_to_file(subcommand: &str) -> (standout_test::TestResult, String) {
 }
 
 #[test]
-fn an_output_file_under_ndjson_takes_the_entries_and_the_result_and_stdout_stays_empty() {
+fn an_output_file_under_ndjson_takes_the_events_and_the_result_and_stdout_stays_empty() {
     let (result, file) = run_to_file("stream");
     result.assert_success();
     result.assert_stderr_empty();
@@ -331,15 +382,11 @@ fn assert_payload_is_a_render_error(result: &standout_test::TestResult) {
     result.assert_stderr_empty();
 }
 
-fn assert_entries_are_the_version_then_the_render_error(
-    entries: &[serde_json::Value],
-    payload: &str,
-) {
-    assert_eq!(entries.len(), 2, "{payload}: {entries:?}");
-    assert_eq!(entries[0]["type"], "version");
-    assert_eq!(entries[1]["type"], "diagnostic");
-    assert_eq!(entries[1]["kind"], "render");
-    let summary = entries[1]["summary"].as_str().unwrap_or_default();
+fn assert_the_only_entry_is_the_render_error(entries: &[serde_json::Value], payload: &str) {
+    assert_eq!(entries.len(), 1, "{payload}: {entries:?}");
+    assert_eq!(entries[0]["type"], "diagnostic");
+    assert_eq!(entries[0]["kind"], "render");
+    let summary = entries[0]["summary"].as_str().unwrap_or_default();
     assert!(
         summary.contains(&format!("{payload} output was produced under ndjson")),
         "{payload}: {summary}"
@@ -347,35 +394,25 @@ fn assert_entries_are_the_version_then_the_render_error(
 }
 
 #[test]
-fn binary_and_artifact_output_under_ndjson_are_render_errors_after_the_entries() {
+fn binary_and_artifact_output_under_ndjson_are_render_errors() {
     for payload in ["binary", "artifact"] {
-        let result = TestHarness::new().output_mode(OutputMode::Ndjson).run(
+        let result = TestHarness::new().output_mode(Representation::Ndjson).run(
             &app(),
             command(),
             ["app", payload],
         );
         assert_payload_is_a_render_error(&result);
         assert_eq!(result.expect_diagnostic().kind, DiagnosticKind::Render);
-        assert_entries_are_the_version_then_the_render_error(&lines(result.stdout()), payload);
+        assert_the_only_entry_is_the_render_error(&lines(result.stdout()), payload);
     }
 }
 
 #[test]
-fn binary_and_artifact_output_under_ndjson_with_an_output_file_leave_only_the_stream_in_it() {
+fn binary_and_artifact_output_under_ndjson_with_an_output_file_leave_only_the_diagnostic_in_it() {
     for payload in ["binary", "artifact"] {
         let (result, file) = run_to_file(payload);
         assert_payload_is_a_render_error(&result);
         assert_eq!(result.stdout_bytes(), b"", "{payload}: {}", result.stdout());
-        assert_entries_are_the_version_then_the_render_error(&lines(&file), payload);
+        assert_the_only_entry_is_the_render_error(&lines(&file), payload);
     }
-}
-
-#[test]
-fn binary_and_artifact_output_under_the_single_document_modes_are_untouched() {
-    let binary =
-        TestHarness::new()
-            .output_mode(OutputMode::Json)
-            .run(&app(), command(), ["app", "binary"]);
-    binary.assert_success();
-    assert_eq!(binary.stdout_bytes(), [0, 1, 2]);
 }

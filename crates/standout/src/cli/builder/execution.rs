@@ -1,6 +1,15 @@
+//! The run's presentation and destination: the framework flags the builder
+//! installs, the entry points that dispatch a command, and the write of what
+//! the run produced.
+//!
+//! The payload and delivery decisions read the post-output hooks' final
+//! result, and the pager delivery is recorded on the final outcome, because a
+//! hook can still turn a document into a payload or add a report to an
+//! artifact whose handler returned none.
+
 use crate::{
-    open_output_file, write_binary_output, write_output, InputSources, OutputDestination,
-    OutputMode, RenderRequest, TargetProperties,
+    open_output_file, write_binary_output, write_output, ColorPolicy, InputSources,
+    OutputDestination, Representation, TargetProperties,
 };
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use standout_render::warnings::WarningBuffer;
@@ -8,7 +17,8 @@ use std::path::PathBuf;
 
 use super::{
     output_mode_flag_spelling, App, AppBuilder, HookRegistrationSource, PendingCommand,
-    TemplateRef, OUTPUT_MODE_FLAG_VALUES,
+    TemplateRef, COLOR_ARG, COLOR_FLAG_DEFAULT, COLOR_FLAG_VALUES, NO_PAGER_ARG, OUTPUT_FILE_ARG,
+    OUTPUT_MODE_ARG, OUTPUT_MODE_FLAG_VALUES,
 };
 use crate::cli::config::{
     config_command, config_command_tree, config_result_output, config_run_error,
@@ -17,24 +27,89 @@ use crate::cli::config::{
 use crate::cli::default_command::ParseFailure;
 use crate::cli::dispatch::{
     dispatch, extract_command_path, get_deepest_matches, render_handler_output, DispatchOutput,
+    PendingRender,
 };
 use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
 use crate::cli::handler::{
-    ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, DispatchResult, EntryStream,
-    ExitStatus, OutputKind, RunError, RunErrorKind, RunOutput, StreamCapture, StreamSink,
-    SuccessKind,
+    ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, Delivery, DispatchResult,
+    ExitStatus, OutputKind, RunError, RunErrorKind, RunOutput, RunRecorder, StreamCapture,
+    StreamSink, SuccessKind,
 };
 use crate::cli::hooks::{ArtifactOutput, Hooks, RenderedOutput, TextOutput};
+use crate::cli::pager::{Pager, PagerOutcome};
 use crate::cli::questionnaire::{
     augment_questionnaire_command, render_questions_result, validate_questionnaire_surface,
     QUESTIONNAIRE_ANSWERS_ARG, QUESTIONNAIRE_YES_ARG, QUESTIONS_SUBCOMMAND,
 };
 use crate::cli::ProcessOutcome;
-use crate::topics::display_with_pager;
 use crate::SetupError;
 use std::io::Write;
 
 const CONFIG_OVERRIDE_ARG: &str = "_config_override";
+
+fn writes_through_the_sink(output_mode: Representation) -> bool {
+    output_mode.is_stream() || output_mode.is_human()
+}
+
+pub(crate) struct RunResolution {
+    pub(crate) representation: Representation,
+    pub(crate) color_policy: ColorPolicy,
+    pub(crate) target: TargetProperties,
+    pub(crate) pager: Option<Pager>,
+}
+
+struct RunOutcome {
+    outcome: DispatchResult,
+    output_mode: Representation,
+    color_policy: ColorPolicy,
+    pager: Option<Pager>,
+}
+
+impl RunOutcome {
+    fn to_stdout(
+        outcome: DispatchResult,
+        output_mode: Representation,
+        color_policy: ColorPolicy,
+    ) -> Self {
+        Self {
+            outcome,
+            output_mode,
+            color_policy,
+            pager: None,
+        }
+    }
+}
+
+/// The strict-mode failure for the style tags the render window has left
+/// unresolved, or `None` when there are none. Callers have already decided
+/// that strict mode is on; `warnings` loses the superseded degrade warning.
+pub(crate) fn unresolved_style_tags_error(warnings: Option<&WarningBuffer>) -> Option<RunError> {
+    let unresolved = standout_render::diagnostics::unresolved_in_current_window();
+    if unresolved.is_empty() {
+        return None;
+    }
+    if let Some(warnings) = warnings {
+        warnings.retain(|warning| {
+            !warning.starts_with(standout_render::diagnostics::UNRESOLVED_DEGRADATION_PREFIX)
+        });
+    }
+    let (noun, pronoun, object) = if unresolved.len() == 1 {
+        ("style tag", "It is", "it")
+    } else {
+        ("style tags", "They are", "them")
+    };
+    Some(RunError::new(
+        format!(
+            "strict_style_tags is enabled and the render left {count} {noun} unresolved: \
+             {tags}. {pronoun} not defined in the active theme (a typo, or a tag the theme \
+             does not style). Define {object} in the theme, correct the tag name, or disable \
+             strict_style_tags to degrade to unstyled text instead.",
+            count = unresolved.len(),
+            tags = unresolved.join(", "),
+        ),
+        RunErrorKind::Render,
+    ))
+}
 
 struct ContextInputs {
     sources: InputSources,
@@ -103,53 +178,110 @@ impl App {
     pub fn dispatch(
         &self,
         matches: ArgMatches,
-        output_mode: OutputMode,
+        output_mode: Representation,
     ) -> crate::cli::CompletedRun {
         let capture = StreamCapture::default();
-        let run = self.collect_run_warnings(|warnings| {
-            let config = match self.resolve_config_for(&matches) {
+        let recorder = RunRecorder::new();
+        let run = self.collect_run_warnings(&recorder, |warnings| {
+            let config = self.resolve_config_for(&matches);
+            let resolved = self.resolve_run(
+                &matches,
+                config
+                    .as_ref()
+                    .ok()
+                    .and_then(|config| config.as_ref())
+                    .and_then(|config| config.term.as_ref()),
+                None,
+                ColorPolicy::Auto,
+                output_mode,
+                self.process_edge_target(),
+            );
+            let (output_mode, color_policy) = (resolved.representation, resolved.color_policy);
+            let config = match config {
                 Ok(config) => config,
-                Err(error) => return (DispatchResult::Error(error), output_mode),
+                Err(error) => {
+                    return RunOutcome {
+                        outcome: DispatchResult::Error(error),
+                        output_mode,
+                        color_policy,
+                        pager: None,
+                    }
+                }
             };
-            let term_output = config
-                .as_ref()
-                .and_then(|config| config.term.as_ref())
-                .and_then(|term| term.output);
-            let output_mode = match term_output {
-                Some(term) if self.typed_output_mode(&matches).is_none() => OutputMode::from(term),
-                _ => output_mode,
-            };
-            (
-                self.dispatch_with_target(
+            RunOutcome {
+                outcome: self.dispatch_with_target(
                     matches,
                     output_mode,
-                    self.process_edge_target(),
+                    color_policy,
+                    resolved.target,
                     ContextInputs {
                         sources: InputSources::from_process(),
                         config,
                     },
                     StreamSink::new(capture.clone()),
+                    recorder.clone(),
                     warnings,
                 ),
                 output_mode,
-            )
+                color_policy,
+                pager: resolved.pager,
+            }
         });
         run.with_entries(String::from_utf8_lossy(&capture.take()).into_owned())
     }
 
-    fn process_edge_target(&self) -> TargetProperties {
+    pub(crate) fn process_edge_target(&self) -> TargetProperties {
         let mut target = TargetProperties::detect();
         target.ambiguous_width = self.ambiguous_width;
         target
     }
 
+    /// Decides a run's presentation and destination for every entry point.
+    /// Help is decided elsewhere: it short-circuits clap and leaves no
+    /// `ArgMatches`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn resolve_run(
+        &self,
+        matches: &ArgMatches,
+        term: Option<&crate::TermSettings>,
+        typed_color: Option<ColorPolicy>,
+        named_color: ColorPolicy,
+        representation_fallback: Representation,
+        target: TargetProperties,
+    ) -> RunResolution {
+        let representation = self.typed_output_mode(matches).unwrap_or_else(|| {
+            term.and_then(|term| term.output)
+                .map_or(representation_fallback, Representation::from)
+        });
+        let target = file_destination(target, self.output_file_override(matches).is_some());
+        RunResolution {
+            representation,
+            color_policy: self.resolve_color_policy(
+                self.typed_color_policy(matches).or(typed_color),
+                named_color,
+                term,
+            ),
+            target,
+            pager: self
+                .pager_for_run(
+                    target,
+                    representation,
+                    self.paging_is_suppressed_in(matches),
+                )
+                .filter(|_| self.pages_its_output(&extract_command_path(matches).join("."))),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn dispatch_with_target(
         &self,
         matches: ArgMatches,
-        output_mode: OutputMode,
+        output_mode: Representation,
+        color_policy: ColorPolicy,
         target: TargetProperties,
         inputs: ContextInputs,
         sink: StreamSink,
+        recorder: RunRecorder,
         warnings: WarningBuffer,
     ) -> DispatchResult {
         self.ensure_commands_finalized();
@@ -163,9 +295,11 @@ impl App {
                 path,
                 &matches,
                 output_mode,
+                color_policy,
                 target,
                 inputs.sources,
                 &sink,
+                &recorder,
                 &warnings,
             );
         }
@@ -180,6 +314,7 @@ impl App {
             output_mode,
             override_path.as_deref(),
             &sink,
+            &recorder,
             &warnings,
         ) {
             Ok(ctx) => ctx,
@@ -192,6 +327,7 @@ impl App {
 
         let hooks = self.command_hooks.get(&path_str);
         let sub_matches = get_deepest_matches(&matches);
+        let emits_events = self.emits_events_for(&path_str);
 
         if let Some(hooks) = hooks {
             if let Err(e) = hooks.run_pre_dispatch(sub_matches, &mut ctx) {
@@ -206,8 +342,11 @@ impl App {
             dispatch_fn,
             sub_matches,
             &ctx,
+            &recorder,
+            &sink,
             hooks,
             output_mode,
+            color_policy,
             &self.theme,
             target,
         ) {
@@ -221,6 +360,7 @@ impl App {
             sub_matches,
             &ctx,
             output_mode,
+            emits_events,
             override_path,
             &sink,
             &warnings,
@@ -244,10 +384,12 @@ impl App {
         action: Result<clapfig::ConfigAction, clapfig::ClapfigError>,
         path: Vec<String>,
         matches: &ArgMatches,
-        output_mode: OutputMode,
+        output_mode: Representation,
+        color_policy: ColorPolicy,
         target: TargetProperties,
         sources: InputSources,
         sink: &StreamSink,
+        recorder: &RunRecorder,
         warnings: &WarningBuffer,
     ) -> DispatchResult {
         let seam = self
@@ -263,12 +405,17 @@ impl App {
             Err(error) => return DispatchResult::Error(config_run_error(&error)),
         };
         let override_path = self.output_file_override(matches);
-        let mut ctx =
-            match self.command_context(path, output_mode, override_path.as_deref(), sink, warnings)
-            {
-                Ok(ctx) => ctx,
-                Err(error) => return DispatchResult::Error(error),
-            };
+        let mut ctx = match self.command_context(
+            path,
+            output_mode,
+            override_path.as_deref(),
+            sink,
+            recorder,
+            warnings,
+        ) {
+            Ok(ctx) => ctx,
+            Err(error) => return DispatchResult::Error(error),
+        };
         ctx.extensions.insert(sources);
         let sub_matches = get_deepest_matches(matches);
         let (output, template) = config_result_output(result, output_mode);
@@ -276,6 +423,7 @@ impl App {
             Ok(output),
             sub_matches,
             &ctx,
+            recorder,
             None,
             &template,
             &self.theme,
@@ -283,8 +431,10 @@ impl App {
             &self.template_engine,
             self.template_registry.as_ref(),
             output_mode,
+            color_policy,
             None,
             target,
+            None,
         ) {
             Ok(output) => output,
             Err(error) => return DispatchResult::Error(error),
@@ -295,6 +445,7 @@ impl App {
             sub_matches,
             &ctx,
             output_mode,
+            false,
             override_path,
             sink,
             warnings,
@@ -304,23 +455,28 @@ impl App {
     fn output_file_override(&self, matches: &ArgMatches) -> Option<PathBuf> {
         self.output_file_flag.as_ref().and_then(|_| {
             matches
-                .try_get_one::<String>("_output_file_path")
+                .try_get_one::<String>(OUTPUT_FILE_ARG)
                 .unwrap_or(None)
                 .map(PathBuf::from)
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn command_context(
         &self,
         path: Vec<String>,
-        output_mode: OutputMode,
+        output_mode: Representation,
         override_path: Option<&std::path::Path>,
         sink: &StreamSink,
+        recorder: &RunRecorder,
         warnings: &WarningBuffer,
     ) -> Result<CommandContext, RunError> {
-        // The file override takes the entries too, so the sink is retargeted first.
-        let stream = if output_mode.is_stream() {
-            if let Some(path) = override_path {
+        recorder.set_delivery(match override_path {
+            Some(path) => Delivery::File(path.to_path_buf()),
+            None => Delivery::Stdout,
+        });
+        if let Some(path) = override_path.filter(|_| writes_through_the_sink(output_mode)) {
+            if output_mode.is_stream() {
                 let file = open_output_file(path).map_err(|e| {
                     RunError::new(
                         format!("Error writing output: {}", e),
@@ -328,12 +484,12 @@ impl App {
                     )
                 })?;
                 sink.redirect(file);
+            } else {
+                let path = path.to_path_buf();
+                sink.redirect_on_first_write(move || open_output_file(&path));
             }
-            EntryStream::writing_to(sink.clone())
-        } else {
-            EntryStream::discarding()
-        };
-        let mut ctx = CommandContext::new(path, self.app_state.clone()).with_stream(stream);
+        }
+        let mut ctx = CommandContext::new(path, self.app_state.clone());
         ctx.extensions.insert(warnings.clone());
         Ok(ctx)
     }
@@ -345,12 +501,14 @@ impl App {
         hooks: Option<&Hooks>,
         sub_matches: &ArgMatches,
         ctx: &CommandContext,
-        output_mode: OutputMode,
+        output_mode: Representation,
+        emits_events: bool,
         override_path: Option<PathBuf>,
         sink: &StreamSink,
         warnings: &WarningBuffer,
     ) -> DispatchResult {
-        let (output, request, status) = match dispatch_output {
+        let mut pending_records: Option<(Vec<serde_json::Value>, String)> = None;
+        let (output, render, status) = match dispatch_output {
             DispatchOutput::Text {
                 formatted,
                 raw,
@@ -363,12 +521,30 @@ impl App {
             DispatchOutput::Binary(b, f) => {
                 (RenderedOutput::Binary(b, f), None, ExitStatus::SUCCESS)
             }
-            DispatchOutput::Artifact { output, request } => (
+            DispatchOutput::Artifact { output, render } => (
                 RenderedOutput::Artifact(output),
-                Some(request),
+                Some(render),
                 ExitStatus::SUCCESS,
             ),
             DispatchOutput::Silent { status } => (RenderedOutput::Silent, None, status),
+            DispatchOutput::Records { records, status } => {
+                let document =
+                    match standout_render::serialize_record_array(records.clone(), output_mode) {
+                        Ok(document) => document,
+                        Err(error) => {
+                            return DispatchResult::Error(RunError::new(
+                                error.to_string(),
+                                RunErrorKind::Render,
+                            ))
+                        }
+                    };
+                pending_records = Some((records, document.clone()));
+                (
+                    RenderedOutput::Text(TextOutput::new(document.clone(), document)),
+                    None,
+                    status,
+                )
+            }
         };
 
         let mut final_output = if let Some(hooks) = hooks {
@@ -385,6 +561,43 @@ impl App {
             output
         };
 
+        let mut warnings_included = false;
+        if let Some((mut records, unhooked)) = pending_records {
+            if matches!(&final_output, RenderedOutput::Text(t) if t.formatted == unhooked && t.raw == unhooked)
+            {
+                let snapshot = warnings.snapshot();
+                if !snapshot.is_empty() {
+                    records.extend(crate::cli::warning_records(&snapshot));
+                    let document =
+                        match standout_render::serialize_record_array(records, output_mode) {
+                            Ok(document) => document,
+                            Err(error) => {
+                                return DispatchResult::Error(RunError::new(
+                                    error.to_string(),
+                                    RunErrorKind::Render,
+                                ))
+                            }
+                        };
+                    final_output =
+                        RenderedOutput::Text(TextOutput::new(document.clone(), document));
+                }
+                warnings_included = true;
+            }
+        }
+
+        // A payload and an artifact own the named file themselves.
+        if !matches!(final_output, RenderedOutput::Text(_)) {
+            sink.cancel_pending_redirect();
+        }
+
+        if let Err(error) = super::super::dispatch::reject_payload_from_a_post_output_hook(
+            emits_events,
+            final_output.is_binary(),
+            final_output.is_artifact(),
+        ) {
+            return DispatchResult::Error(error);
+        }
+
         if let Err(error) = super::super::dispatch::reject_payload_under_stream(
             output_mode,
             final_output.is_binary(),
@@ -399,7 +612,7 @@ impl App {
                     status, "artifact",
                 ));
             }
-            return self.complete_artifact(artifact, request, override_path, warnings);
+            return self.complete_artifact(artifact, render, override_path, warnings);
         }
 
         // Before committing to stdout or a file, so a strict failure leaves no output.
@@ -411,9 +624,14 @@ impl App {
             let dest = OutputDestination::File(path);
 
             match &final_output {
-                RenderedOutput::Text(t) if output_mode.is_stream() => {
+                RenderedOutput::Text(t) if writes_through_the_sink(output_mode) => {
                     let written = sink.with_writer(|file| {
-                        writeln!(file, "{}", t.raw).and_then(|()| file.flush())
+                        if output_mode.is_stream() {
+                            writeln!(file, "{}", t.formatted)
+                        } else {
+                            write!(file, "{}", t.formatted)
+                        }
+                        .and_then(|()| file.flush())
                     });
                     if let Err(e) = written {
                         return DispatchResult::Error(RunError::new(
@@ -424,7 +642,7 @@ impl App {
                     final_output = RenderedOutput::Silent;
                 }
                 RenderedOutput::Text(t) => {
-                    if let Err(e) = write_output(&t.raw, &dest) {
+                    if let Err(e) = write_output(&t.formatted, &dest) {
                         return DispatchResult::Error(RunError::new(
                             format!("Error writing output: {}", e),
                             RunErrorKind::FinalWrite(OutputKind::Text),
@@ -446,55 +664,67 @@ impl App {
             }
         }
 
+        let handled = |text: String| {
+            DispatchResult::Handled(
+                RunOutput::command(text)
+                    .with_exit_status(status)
+                    .with_warnings_included(warnings_included),
+            )
+        };
         match final_output {
-            RenderedOutput::Text(t) => {
-                DispatchResult::Handled(RunOutput::command(t.formatted).with_exit_status(status))
-            }
+            RenderedOutput::Text(t) => handled(t.formatted),
             RenderedOutput::Binary(_, _) if status != ExitStatus::SUCCESS => DispatchResult::Error(
                 super::super::dispatch::status_without_a_carrier(status, "binary"),
             ),
             RenderedOutput::Binary(b, f) => DispatchResult::Binary(b, f),
             RenderedOutput::Artifact(_) => unreachable!("artifacts returned above"),
-            RenderedOutput::Silent => {
-                DispatchResult::Handled(RunOutput::command(String::new()).with_exit_status(status))
-            }
+            RenderedOutput::Silent => handled(String::new()),
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn dispatch_from_with_target<I, T>(
         &self,
         cmd: Command,
         args: I,
         target: TargetProperties,
+        color_policy: ColorPolicy,
         sources: InputSources,
         sink: StreamSink,
+        recorder: RunRecorder,
         warnings: WarningBuffer,
-    ) -> (DispatchResult, OutputMode)
+    ) -> RunOutcome
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
         let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
+        let named_color = color_policy;
+        let typed_color = self.typed_color_from_unparsed(&args);
+        let color_policy = self.resolve_color_policy(typed_color, named_color, None);
 
         if let Err(error) = self
             .malformed_registrations()
             .and_then(|()| self.validate_questionnaire_surfaces(&cmd))
             .and_then(|()| self.unreachable_registrations(&cmd))
             .and_then(|()| self.config_override_flag_collision(&cmd))
+            .and_then(|()| self.framework_flag_collision(&cmd))
             .and_then(|()| self.config_command_collision(&cmd))
         {
-            return (
+            return RunOutcome::to_stdout(
                 DispatchResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
                 self.extract_output_mode_from_unparsed(&args),
+                color_policy,
             );
         }
 
         let mut augmented_cmd = self.augment_command_with_help(cmd);
 
         if let Some(error) = self.help_word_collision(&augmented_cmd) {
-            return (
+            return RunOutcome::to_stdout(
                 DispatchResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
                 self.extract_output_mode_from_unparsed(&args),
+                color_policy,
             );
         }
 
@@ -502,12 +732,13 @@ impl App {
         {
             Ok(matches) => matches,
             Err(ParseFailure::UnknownDefault(e)) => {
-                return (
+                return RunOutcome::to_stdout(
                     DispatchResult::Error(RunError::new(
                         e.to_string(),
                         RunErrorKind::DefaultCommand,
                     )),
                     self.extract_output_mode_from_unparsed(&args),
+                    color_policy,
                 )
             }
             Err(ParseFailure::Clap(e)) => {
@@ -517,17 +748,25 @@ impl App {
                     &args,
                     &e,
                     Some(target),
+                    color_policy,
                     Some(warnings.clone()),
                 ) {
-                    return (display.into(), output_mode);
+                    let pager = self.pager_for_rendered_help(&display, &args, target, output_mode);
+                    return RunOutcome {
+                        outcome: display.into(),
+                        output_mode,
+                        color_policy,
+                        pager,
+                    };
                 }
                 if e.use_stderr() {
-                    return (
+                    return RunOutcome::to_stdout(
                         DispatchResult::Error(RunError::new(
                             e.to_string(),
                             RunErrorKind::ClapUsage,
                         )),
                         output_mode,
+                        color_policy,
                     );
                 }
                 let output = match e.kind() {
@@ -536,19 +775,32 @@ impl App {
                     }
                     _ => RunOutput::clap_help(e.to_string()),
                 };
-                return (DispatchResult::Handled(output), output_mode);
+                return RunOutcome::to_stdout(
+                    DispatchResult::Handled(output),
+                    output_mode,
+                    color_policy,
+                );
             }
         };
 
         let output_mode = self.extract_output_mode(&matches);
+        let typed_color = self.typed_color_policy(&matches).or(typed_color);
+        let color_policy = self.resolve_color_policy(typed_color, named_color, None);
 
         if let Some(display) = self.intercept_help_word(
             &mut augmented_cmd,
             &matches,
             Some(target),
+            color_policy,
             Some(warnings.clone()),
         ) {
-            return (display.into(), output_mode);
+            let pager = self.pager_for_rendered_help(&display, &args, target, output_mode);
+            return RunOutcome {
+                outcome: display.into(),
+                output_mode,
+                color_policy,
+                pager,
+            };
         }
 
         if let Some((path, questionnaire)) = self.questionnaire_questions_invocation(&matches) {
@@ -564,41 +816,59 @@ impl App {
                     .unwrap_or(None)
                     == Some(&true);
                 if has_answers || has_yes {
-                    return (
+                    return RunOutcome::to_stdout(
                         DispatchResult::Error(RunError::new(
                             "`questions` renders the blank answer sheet and cannot be combined with --answers or --yes",
                             RunErrorKind::ClapUsage,
                         )),
                         output_mode,
+                        color_policy,
                     );
                 }
             }
-            return (
+            return RunOutcome::to_stdout(
                 render_questions_result(questionnaire, &matches),
                 output_mode,
+                color_policy,
             );
         }
 
         let config = match self.resolve_config_for(&matches) {
             Ok(config) => config,
-            Err(error) => return (DispatchResult::Error(error), output_mode),
+            Err(error) => {
+                return RunOutcome::to_stdout(
+                    DispatchResult::Error(error),
+                    output_mode,
+                    color_policy,
+                )
+            }
         };
-        let output_mode = self.extract_output_mode_over(
+        let term = config.as_ref().and_then(|config| config.term.as_ref());
+        let resolved = self.resolve_run(
             &matches,
-            config.as_ref().and_then(|config| config.term.as_ref()),
+            term,
+            typed_color,
+            named_color,
+            self.output_mode_fallback,
+            target,
         );
+        let (output_mode, color_policy) = (resolved.representation, resolved.color_policy);
 
-        (
-            self.dispatch_with_target(
+        RunOutcome {
+            outcome: self.dispatch_with_target(
                 matches,
                 output_mode,
-                target,
+                color_policy,
+                resolved.target,
                 ContextInputs { sources, config },
                 sink,
+                recorder,
                 warnings,
             ),
             output_mode,
-        )
+            color_policy,
+            pager: resolved.pager,
+        }
     }
 
     fn resolve_config_for(&self, matches: &ArgMatches) -> Result<Option<ResolvedConfig>, RunError> {
@@ -655,6 +925,54 @@ impl App {
         Ok(())
     }
 
+    /// Rejects a framework flag whose long name a command in the tree already
+    /// declares. clap only catches the duplicate with a debug assertion, so a
+    /// release build would ship a flag answering to one of the two definitions.
+    pub(crate) fn framework_flag_collision(&self, cmd: &Command) -> Result<(), SetupError> {
+        let installed = [
+            (
+                "output_flag",
+                "no_output_flag()",
+                self.output_flag.as_deref(),
+            ),
+            (
+                "output_file_flag",
+                "no_output_file_flag()",
+                self.output_file_flag.as_deref(),
+            ),
+            ("color_flag", "no_color_flag()", self.color_flag.as_deref()),
+            ("pager_flag", "no_pager_flag()", self.pager_flag.as_deref()),
+        ];
+        // Generated `--help`/`--version` only exist per command once clap builds
+        // the tree, which is also what honors a command that turns one off.
+        let built = installed
+            .iter()
+            .any(|(_, _, flag)| matches!(*flag, Some("help" | "version")))
+            .then(|| {
+                let mut built = cmd.clone();
+                if let Some(version) = &self.version {
+                    built = built.version(version.clone());
+                }
+                built.build();
+                built
+            });
+        for (seam, removal, flag) in installed {
+            let Some(flag) = flag else { continue };
+            let searched = match flag {
+                "help" | "version" => built.as_ref().unwrap_or(cmd),
+                _ => cmd,
+            };
+            if let Some(owner) = command_declaring_long(searched, flag, &[]) {
+                return Err(SetupError::Config(format!(
+                    "{seam} installs `--{flag}`, which this application already declares on \
+                     `{owner}`. Rename standout's with {seam}(Some(\"...\")), drop it with \
+                     {removal}, or rename the application's own flag"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     pub fn run<I, T>(&self, cmd: Command, args: I) -> bool
     where
         I: IntoIterator<Item = T>,
@@ -667,6 +985,67 @@ impl App {
         outcome.handled
     }
 
+    /// The pager the run's human output goes to, or `None` when paging does
+    /// not apply. Resolving names a pager without starting one.
+    fn pager_for_run(
+        &self,
+        target: TargetProperties,
+        output_mode: Representation,
+        suppressed: bool,
+    ) -> Option<Pager> {
+        if !target.stdout_is_terminal || output_mode != Representation::Human || suppressed {
+            return None;
+        }
+        Pager::resolve(self.name.as_deref())
+    }
+
+    /// `--help` short-circuits clap, so the paging rule reads the output file
+    /// and `--no-pager` from argv instead of from `ArgMatches`.
+    fn pager_for_rendered_help(
+        &self,
+        display: &super::HelpDisplay,
+        args: &[std::ffi::OsString],
+        target: TargetProperties,
+        output_mode: Representation,
+    ) -> Option<Pager> {
+        if !matches!(display, super::HelpDisplay::Rendered { .. }) {
+            return None;
+        }
+        self.pager_for_run(
+            file_destination(target, self.output_file_from_unparsed(args).is_some()),
+            output_mode,
+            self.paging_is_suppressed(args),
+        )
+    }
+
+    fn paging_is_suppressed_in(&self, matches: &ArgMatches) -> bool {
+        matches
+            .try_get_one::<bool>(NO_PAGER_ARG)
+            .unwrap_or(None)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    fn pages_its_output(&self, path: &str) -> bool {
+        self.pageable_for(path) && !self.emits_events_for(path)
+    }
+
+    /// `true` when the pager took the bytes stdout would have received,
+    /// terminating newline included, or when its reader left. A pager that
+    /// could not start returns `false` and leaves them for the caller to write.
+    fn page_delivery(&self, run: &crate::cli::CompletedRun) -> bool {
+        let Delivery::Pager(command) = run.delivery() else {
+            return false;
+        };
+        let DispatchResult::Handled(output) = run.outcome() else {
+            return false;
+        };
+        match Pager::named(command.clone()).page(&format!("{}\n", output)) {
+            PagerOutcome::Paged | PagerOutcome::ReaderLeft => true,
+            PagerOutcome::CouldNotStart => false,
+        }
+    }
+
     /// `run` without ending the process.
     pub fn run_emitted<I, T>(&self, cmd: Command, args: I) -> ProcessOutcome
     where
@@ -677,23 +1056,40 @@ impl App {
         target.ambiguous_width = self.ambiguous_width;
         let sources = InputSources::from_process();
         let sink = StreamSink::process_stdout();
-        let result = self.run_with_sink(cmd, args, target, sources, sink.clone());
+        let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
+        let output_file = self.output_file_from_unparsed(&args);
+        let result = self.run_recording(
+            cmd,
+            &args,
+            file_destination(target, output_file.is_some()),
+            ColorPolicy::Auto,
+            sources,
+            sink.clone(),
+            RunRecorder::summary_only(),
+        );
         let primary_status = result.exit_status();
         let warnings = result.warnings().to_vec();
         let output_mode = result.output_mode();
 
-        let paged = match result.outcome() {
-            crate::cli::DispatchResult::Handled(output)
-                if output.kind() == SuccessKind::PagedHelp =>
-            {
-                display_with_pager(output.as_str()).is_ok()
-            }
-            _ => false,
-        };
+        let help_to_file = output_file
+            .zip(help_page(result.outcome()))
+            .map(|(path, page)| {
+                write_output(page, &OutputDestination::File(path))
+                    .err()
+                    .map(|error| {
+                        RunError::new(
+                            format!("Error writing output: {}", error),
+                            RunErrorKind::FinalWrite(OutputKind::Text),
+                        )
+                    })
+            });
+        let paged = help_to_file.is_none() && self.page_delivery(&result);
 
         let stderr = std::io::stderr();
         let mut stderr = stderr.lock();
-        let (handled, mut final_write_failure) = if paged {
+        let (handled, mut final_write_failure) = if let Some(failure) = help_to_file {
+            (true, failure)
+        } else if paged {
             (true, None)
         } else if output_mode.is_stream() {
             let emitted = sink.with_writer(|stdout| {
@@ -725,10 +1121,10 @@ impl App {
         }
         drop(stderr);
 
-        if !crate::cli::carries_warning_entries(result.outcome(), output_mode) {
+        if !crate::cli::warnings_delivered_on_stdout(result.outcome(), output_mode) {
             standout_render::warnings::flush_to_stderr(
                 &self.theme,
-                result.output_mode(),
+                result.color_policy(),
                 target,
                 &warnings,
             );
@@ -749,22 +1145,40 @@ impl App {
         }
     }
 
-    /// The capture window every entry point shares; help and answer-sheet outcomes, which
-    /// return before the pre-commit strict check, are checked here instead.
+    /// The capture window every entry point shares. Help and answer-sheet
+    /// outcomes return before the pre-commit strict check, so they are checked
+    /// here instead, and the run's surviving delivery is recorded here too.
     fn collect_run_warnings(
         &self,
-        inner: impl FnOnce(WarningBuffer) -> (DispatchResult, OutputMode),
+        recorder: &RunRecorder,
+        inner: impl FnOnce(WarningBuffer) -> RunOutcome,
     ) -> crate::cli::CompletedRun {
         let warnings = WarningBuffer::new();
         self.seed_startup_warnings(&warnings);
         let _capture = standout_render::diagnostics::begin_capture();
-        let (mut outcome, output_mode) = inner(warnings.clone());
+        let RunOutcome {
+            mut outcome,
+            output_mode,
+            color_policy,
+            pager,
+        } = inner(warnings.clone());
         if outcome.success_kind().is_some() {
             if let Some(error) = self.strict_style_tags_error(&warnings) {
                 outcome = DispatchResult::Error(error);
             }
         }
-        crate::cli::CompletedRun::from_dispatch(outcome, warnings.take(), output_mode)
+        if let (Some(pager), DispatchResult::Handled(output)) = (&pager, &outcome) {
+            if !output.as_str().is_empty() {
+                recorder.set_delivery(Delivery::Pager(pager.command().to_string()));
+            }
+        }
+        crate::cli::CompletedRun::from_dispatch(
+            outcome,
+            warnings.take(),
+            output_mode,
+            color_policy,
+            recorder,
+        )
     }
 
     /// Call before any byte is written; `Some` replaces the output and drops the
@@ -773,29 +1187,7 @@ impl App {
         if !self.strict_style_tags {
             return None;
         }
-        let unresolved = standout_render::diagnostics::unresolved_in_current_window();
-        if unresolved.is_empty() {
-            return None;
-        }
-        warnings.retain(|warning| {
-            !warning.starts_with(standout_render::diagnostics::UNRESOLVED_DEGRADATION_PREFIX)
-        });
-        let (noun, pronoun, object) = if unresolved.len() == 1 {
-            ("style tag", "It is", "it")
-        } else {
-            ("style tags", "They are", "them")
-        };
-        Some(RunError::new(
-            format!(
-                "strict_style_tags is enabled and the render left {count} {noun} unresolved: \
-                 {tags}. {pronoun} not defined in the active theme (a typo, or a tag the theme \
-                 does not style). Define {object} in the theme, correct the tag name, or disable \
-                 strict_style_tags to degrade to unstyled text instead.",
-                count = unresolved.len(),
-                tags = unresolved.join(", "),
-            ),
-            RunErrorKind::Render,
-        ))
+        unresolved_style_tags_error(Some(warnings))
     }
 
     /// Dispatch without writing either process stream; an output file override still writes.
@@ -810,17 +1202,43 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
+        self.run_with_color(cmd, args, target, ColorPolicy::Auto, sources)
+    }
+
+    /// `run_with` with the run's color policy named instead of resolved from the destination.
+    pub fn run_with_color<I, T>(
+        &self,
+        cmd: Command,
+        args: I,
+        target: TargetProperties,
+        color_policy: ColorPolicy,
+        sources: InputSources,
+    ) -> crate::cli::CompletedRun
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
         let capture = StreamCapture::default();
-        let run = self.run_with_sink(cmd, args, target, sources, StreamSink::new(capture.clone()));
+        let run = self.run_with_sink(
+            cmd,
+            args,
+            target,
+            color_policy,
+            sources,
+            StreamSink::new(capture.clone()),
+        );
         run.with_entries(String::from_utf8_lossy(&capture.take()).into_owned())
     }
 
-    /// `run_with` with the destination of `ctx.stream()` entries; written only under `ndjson`.
+    /// `run_with` with the run's color policy and the sink the whole run writes
+    /// through: the handler's events, then whatever the caller writes after.
+    #[allow(clippy::too_many_arguments)]
     pub fn run_with_sink<I, T>(
         &self,
         cmd: Command,
         args: I,
         target: TargetProperties,
+        color_policy: ColorPolicy,
         sources: InputSources,
         sink: StreamSink,
     ) -> crate::cli::CompletedRun
@@ -828,8 +1246,44 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        self.collect_run_warnings(|warnings| {
-            self.dispatch_from_with_target(cmd, args, target, sources, sink, warnings)
+        self.run_recording(
+            cmd,
+            args,
+            target,
+            color_policy,
+            sources,
+            sink,
+            RunRecorder::new(),
+        )
+    }
+
+    /// `run_with_sink` with the run's recorder named.
+    #[allow(clippy::too_many_arguments)]
+    fn run_recording<I, T>(
+        &self,
+        cmd: Command,
+        args: I,
+        target: TargetProperties,
+        color_policy: ColorPolicy,
+        sources: InputSources,
+        sink: StreamSink,
+        recorder: RunRecorder,
+    ) -> crate::cli::CompletedRun
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        self.collect_run_warnings(&recorder, |warnings| {
+            self.dispatch_from_with_target(
+                cmd,
+                args,
+                target,
+                color_policy,
+                sources,
+                sink,
+                recorder.clone(),
+                warnings,
+            )
         })
     }
 
@@ -841,20 +1295,43 @@ impl App {
         }
 
         if let Some(ref flag_name) = self.output_flag {
+            let mut arg = Arg::new(OUTPUT_MODE_ARG)
+                .long(flag_name.clone())
+                .value_name("MODE")
+                .global(true)
+                .value_parser(OUTPUT_MODE_FLAG_VALUES)
+                .help("Structured output encoding");
+            if let Some(spelling) = output_mode_flag_spelling(self.output_mode_fallback) {
+                arg = arg.default_value(spelling);
+            }
+            cmd = cmd.arg(arg);
+        }
+
+        if let Some(ref flag_name) = self.color_flag {
             cmd = cmd.arg(
-                Arg::new("_output_mode")
+                Arg::new(COLOR_ARG)
                     .long(flag_name.clone())
-                    .value_name("MODE")
+                    .value_name("WHEN")
                     .global(true)
-                    .value_parser(OUTPUT_MODE_FLAG_VALUES)
-                    .default_value(output_mode_flag_spelling(self.output_mode_fallback))
-                    .help("Output format"),
+                    .value_parser(COLOR_FLAG_VALUES)
+                    .default_value(COLOR_FLAG_DEFAULT)
+                    .help("When to color human output"),
+            );
+        }
+
+        if let Some(ref flag_name) = self.pager_flag {
+            cmd = cmd.arg(
+                Arg::new(NO_PAGER_ARG)
+                    .long(flag_name.clone())
+                    .global(true)
+                    .action(ArgAction::SetTrue)
+                    .help("Do not page the output"),
             );
         }
 
         if let Some(ref flag_name) = self.output_file_flag {
             cmd = cmd.arg(
-                Arg::new("_output_file_path")
+                Arg::new(OUTPUT_FILE_ARG)
                     .long(flag_name.clone())
                     .value_name("PATH")
                     .global(true)
@@ -1081,7 +1558,7 @@ impl App {
     fn complete_artifact(
         &self,
         artifact: ArtifactOutput,
-        request: Option<Box<RenderRequest>>,
+        render: Option<Box<PendingRender>>,
         override_path: Option<PathBuf>,
         warnings: &WarningBuffer,
     ) -> DispatchResult {
@@ -1095,7 +1572,7 @@ impl App {
         let report = match artifact.report {
             None => None,
             Some(report) => {
-                let Some(mut request) = request else {
+                let Some(render) = render else {
                     return DispatchResult::Error(RunError::new(
                         "Cannot render artifact report: the artifact carries a report but was \
                          not produced by a handler, so no template configuration is available",
@@ -1106,7 +1583,10 @@ impl App {
                     Ok(envelope) => envelope,
                     Err(error) => return DispatchResult::Error(error),
                 };
-                request.data = envelope;
+                let request = match render.resolved(envelope) {
+                    Ok(request) => request,
+                    Err(error) => return DispatchResult::Error(error),
+                };
                 match standout_render::render_request_split(&request) {
                     Ok(rendered) => Some(rendered.formatted),
                     Err(error) => {
@@ -1140,6 +1620,54 @@ impl App {
             report,
         ))
     }
+}
+
+/// The help page a run ended in, from clap's own `--help` or from the grouped
+/// page standout renders for `--help` and the `help` word.
+fn help_page(outcome: &crate::cli::DispatchResult) -> Option<&str> {
+    let crate::cli::DispatchResult::Handled(output) = outcome else {
+        return None;
+    };
+    matches!(output.kind(), SuccessKind::ClapHelp).then(|| output.as_str())
+}
+
+/// A named output file is never a terminal, so `auto` resolves to plain text
+/// in it; an explicit `--color always` still writes escapes there.
+fn file_destination(mut target: TargetProperties, writes_to_a_file: bool) -> TargetProperties {
+    if writes_to_a_file {
+        target.stdout_is_terminal = false;
+        target.stdout_color_capability = false;
+    }
+    target
+}
+
+const FRAMEWORK_ARG_IDS: [&str; 5] = [
+    OUTPUT_MODE_ARG,
+    OUTPUT_FILE_ARG,
+    COLOR_ARG,
+    NO_PAGER_ARG,
+    CONFIG_OVERRIDE_ARG,
+];
+
+/// The path of the first command in the tree declaring `flag`, as its own long
+/// invocation name or as one of its arguments' long names or aliases.
+fn command_declaring_long(cmd: &Command, flag: &str, path: &[&str]) -> Option<String> {
+    let mut here: Vec<&str> = path.to_vec();
+    here.push(cmd.get_name());
+    let declared = cmd.get_long_flag() == Some(flag)
+        || cmd.get_all_long_flag_aliases().any(|alias| alias == flag)
+        || cmd.get_arguments().any(|arg| {
+            !FRAMEWORK_ARG_IDS.contains(&arg.get_id().as_str())
+                && (arg.get_long() == Some(flag)
+                    || arg
+                        .get_all_aliases()
+                        .is_some_and(|aliases| aliases.contains(&flag)))
+        });
+    if declared {
+        return Some(here.join(" "));
+    }
+    cmd.get_subcommands()
+        .find_map(|sub| command_declaring_long(sub, flag, &here))
 }
 
 pub(crate) fn command_takes_flag(cmd: &Command, flag: &str) -> bool {
@@ -1189,11 +1717,15 @@ mod tests {
         ("list-15", "db={{ db }}, user={{ user }}"),
         ("fetch", "{{ url }}"),
         ("test-3", "[perm]{{ val }}[/perm]"),
+        ("apply", "{{ done }} done"),
+        ("apply.event", "starting {{ event.resource }}"),
     ];
 
+    use crate::cli::handler::EventsFnHandler;
     use crate::cli::handler::FnHandler;
     use crate::cli::handler::HandlerResult;
     use crate::cli::handler::Output as HandlerOutput;
+    use crate::cli::handler::Summary as HandlerSummary;
     use crate::cli::hooks::{HookError, Hooks, RenderedOutput};
 
     #[test]
@@ -1215,7 +1747,10 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Json);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Json);
 
         assert!(result.is_handled());
         let output = result.output().unwrap();
@@ -1263,7 +1798,10 @@ mod tests {
             .clone()
             .try_get_matches_from(["app", "db", "migrate"])
             .unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Json);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Json);
         assert!(result.is_handled());
         assert!(result.output().unwrap().contains("migrated"));
     }
@@ -1288,7 +1826,10 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Count: 42"));
@@ -1320,7 +1861,10 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert!(hook_called.load(Ordering::SeqCst));
@@ -1365,7 +1909,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Count: 42"));
@@ -1389,7 +1936,10 @@ mod tests {
             .subcommand(Command::new("other"));
 
         let matches = cmd.try_get_matches_from(["app", "other"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(!result.is_handled());
         assert!(result.matches().is_some());
@@ -1413,7 +1963,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Json);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Json);
 
         assert!(result.is_handled());
         let output = result.output().unwrap();
@@ -1438,7 +1991,10 @@ mod tests {
             Command::new("app").subcommand(Command::new("config").subcommand(Command::new("get")));
 
         let matches = cmd.try_get_matches_from(["app", "config", "get"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("value"));
@@ -1458,7 +2014,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("quiet"));
 
         let matches = cmd.try_get_matches_from(["app", "quiet"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some(""));
@@ -1480,7 +2039,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("fail"));
 
         let matches = cmd.try_get_matches_from(["app", "fail"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_error(), "expected Error, got {:?}", result);
         let msg = result.error().unwrap();
@@ -1596,7 +2158,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert!(hook_called.load(Ordering::SeqCst));
@@ -1623,7 +2188,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_error(), "expected Error, got {:?}", result);
         let msg = result.error().unwrap();
@@ -1659,7 +2227,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("HELLO"));
@@ -1705,7 +2276,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("[TEST]"));
@@ -1733,7 +2307,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_error(), "expected Error, got {:?}", result);
         let msg = result.error().unwrap();
@@ -1770,7 +2347,10 @@ mod tests {
             Command::new("app").subcommand(Command::new("config").subcommand(Command::new("get")));
 
         let matches = cmd.try_get_matches_from(["app", "config", "get"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("***"));
@@ -1806,7 +2386,10 @@ mod tests {
             .subcommand(Command::new("other"));
 
         let matches = cmd.try_get_matches_from(["app", "other"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("other"));
@@ -1841,7 +2424,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("export"));
 
         let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_binary());
         let (bytes, filename) = result.binary().unwrap();
@@ -1895,8 +2481,9 @@ mod tests {
         let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| Ok(HandlerOutput::Render(Data { value: 42 })),
+            FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(Data { value: 42 }))),
             crate::TemplateRef::Inline(("{{ value }}").to_string()),
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -1920,13 +2507,14 @@ mod tests {
         let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
         let sub_matches = matches.subcommand_matches("test").unwrap();
 
-        let result = standout.run_command::<_, ()>(
+        let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| -> HandlerResult<()> {
                 panic!("Handler should not be called");
-            },
+            }),
             crate::TemplateRef::Absent,
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -1955,12 +2543,13 @@ mod tests {
         let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| {
                 Ok(HandlerOutput::Render(Data {
                     msg: "hello".into(),
                 }))
-            },
+            }),
             crate::TemplateRef::Inline(("{{ msg }}").to_string()),
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -1979,11 +2568,12 @@ mod tests {
         let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
         let sub_matches = matches.subcommand_matches("test").unwrap();
 
-        let result = standout.run_command::<_, ()>(
+        let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| Ok(HandlerOutput::Silent),
+            FnHandler::new(|_m, _ctx| -> HandlerResult<()> { Ok(HandlerOutput::Silent) }),
             crate::TemplateRef::Absent,
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -2009,16 +2599,17 @@ mod tests {
         let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
         let sub_matches = matches.subcommand_matches("export").unwrap();
 
-        let result = standout.run_command::<_, ()>(
+        let result = standout.run_command(
             "export",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| -> HandlerResult<()> {
                 Ok(HandlerOutput::Binary {
                     data: vec![0xDE, 0xAD],
                     filename: "data.bin".into(),
                 })
-            },
+            }),
             crate::TemplateRef::Absent,
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -2046,17 +2637,18 @@ mod tests {
         let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
         let sub_matches = matches.subcommand_matches("export").unwrap();
 
-        let result = standout.run_command::<_, ()>(
+        let result = standout.run_command(
             "export",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| -> HandlerResult<()> {
                 Ok(HandlerOutput::Binary {
                     data: vec![0xDE, 0xAD],
                     filename: "data.bin".into(),
                 }
                 .with_exit_status(ExitStatus::from(2)))
-            },
+            }),
             crate::TemplateRef::Absent,
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -2078,17 +2670,18 @@ mod tests {
         let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
         let sub_matches = matches.subcommand_matches("export").unwrap();
 
-        let result = standout.run_command::<_, ()>(
+        let result = standout.run_command(
             "export",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| -> HandlerResult<()> {
                 Ok(HandlerOutput::Binary {
                     data: vec![0xDE, 0xAD],
                     filename: "data.bin".into(),
                 }
                 .with_exit_status(ExitStatus::SUCCESS))
-            },
+            }),
             crate::TemplateRef::Absent,
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -2110,16 +2703,17 @@ mod tests {
         let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
         let sub_matches = matches.subcommand_matches("export").unwrap();
 
-        let result = standout.run_command::<_, ()>(
+        let result = standout.run_command(
             "export",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| -> HandlerResult<()> {
                 Ok(HandlerOutput::Artifact(
                     crate::cli::Artifact::new(vec![1u8]).suggest_destination("out.bin"),
                 )
                 .with_exit_status(ExitStatus::SUCCESS))
-            },
+            }),
             crate::TemplateRef::Absent,
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -2141,16 +2735,17 @@ mod tests {
         let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
         let sub_matches = matches.subcommand_matches("export").unwrap();
 
-        let result = standout.run_command::<_, ()>(
+        let result = standout.run_command(
             "export",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| -> HandlerResult<()> {
                 Ok(HandlerOutput::Artifact(
                     crate::cli::Artifact::new(vec![1u8]).suggest_destination("out.bin"),
                 )
                 .with_exit_status(ExitStatus::from(2)))
-            },
+            }),
             crate::TemplateRef::Absent,
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -2185,11 +2780,12 @@ mod tests {
         let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| {
                 Ok(HandlerOutput::Render(serde_json::json!({"value": 1}))
                     .with_exit_status(ExitStatus::from(2)))
-            },
+            }),
             crate::TemplateRef::Inline("{{ value }}".to_string()),
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -2214,11 +2810,12 @@ mod tests {
         let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| {
                 Ok(HandlerOutput::Render(serde_json::json!({"value": 1}))
                     .with_exit_status(ExitStatus::from(2)))
-            },
+            }),
             crate::TemplateRef::Inline("{{ value }}".to_string()),
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -2250,7 +2847,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         let output = result.output().unwrap();
@@ -2288,7 +2888,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_error(), "expected Error, got {:?}", result);
         let msg = result.error().unwrap();
@@ -2330,7 +2933,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("12"));
@@ -2375,7 +2981,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(call_order.load(Ordering::SeqCst), 3);
@@ -2412,10 +3021,11 @@ mod tests {
         let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| Ok(HandlerOutput::Render(Data { value: 42 })),
+            FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(Data { value: 42 }))),
             crate::TemplateRef::Inline(
                 ("value={{ value }}, added={{ added_by_hook }}").to_string(),
             ),
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -2455,8 +3065,9 @@ mod tests {
         let result = standout.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| Ok(HandlerOutput::Render(Data { valid: false })),
+            FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(Data { valid: false }))),
             crate::TemplateRef::Inline(("{{ valid }}").to_string()),
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         );
 
@@ -2593,6 +3204,94 @@ mod tests {
     }
 
     #[test]
+    fn an_application_flag_colliding_with_a_framework_flag_is_a_setup_error() {
+        use serde_json::json;
+
+        let app = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
+                "list",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 1})))),
+                |cfg| cfg,
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let cmd = Command::new("app").subcommand(
+            Command::new("list").arg(
+                Arg::new("quiet")
+                    .long("no-pager")
+                    .action(ArgAction::SetTrue),
+            ),
+        );
+
+        let error = app.verify_command(&cmd).unwrap_err().to_string();
+        assert!(
+            error.contains("pager_flag installs `--no-pager`")
+                && error.contains("app list")
+                && error.contains("no_pager_flag()"),
+            "expected the seam named, got: {error}"
+        );
+
+        let result = app.run_with(
+            cmd,
+            ["app", "list"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
+        assert!(result.error().is_some_and(|error| error
+            .to_string()
+            .contains("pager_flag installs `--no-pager`")));
+    }
+
+    #[test]
+    fn a_framework_flag_spelled_like_a_generated_one_is_a_setup_error() {
+        let generated = |builder: AppBuilder| {
+            builder
+                .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+                .build()
+                .unwrap()
+                .verify_command(&Command::new("app").subcommand(Command::new("list")))
+                .unwrap_err()
+                .to_string()
+        };
+
+        let help = generated(AppBuilder::new().output_flag(Some("help")));
+        assert!(
+            help.contains("output_flag installs `--help`") && help.contains("`app`"),
+            "expected the generated help flag named, got: {help}"
+        );
+
+        let version = generated(
+            AppBuilder::new()
+                .version("1.0.0")
+                .color_flag(Some("version")),
+        );
+        assert!(
+            version.contains("color_flag installs `--version`") && version.contains("`app`"),
+            "expected the generated version flag named, got: {version}"
+        );
+    }
+
+    #[test]
+    fn a_colliding_subcommand_invocation_name_reports_the_subcommand() {
+        let app = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .build()
+            .unwrap();
+
+        let cmd = Command::new("app")
+            .subcommand(Command::new("list").subcommand(Command::new("all").long_flag("no-pager")));
+
+        let error = app.verify_command(&cmd).unwrap_err().to_string();
+        assert!(
+            error.contains("pager_flag installs `--no-pager`") && error.contains("`app list all`"),
+            "expected the declaring subcommand named, got: {error}"
+        );
+    }
+
+    #[test]
     fn test_dispatch_with_output_file_flag() {
         use serde_json::json;
         let temp_dir = tempfile::tempdir().unwrap();
@@ -2701,7 +3400,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dispatch_with_output_file_text_mode() {
+    fn test_dispatch_with_output_file_human_representation() {
         use serde_json::json;
         let temp_dir = tempfile::tempdir().unwrap();
         let file_path = temp_dir.path().join("output.txt");
@@ -2720,14 +3419,7 @@ mod tests {
 
         let result = builder.build().unwrap().run_with(
             cmd,
-            [
-                "app",
-                "--output",
-                "text",
-                "--output-file-path",
-                path_str,
-                "show",
-            ],
+            ["app", "--output-file-path", path_str, "show"],
             crate::TargetProperties::detect(),
             crate::InputSources::from_process(),
         );
@@ -2787,7 +3479,7 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let result = builder.build().unwrap().run_with(
             cmd,
-            ["app", "--output=term", "list"],
+            ["app", "list"],
             crate::TargetProperties::detect(),
             crate::InputSources::from_process(),
         );
@@ -2823,7 +3515,7 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let result = builder.build().unwrap().run_with(
             cmd,
-            ["app", "--output=term", "list"],
+            ["app", "list"],
             crate::TargetProperties::detect(),
             crate::InputSources::from_process(),
         );
@@ -2873,7 +3565,7 @@ header:
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let result = app.run_with(
             cmd,
-            ["app", "--output=term", "list"],
+            ["app", "list"],
             crate::TargetProperties::detect(),
             crate::InputSources::from_process(),
         );
@@ -2911,7 +3603,7 @@ header:
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let result = app.run_with(
             cmd,
-            ["app", "--output=term", "test"],
+            ["app", "test"],
             crate::TargetProperties::detect(),
             crate::InputSources::from_process(),
         );
@@ -2945,7 +3637,7 @@ header:
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let result = app.run_with(
             cmd,
-            ["app", "--output=term", "test"],
+            ["app", "test"],
             crate::TargetProperties::detect(),
             crate::InputSources::from_process(),
         );
@@ -2986,7 +3678,7 @@ header:
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let result = app.run_with(
             cmd,
-            ["app", "--output=term", "test"],
+            ["app", "test"],
             crate::TargetProperties::detect(),
             crate::InputSources::from_process(),
         );
@@ -3027,7 +3719,7 @@ header:
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let result = app.run_with(
             cmd,
-            ["app", "--output=term", "test"],
+            ["app", "test"],
             crate::TargetProperties::detect(),
             crate::InputSources::from_process(),
         );
@@ -3068,7 +3760,7 @@ header:
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let result = app.run_with(
             cmd,
-            ["app", "--output=term", "test"],
+            ["app", "test"],
             crate::TargetProperties::detect(),
             crate::InputSources::from_process(),
         );
@@ -3166,7 +3858,7 @@ header:
             let cmd = Command::new("app").subcommand(Command::new("test"));
             let result = app.run_with(
                 cmd,
-                ["app", "--output=term", "test"],
+                ["app", "test"],
                 crate::TargetProperties::detect(),
                 crate::InputSources::from_process(),
             );
@@ -3413,5 +4105,103 @@ header:
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("https://api.example.com"));
+    }
+
+    #[test]
+    fn a_summary_only_recorder_writes_every_event_and_returns_only_the_summary() {
+        #[derive(serde::Serialize)]
+        struct Started {
+            resource: String,
+        }
+
+        let app = App::builder()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
+                "apply",
+                EventsFnHandler::new(
+                    |_m, _ctx, results: &mut crate::cli::handler::Results<Started>| {
+                        for n in 0..64 {
+                            results.emit(Started {
+                                resource: format!("r{n}"),
+                            })?;
+                        }
+                        Ok::<_, anyhow::Error>(HandlerSummary::Render(
+                            serde_json::json!({"done": 64}),
+                        ))
+                    },
+                ),
+                |cfg| cfg,
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let capture = StreamCapture::default();
+        let run = app.run_recording(
+            Command::new("app").subcommand(Command::new("apply")),
+            ["app", "apply"],
+            TargetProperties::detect(),
+            ColorPolicy::Never,
+            InputSources::from_process(),
+            StreamSink::new(capture.clone()),
+            RunRecorder::summary_only(),
+        );
+
+        let written = String::from_utf8(capture.take()).unwrap();
+        assert_eq!(written.lines().count(), 64, "{written}");
+        assert_eq!(run.results(), [serde_json::json!({"done": 64})]);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn resolve_run_decides_paging_for_every_entry_point() {
+        let app = App::builder()
+            .name("myapp")
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
+                "list",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(serde_json::json!({})))),
+                |cfg| cfg.pageable(),
+            )
+            .unwrap()
+            .command_with(
+                "add",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(serde_json::json!({})))),
+                |cfg| cfg,
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+        let cmd = app.augment_framework_surface(
+            Command::new("myapp")
+                .subcommand(Command::new("list"))
+                .subcommand(Command::new("add")),
+        );
+        let mut target = TargetProperties::detect();
+        target.stdout_is_terminal = true;
+        let resolve = |args: &[&str]| {
+            let matches = cmd.clone().get_matches_from(args);
+            app.resolve_run(
+                &matches,
+                None,
+                None,
+                ColorPolicy::Auto,
+                Representation::Human,
+                target,
+            )
+            .pager
+            .map(|pager| pager.command().to_string())
+        };
+
+        let env = standout_test::ScopedEnv::new()
+            .set("MYAPP_PAGER", "sed -n 1p")
+            .remove("PAGER");
+
+        assert_eq!(resolve(&["myapp", "list"]), Some("sed -n 1p".to_string()));
+        assert_eq!(resolve(&["myapp", "list", "--no-pager"]), None);
+        assert_eq!(resolve(&["myapp", "add"]), None);
+
+        let _env = env.remove("MYAPP_PAGER");
+        assert_eq!(resolve(&["myapp", "list"]), None);
     }
 }

@@ -3,6 +3,7 @@ use console::Style;
 use serde_json::json;
 use standout::cli::FnHandler;
 use standout::cli::{App, CompletedRun, DispatchResult, Output};
+use standout::ColorPolicy;
 use standout::EmbeddedTemplates;
 use standout::{AmbiguousWidth, ColorMode, IconMode, InputSources, TargetProperties, Theme};
 
@@ -42,7 +43,7 @@ fn run_list(app: &App, args: &[&str]) -> CompletedRun {
 }
 
 #[test]
-fn styled_list_term_output_file_receives_raw_without_ansi() {
+fn styled_list_output_file_receives_raw_without_ansi() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("out.txt");
     let theme = Theme::new().add("tone", Style::new().red().force_styling(true));
@@ -63,7 +64,6 @@ fn styled_list_term_output_file_receives_raw_without_ansi() {
         &[
             "app",
             "list",
-            "--output=term",
             &format!("--output-file-path={}", path.display()),
         ],
     );
@@ -78,11 +78,11 @@ fn styled_list_term_output_file_receives_raw_without_ansi() {
     );
     assert!(file.contains("hello"), "got {file:?}");
 
-    let terminal = run_list(&app, &["app", "list", "--output=term"]);
+    let terminal = run_list(&app, &["app", "list"]);
     let rendered = terminal.output().expect("terminal list should render");
     assert!(
         rendered.contains("\x1b["),
-        "terminal --output=term must keep ANSI, got {rendered:?}"
+        "a color-capable terminal must keep ANSI, got {rendered:?}"
     );
 }
 
@@ -152,13 +152,15 @@ fn structured_only_list_serializes_json_through_run_with() {
         .unwrap();
 
     let result = run_list(&app, &["app", "list"]);
-    let output = result.output().expect("structured-only Auto serializes");
+    let output = result
+        .output()
+        .expect("a structured-only command serializes with no --output");
     let value: serde_json::Value = serde_json::from_str(output).unwrap();
     assert_eq!(value["name"], "Ada");
 }
 
 #[test]
-fn structured_only_list_rejects_term_through_run_with() {
+fn structured_only_list_rejects_term_debug_through_run_with() {
     let app = App::builder()
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
@@ -170,7 +172,7 @@ fn structured_only_list_rejects_term_through_run_with() {
         .build()
         .unwrap();
 
-    let result = run_list(&app, &["app", "list", "--output=term"]);
+    let result = run_list(&app, &["app", "list", "--output=term-debug"]);
     match result.into_outcome() {
         DispatchResult::Error(error) => {
             let message = error.to_string();
@@ -179,12 +181,12 @@ fn structured_only_list_rejects_term_through_run_with() {
                 "{message}"
             );
         }
-        other => panic!("expected structured-only list to reject term, got {other:?}"),
+        other => panic!("expected structured-only list to reject term-debug, got {other:?}"),
     }
 }
 
 #[test]
-fn styled_show_term_goes_through_render_request() {
+fn styled_show_goes_through_render_request() {
     let theme = Theme::new().add("tone", Style::new().red());
     let app = App::builder()
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
@@ -198,16 +200,17 @@ fn styled_show_term_goes_through_render_request() {
         .build()
         .unwrap();
 
-    let result = app.run_with(
+    let result = app.run_with_color(
         show_command(),
-        ["app", "show", "--output=term"],
+        ["app", "show"],
         capable_target(),
+        ColorPolicy::Always,
         InputSources::from_process(),
     );
     let rendered = result.output().expect("show should render");
     assert!(
         rendered.contains("\x1b["),
-        "every command's Term render goes through render_request force_styling, got {rendered:?}"
+        "every command's colored render goes through render_request force_styling, got {rendered:?}"
     );
     assert!(rendered.contains("hello"), "got {rendered:?}");
 }

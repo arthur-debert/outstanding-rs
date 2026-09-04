@@ -2,7 +2,7 @@ use crate::context::ContextProvider;
 use crate::setup::SetupError;
 use crate::topics::Topic;
 use crate::TemplateRegistry;
-use crate::{EmbeddedStyles, EmbeddedTemplates, OutputMode, Theme};
+use crate::{EmbeddedStyles, EmbeddedTemplates, Representation, Theme};
 use minijinja::Value;
 
 use super::AppBuilder;
@@ -10,6 +10,13 @@ use super::AppBuilder;
 impl AppBuilder {
     pub fn ambiguous_width(mut self, policy: crate::AmbiguousWidth) -> Self {
         self.ambiguous_width = policy;
+        self
+    }
+
+    /// The application's own name. An application that names itself is paged by
+    /// `<NAME>_PAGER` before `PAGER`; one that does not is paged by `PAGER`.
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
         self
     }
 
@@ -96,7 +103,7 @@ impl AppBuilder {
         self
     }
 
-    pub fn output_mode_fallback(mut self, mode: OutputMode) -> Self {
+    pub fn output_mode_fallback(mut self, mode: Representation) -> Self {
         self.output_mode_fallback = mode;
         self
     }
@@ -108,6 +115,28 @@ impl AppBuilder {
 
     pub fn no_output_file_flag(mut self) -> Self {
         self.output_file_flag = None;
+        self
+    }
+
+    pub fn color_flag(mut self, name: Option<&str>) -> Self {
+        self.color_flag = Some(name.unwrap_or("color").to_string());
+        self
+    }
+
+    pub fn no_color_flag(mut self) -> Self {
+        self.color_flag = None;
+        self
+    }
+
+    /// Renames the flag that suppresses paging, installed as `--no-pager`.
+    pub fn pager_flag(mut self, name: Option<&str>) -> Self {
+        self.pager_flag = Some(name.unwrap_or("no-pager").to_string());
+        self
+    }
+
+    /// Removes the flag that suppresses paging.
+    pub fn no_pager_flag(mut self) -> Self {
+        self.pager_flag = None;
         self
     }
 
@@ -187,6 +216,7 @@ impl AppBuilder {
 
 #[cfg(test)]
 mod tests {
+    use super::super::OUTPUT_MODE_ARG;
     use super::*;
     use crate::EmbeddedTemplates;
 
@@ -209,7 +239,7 @@ mod tests {
     use crate::cli::handler::FnHandler;
     use crate::cli::handler::Output as HandlerOutput;
     use crate::context::RenderContext;
-    use crate::OutputMode;
+    use crate::{ColorPolicy, Representation};
     use clap::Command;
 
     #[test]
@@ -228,7 +258,10 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("info"));
         let matches = cmd.try_get_matches_from(["app", "info"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("app v1.0.0"));
@@ -251,7 +284,10 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("info"));
         let matches = cmd.try_get_matches_from(["app", "info"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Report by Alice (2024)"));
@@ -275,7 +311,10 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("info"));
         let matches = cmd.try_get_matches_from(["app", "info"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         let output = result.output().unwrap();
@@ -289,7 +328,7 @@ mod tests {
         let builder = AppBuilder::new()
             .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .context_fn("mode", |ctx: &RenderContext| {
-                Value::from(format!("{:?}", ctx.output_mode))
+                Value::from(format!("{:?}", ctx.representation))
             })
             .command_with(
                 "info",
@@ -300,10 +339,13 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("info"));
         let matches = cmd.try_get_matches_from(["app", "info"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
-        assert_eq!(result.output(), Some("Mode: Text"));
+        assert_eq!(result.output(), Some("Mode: Human"));
     }
 
     #[test]
@@ -322,7 +364,10 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("from_data"));
@@ -354,11 +399,11 @@ mod tests {
         let app = builder.build().unwrap();
 
         let matches = cmd.clone().try_get_matches_from(["app", "list"]).unwrap();
-        let result = app.dispatch(matches, OutputMode::Text);
+        let result = app.dispatch(matches, Representation::Human);
         assert_eq!(result.output(), Some("MyApp: list"));
 
         let matches = cmd.try_get_matches_from(["app", "info"]).unwrap();
-        let result = app.dispatch(matches, OutputMode::Text);
+        let result = app.dispatch(matches, Representation::Human);
         assert_eq!(result.output(), Some("MyApp: info"));
     }
 
@@ -381,7 +426,10 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Count: 21, Doubled: 42"));
@@ -409,7 +457,10 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Debug: true, Max: 100"));
@@ -435,7 +486,10 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Human);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("a | b | c"));
@@ -457,7 +511,10 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
-        let result = builder.build().unwrap().dispatch(matches, OutputMode::Json);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch(matches, Representation::Json);
 
         assert!(result.is_handled());
         let output = result.output().unwrap();
@@ -489,7 +546,7 @@ mod tests {
         let cmd =
             Command::new("app").subcommand(Command::new("db").subcommand(Command::new("migrate")));
         let matches = cmd.try_get_matches_from(["app", "db", "migrate"]).unwrap();
-        let result = app.dispatch(matches, OutputMode::Text);
+        let result = app.dispatch(matches, Representation::Human);
 
         assert_eq!(result.output(), Some("true"));
     }
@@ -529,7 +586,7 @@ mod tests {
             .unwrap();
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = app.dispatch(matches, OutputMode::Text);
+        let result = app.dispatch(matches, Representation::Human);
         assert!(result.is_handled());
         assert_hot_reload_walk_warning(result.warnings());
     }
@@ -563,7 +620,7 @@ mod tests {
     }
 
     #[test]
-    fn run_with_text_output_keeps_warning_block_plain_on_color_capable_stderr() {
+    fn a_never_color_policy_keeps_the_warning_block_plain_on_color_capable_stderr() {
         use crate::cli::CommandContextInput;
         use crate::{AmbiguousWidth, ColorMode, IconMode, InputSources, TargetProperties};
         use serde_json::json;
@@ -593,13 +650,15 @@ mod tests {
             ambiguous_width: AmbiguousWidth::Narrow,
         };
         let cmd = Command::new("app").subcommand(Command::new("list"));
-        let result = app.run_with(
+        let result = app.run_with_sink(
             cmd,
-            ["app", "--output=text", "list"],
+            ["app", "list"],
             target,
+            ColorPolicy::Never,
             InputSources::from_process(),
+            crate::cli::StreamSink::new(Vec::new()),
         );
-        assert_eq!(result.output_mode(), OutputMode::Text);
+        assert_eq!(result.output_mode(), Representation::Human);
         assert!(
             result
                 .warnings()
@@ -610,12 +669,13 @@ mod tests {
         );
         let theme = crate::Theme::default();
         let block =
-            render_block_for_target(&theme, result.output_mode(), target, result.warnings());
+            render_block_for_target(&theme, result.color_policy(), target, result.warnings());
         assert!(
             !block.contains("\x1b["),
-            "--output=text must keep the warning block plain, got {block:?}"
+            "a never color policy must keep the warning block plain, got {block:?}"
         );
-        let styled = render_block_for_target(&theme, OutputMode::Auto, target, result.warnings());
+        let styled =
+            render_block_for_target(&theme, ColorPolicy::Always, target, result.warnings());
         assert!(
             styled.contains("\x1b["),
             "Auto on color-capable stderr should style warnings, got {styled:?}"
@@ -648,11 +708,11 @@ mod tests {
             .unwrap();
         assert_eq!(
             app.extract_output_mode_from_unparsed(&os_args(&["app", "--output=json"])),
-            OutputMode::Json
+            Representation::Json
         );
         assert_eq!(
             app.extract_output_mode_from_unparsed(&os_args(&["app", "--output", "json"])),
-            OutputMode::Json
+            Representation::Json
         );
     }
 
@@ -663,40 +723,40 @@ mod tests {
             .build()
             .unwrap();
         assert_eq!(
-            app.extract_output_mode_from_unparsed(&os_args(&["app", "--", "--output=text"])),
-            OutputMode::Auto,
+            app.extract_output_mode_from_unparsed(&os_args(&["app", "--", "--output=csv"])),
+            Representation::Human,
             "arguments after -- are not flags"
         );
         assert_eq!(
             app.extract_output_mode_from_unparsed(&os_args(&[
                 "app",
-                "--output=text",
+                "--output=csv",
                 "--",
                 "--output=json"
             ])),
-            OutputMode::Text,
+            Representation::Csv,
             "a flag before -- still counts; one after it does not"
         );
         assert_eq!(
             app.extract_output_mode_from_unparsed(&os_args(&["app", "--output=nope"])),
-            OutputMode::Auto,
+            Representation::Human,
             "unknown value"
         );
         assert_eq!(
             app.extract_output_mode_from_unparsed(&os_args(&["app", "--output"])),
-            OutputMode::Auto,
+            Representation::Human,
             "missing value"
         );
         assert_eq!(
-            app.extract_output_mode_from_unparsed(&os_args(&["app", "--output", "--output=text"])),
-            OutputMode::Text,
-            "standalone --output must not consume a following --output=text"
+            app.extract_output_mode_from_unparsed(&os_args(&["app", "--output", "--output=csv"])),
+            Representation::Csv,
+            "standalone --output must not consume a following --output=csv"
         );
         assert_eq!(
             app.extract_output_mode_from_unparsed(&os_args(&[
-                "app", "--output", "--output", "text"
+                "app", "--output", "--output", "csv"
             ])),
-            OutputMode::Text,
+            Representation::Csv,
             "standalone --output must not consume a following --output value"
         );
     }
@@ -708,18 +768,18 @@ mod tests {
             .build()
             .unwrap();
         assert_eq!(
-            app.extract_output_mode_from_unparsed(&os_args(&["--output=text"])),
-            OutputMode::Auto,
+            app.extract_output_mode_from_unparsed(&os_args(&["--output=csv"])),
+            Representation::Human,
             "argv[0] is the program name, even when it looks like a flag"
         );
         assert_eq!(
-            app.extract_output_mode_from_unparsed(&os_args(&["--output=json", "--output=text"])),
-            OutputMode::Text,
+            app.extract_output_mode_from_unparsed(&os_args(&["--output=json", "--output=csv"])),
+            Representation::Csv,
             "a flag-like program name must not count as an occurrence"
         );
         assert_eq!(
-            app.extract_output_mode_from_unparsed(&os_args(&["--", "--output=text"])),
-            OutputMode::Text,
+            app.extract_output_mode_from_unparsed(&os_args(&["--", "--output=csv"])),
+            Representation::Csv,
             "a -- program name must not terminate the scan"
         );
     }
@@ -732,27 +792,36 @@ mod tests {
             .build()
             .unwrap();
         assert_eq!(
-            app.extract_output_mode_from_unparsed(&os_args(&["app", "--output=text"])),
-            OutputMode::Auto
+            app.extract_output_mode_from_unparsed(&os_args(&["app", "--output=csv"])),
+            Representation::Human
         );
     }
 
     #[test]
     fn the_output_flag_default_spells_the_app_fallback() {
-        let app = AppBuilder::new()
-            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
-            .output_mode_fallback(OutputMode::Term)
-            .build()
-            .unwrap();
-        let augmented = app.augment_framework_surface(Command::new("app"));
-        let arg = augmented
-            .get_arguments()
-            .find(|arg| arg.get_id() == "_output_mode")
-            .expect("the output flag is declared");
+        let default_values = |fallback| {
+            let app = AppBuilder::new()
+                .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+                .output_mode_fallback(fallback)
+                .build()
+                .unwrap();
+            let augmented = app.augment_framework_surface(Command::new("app"));
+            let defaults = augmented
+                .get_arguments()
+                .find(|arg| arg.get_id() == OUTPUT_MODE_ARG)
+                .expect("the output flag is declared")
+                .get_default_values()
+                .to_vec();
+            defaults
+        };
+        assert!(
+            default_values(Representation::Human).is_empty(),
+            "the human representation has no --output spelling to advertise"
+        );
         assert_eq!(
-            arg.get_default_values(),
-            ["term"],
-            "the help page must advertise the mode the app actually falls back to"
+            default_values(Representation::Csv),
+            ["csv"],
+            "the help page must advertise the encoding the app actually falls back to"
         );
     }
 
@@ -760,16 +829,16 @@ mod tests {
     fn an_unusable_output_value_falls_back_to_the_app_fallback() {
         let app = AppBuilder::new()
             .templates(EmbeddedTemplates::new(TEMPLATES, ""))
-            .output_mode_fallback(OutputMode::Text)
+            .output_mode_fallback(Representation::Human)
             .build()
             .unwrap();
         assert_eq!(
             app.extract_output_mode_from_unparsed(&os_args(&["app", "--output=nope"])),
-            OutputMode::Text
+            Representation::Human
         );
         assert_eq!(
             app.extract_output_mode_from_unparsed(&os_args(&["app", "--output"])),
-            OutputMode::Text
+            Representation::Human
         );
     }
 
@@ -781,7 +850,7 @@ mod tests {
 
         let app = AppBuilder::new()
             .templates(EmbeddedTemplates::new(TEMPLATES, ""))
-            .output_mode_fallback(OutputMode::Text)
+            .output_mode_fallback(Representation::Human)
             .command_with(
                 "list",
                 FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1})))),
@@ -797,11 +866,11 @@ mod tests {
             InputSources::from_process(),
         );
         assert_eq!(result.error_kind(), Some(RunErrorKind::ClapUsage));
-        assert_eq!(result.output_mode(), OutputMode::Text);
+        assert_eq!(result.output_mode(), Representation::Human);
     }
 
     #[test]
-    fn clap_usage_error_honours_text_output_for_startup_warnings() {
+    fn clap_usage_error_carries_the_output_flag_and_the_startup_warnings() {
         use crate::cli::handler::RunErrorKind;
         use crate::InputSources;
         use serde_json::json;
@@ -823,7 +892,7 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let result = app.run_with(
             cmd,
-            ["app", "--output=text", "not-a-command"],
+            ["app", "--output=json", "not-a-command"],
             target,
             InputSources::from_process(),
         );
@@ -833,7 +902,7 @@ mod tests {
             result.outcome()
         );
         assert_eq!(result.error_kind(), Some(RunErrorKind::ClapUsage));
-        assert_eq!(result.output_mode(), OutputMode::Text);
+        assert_eq!(result.output_mode(), Representation::Json);
         assert!(
             result
                 .warnings()
@@ -843,13 +912,13 @@ mod tests {
             result.warnings()
         );
         let theme = crate::Theme::default();
-        let block =
-            render_block_for_target(&theme, result.output_mode(), target, result.warnings());
+        let block = render_block_for_target(&theme, ColorPolicy::Never, target, result.warnings());
         assert!(
             !block.contains("\x1b["),
-            "clap usage with --output=text must keep warnings plain, got {block:?}"
+            "a never color policy must keep warnings plain, got {block:?}"
         );
-        let styled = render_block_for_target(&theme, OutputMode::Auto, target, result.warnings());
+        let styled =
+            render_block_for_target(&theme, ColorPolicy::Always, target, result.warnings());
         assert!(
             styled.contains("\x1b["),
             "Auto on color-capable stderr should style warnings, got {styled:?}"
@@ -857,7 +926,7 @@ mod tests {
     }
 
     #[test]
-    fn clap_help_and_version_honour_text_output_flag_from_unparsed_line() {
+    fn clap_help_and_version_honour_the_output_flag_from_the_unparsed_line() {
         use crate::InputSources;
 
         let app = AppBuilder::new()
@@ -875,25 +944,25 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let help = app.run_with(
             cmd.clone(),
-            ["app", "--help", "--output=text"],
+            ["app", "--help", "--output=json"],
             target,
             InputSources::from_process(),
         );
         assert_eq!(
             help.output_mode(),
-            OutputMode::Text,
-            "--output=text after --help must still opt warnings out of ANSI"
+            Representation::Json,
+            "--output after --help must still reach the run"
         );
         let version = app.run_with(
             cmd,
-            ["app", "--output=text", "--version"],
+            ["app", "--output=json", "--version"],
             target,
             InputSources::from_process(),
         );
         assert_eq!(
             version.output_mode(),
-            OutputMode::Text,
-            "--output=text before --version must still opt warnings out of ANSI"
+            Representation::Json,
+            "--output before --version must still reach the run"
         );
     }
 
@@ -976,7 +1045,7 @@ mod tests {
         for (label, cmd) in cases {
             let result = app.run_with(
                 cmd,
-                ["app", "--output=text", "not-a-command"],
+                ["app", "--output=json", "not-a-command"],
                 target,
                 InputSources::from_process(),
             );
@@ -987,8 +1056,8 @@ mod tests {
             );
             assert_eq!(
                 result.output_mode(),
-                OutputMode::Text,
-                "{label}: custom help/version spellings must not drop --output=text"
+                Representation::Json,
+                "{label}: custom help/version spellings must not drop --output=json"
             );
         }
     }
@@ -1029,14 +1098,14 @@ mod tests {
             .subcommand(Command::new("sibling"));
         let help = app.run_with(
             help_cmd,
-            ["app", "sibling", "--help", "--output=text"],
+            ["app", "sibling", "--help", "--output=json"],
             target,
             InputSources::from_process(),
         );
         assert_eq!(
             help.output_mode(),
-            OutputMode::Text,
-            "sibling --help --output=text must keep Text when list owns --help"
+            Representation::Json,
+            "sibling --help --output=json must keep Json when list owns --help"
         );
 
         let short_cmd = Command::new("app")
@@ -1048,14 +1117,14 @@ mod tests {
             .subcommand(Command::new("sibling"));
         let short = app.run_with(
             short_cmd,
-            ["app", "sibling", "-h", "--output=text"],
+            ["app", "sibling", "-h", "--output=json"],
             target,
             InputSources::from_process(),
         );
         assert_eq!(
             short.output_mode(),
-            OutputMode::Text,
-            "sibling -h --output=text must keep Text when list owns -h"
+            Representation::Json,
+            "sibling -h --output=json must keep Json when list owns -h"
         );
 
         let version_cmd = Command::new("app")
@@ -1071,14 +1140,14 @@ mod tests {
             .subcommand(Command::new("sibling"));
         let version = app.run_with(
             version_cmd,
-            ["app", "sibling", "--version", "--output=text"],
+            ["app", "sibling", "--version", "--output=json"],
             target,
             InputSources::from_process(),
         );
         assert_eq!(
             version.output_mode(),
-            OutputMode::Text,
-            "sibling --version --output=text must keep Text when list owns --version"
+            Representation::Json,
+            "sibling --version --output=json must keep Json when list owns --version"
         );
     }
 }

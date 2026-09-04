@@ -1,13 +1,12 @@
 //! `tflike` acceptance suite, progress milestone: black-box against the binary
 //! named by `CORPUS_TFLIKE_BIN`. Behavior under test is
-//! `corpus/archetypes/tflike/spec.md`; the gate and its owner are recorded in
-//! `gaps.toml`.
+//! `corpus/archetypes/tflike/spec.md`; the gate is closed in `gaps.toml`, so
+//! every assertion is a plain requirement.
 
 use std::path::Path;
 
-use corpus_gap_suites::{expect_gap, parse_ndjson, reject_ansi, run, Output};
+use corpus_gap_suites::{parse_ndjson, reject_ansi, required_binary, run, Output};
 
-const GATE: &str = "tflike/progress -> typed command output";
 const BIN: &str = "CORPUS_TFLIKE_BIN";
 
 /// `state` is written at the default `main.tfl.state` path; the tempdir is returned to inspect.
@@ -90,90 +89,51 @@ fn assert_terminal_summary(
 }
 
 #[test]
-fn expected_fail_apply_lifecycle_events_ride_the_stream_and_state_is_rewritten() {
-    expect_gap(
-        GATE,
-        BIN,
-        "no typed incremental result carries the lifecycle events",
-        |binary| {
-            let (dir, out) = apply_two_changes(binary)?;
-            if out.code != Some(0) {
-                return Err(format!(
-                    "a successful apply should exit 0, exited {:?}",
-                    out.code
-                ));
-            }
-            let entries = parse_ndjson(&out.stdout)?;
-            for resource in ["web", "db"] {
-                assert_lifecycle_pair(&entries, resource)?;
-            }
-            assert_terminal_summary(&entries, 2, 0)?;
-            // Plausible events without applying anything may not pass.
-            let mut state = state_resources(dir.path())?;
-            state.sort();
-            if state != ["db", "web"] {
-                return Err(format!(
-                    "the state file should record exactly web and db, holds {state:?}"
-                ));
-            }
-            Ok(())
-        },
+fn apply_lifecycle_events_ride_the_stream_and_state_is_rewritten() {
+    let binary = required_binary(BIN);
+    let (dir, out) = apply_two_changes(&binary).unwrap();
+    assert_eq!(out.code, Some(0), "a successful apply should exit 0");
+    let entries = parse_ndjson(&out.stdout).unwrap();
+    for resource in ["web", "db"] {
+        assert_lifecycle_pair(&entries, resource).unwrap();
+    }
+    assert_terminal_summary(&entries, 2, 0).unwrap();
+    // Plausible events without applying anything may not pass.
+    let mut state = state_resources(dir.path()).unwrap();
+    state.sort();
+    assert_eq!(
+        state,
+        ["db", "web"],
+        "the state file should record exactly web and db"
     );
 }
 
 #[test]
-fn expected_fail_apply_deletion_emits_lifecycle_and_rewrites_state() {
-    expect_gap(
-        GATE,
-        BIN,
-        "no typed incremental result carries the lifecycle events",
-        |binary| {
-            let (dir, out) = apply_in_tempdir(binary, "resource web absent\n", Some("web\n"))?;
-            if out.code != Some(0) {
-                return Err(format!(
-                    "a successful apply should exit 0, exited {:?}",
-                    out.code
-                ));
-            }
-            let entries = parse_ndjson(&out.stdout)?;
-            assert_lifecycle_pair(&entries, "web")?;
-            assert_terminal_summary(&entries, 0, 1)?;
-            let state = state_resources(dir.path())?;
-            if !state.is_empty() {
-                return Err(format!(
-                    "the state file should be empty after the deletion, holds {state:?}"
-                ));
-            }
-            Ok(())
-        },
+fn apply_deletion_emits_lifecycle_and_rewrites_state() {
+    let binary = required_binary(BIN);
+    let (dir, out) = apply_in_tempdir(&binary, "resource web absent\n", Some("web\n")).unwrap();
+    assert_eq!(out.code, Some(0), "a successful apply should exit 0");
+    let entries = parse_ndjson(&out.stdout).unwrap();
+    assert_lifecycle_pair(&entries, "web").unwrap();
+    assert_terminal_summary(&entries, 0, 1).unwrap();
+    let state = state_resources(dir.path()).unwrap();
+    assert!(
+        state.is_empty(),
+        "the state file should be empty after the deletion, holds {state:?}"
     );
 }
 
 #[test]
-fn expected_fail_progress_is_suppressed_under_structured_mode() {
-    expect_gap(
-        GATE,
-        BIN,
-        "no representation-aware suppression of progress rendering exists",
-        |binary| {
-            let (_dir, out) = apply_two_changes(binary)?;
-            if out.code != Some(0) {
-                return Err(format!(
-                    "a successful apply should exit 0, exited {:?}",
-                    out.code
-                ));
-            }
-            parse_ndjson(&out.stdout)?;
-            reject_ansi(&out.stdout, "stdout")?;
-            // A known-success structured invocation has no legitimate stderr traffic:
-            // plain prose progress is as much a mismatch as a spinner redraw.
-            if !out.stderr.is_empty() {
-                return Err(format!(
-                    "structured mode must silence stderr entirely, got {:?}",
-                    out.stderr
-                ));
-            }
-            Ok(())
-        },
+fn progress_is_suppressed_under_structured_mode() {
+    let binary = required_binary(BIN);
+    let (_dir, out) = apply_two_changes(&binary).unwrap();
+    assert_eq!(out.code, Some(0), "a successful apply should exit 0");
+    parse_ndjson(&out.stdout).unwrap();
+    reject_ansi(&out.stdout, "stdout").unwrap();
+    // A known-success structured invocation has no legitimate stderr traffic:
+    // plain prose progress is as much a mismatch as a spinner redraw.
+    assert_eq!(
+        out.stderr, "",
+        "structured mode must silence stderr entirely"
     );
 }

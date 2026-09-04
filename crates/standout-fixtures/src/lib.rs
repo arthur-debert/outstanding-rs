@@ -96,7 +96,7 @@ impl Downstream {
     }
 
     fn app(&self) -> App {
-        let mut builder = App::builder().help_word(self.help_word);
+        let mut builder = App::builder().help_word(self.help_word).no_color_flag();
 
         if self.topics {
             builder = builder
@@ -265,7 +265,7 @@ mod tests {
             args,
             &standout::InputSources::from_process(),
         ) {
-            HelpResult::Help(text) | HelpResult::PagedHelp(text) => text,
+            HelpResult::Help(text) => text,
             other => panic!("expected rendered help, got: {other:?}"),
         }
     }

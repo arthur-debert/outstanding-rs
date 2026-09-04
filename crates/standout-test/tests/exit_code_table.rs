@@ -10,7 +10,7 @@ use serial_test::serial;
 use standout::cli::{
     App, DiagnosticKind, ExitStatus, FnHandler, HandlerResult, Output, RunErrorKind,
 };
-use standout::{EmbeddedTemplates, OutputMode};
+use standout::{EmbeddedTemplates, Representation};
 use standout_test::{TestHarness, TestResult};
 
 const TEMPLATES: &[(&str, &str)] = &[
@@ -86,7 +86,7 @@ impl Outcome {
 #[derive(Debug)]
 enum Stdout {
     Nothing,
-    Text(&'static str),
+    Human(&'static str),
     Document(&'static str),
     ResultEntry(&'static str),
     Diagnostic(DiagnosticKind),
@@ -100,7 +100,7 @@ enum Stderr {
 
 struct Row {
     outcome: Outcome,
-    mode: OutputMode,
+    mode: Representation,
     status: u8,
     stdout: Stdout,
     stderr: Stderr,
@@ -109,17 +109,17 @@ struct Row {
 fn table() -> Vec<Row> {
     use DiagnosticKind::{ClapUsage, Handler};
     use Outcome::{DeclaredStatus, Failure, Success, UsageError};
-    use OutputMode::{Json, Ndjson, Text};
+    use Representation::{Human, Json, Ndjson};
     use Stderr::{Prose, Silent};
     use Stdout::{Diagnostic, Document, Nothing, ResultEntry};
 
     let usage = "error: unexpected argument '--bogus'";
     let refused = "Error: the handler refused";
     [
-        (Success, Text, 0, Stdout::Text("ok"), Silent),
-        (DeclaredStatus, Text, 3, Stdout::Text("signal"), Silent),
-        (UsageError, Text, 2, Nothing, Prose(usage)),
-        (Failure, Text, 1, Nothing, Prose(refused)),
+        (Success, Human, 0, Stdout::Human("ok"), Silent),
+        (DeclaredStatus, Human, 3, Stdout::Human("signal"), Silent),
+        (UsageError, Human, 2, Nothing, Prose(usage)),
+        (Failure, Human, 1, Nothing, Prose(refused)),
         (Success, Json, 0, Document("ok"), Silent),
         (DeclaredStatus, Json, 3, Document("signal"), Silent),
         (UsageError, Json, 2, Diagnostic(ClapUsage), Silent),
@@ -144,7 +144,7 @@ fn assert_stdout(row: &Row, result: &TestResult) {
     let cell = format!("{:?} under {:?}", row.outcome, row.mode);
     match row.stdout {
         Stdout::Nothing => assert_eq!(result.stdout(), "", "{cell}"),
-        Stdout::Text(text) => {
+        Stdout::Human(text) => {
             assert_eq!(result.stdout(), text, "{cell}");
             assert_eq!(result.diagnostic(), None, "{cell}");
         }
@@ -164,7 +164,7 @@ fn assert_stdout(row: &Row, result: &TestResult) {
         }
         Stdout::Diagnostic(kind) => {
             let lines = result.stdout().lines().count();
-            if row.mode == OutputMode::Ndjson {
+            if row.mode == Representation::Ndjson {
                 assert_eq!(
                     lines,
                     1,

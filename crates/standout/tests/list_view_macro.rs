@@ -51,7 +51,7 @@ fn test_list_view_macro_injection() {
     let cmd = clap::Command::new("test").subcommand(clap::Command::new("list"));
     let matches = cmd.try_get_matches_from(vec!["test", "list"]).unwrap();
 
-    let result = app.dispatch(matches, standout::OutputMode::Json);
+    let result = app.dispatch(matches, standout::Representation::Json);
 
     assert!(result.is_handled());
     let output = result.output().expect("Expected output");

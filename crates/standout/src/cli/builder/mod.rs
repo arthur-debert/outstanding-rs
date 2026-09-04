@@ -10,7 +10,7 @@
 
 mod commands;
 mod config;
-mod execution;
+pub(crate) mod execution;
 mod rendering;
 
 use crate::context::ContextRegistry;
@@ -21,8 +21,8 @@ use crate::topics::{
 };
 use crate::TemplateRegistry;
 use crate::{
-    render_request_split, ColorPolicy, InputSources, OutputMode, RenderError, RenderRequest,
-    TargetProperties, Theme, TEMPLATE_EXTENSIONS,
+    render_request_split, ColorPolicy, InputSources, RenderError, RenderRequest, Representation,
+    Theme, TEMPLATE_EXTENSIONS,
 };
 use clap::parser::ValueSource;
 use clap::{Arg, ArgAction, ArgMatches, Command};
@@ -39,7 +39,8 @@ use super::default_command::ParseFailure;
 use super::dispatch::DispatchFn;
 use super::group::CommandRecipe;
 use super::handler::{
-    CommandContext, EntryStream, Extensions, HandlerResult, Output as HandlerOutput, StreamSink,
+    emits_events, CommandContext, Extensions, Handler, HandlerOutcome, Output as HandlerOutput,
+    Results, StreamSink,
 };
 use super::help::data::{extract_help_data, extract_help_data_with_topics};
 use super::help::{
@@ -156,6 +157,16 @@ pub(crate) fn refresh_named_template(
         }
         Err(error) => Err(TemplateRefreshError::new(name, registry, error.to_string())),
     }
+}
+
+fn missing_event_template_message(
+    command_path: &str,
+    template_name: &str,
+    event_name: &str,
+) -> String {
+    format!(
+        "command `{command_path}` produces its result while it runs, so it renders each event from template `{event_name}`, but that template is not registered; add it beside `{template_name}`, or drop the `Results` parameter if the command produces one batch value instead"
+    )
 }
 
 fn missing_template_message(
@@ -347,10 +358,13 @@ fn strict_style_tags_from_env(value: Option<std::ffi::OsString>) -> bool {
 }
 
 pub struct App {
+    pub(crate) name: Option<String>,
     pub(crate) registry: TopicRegistry,
     pub(crate) output_flag: Option<String>,
-    pub(crate) output_mode_fallback: OutputMode,
+    pub(crate) output_mode_fallback: Representation,
     pub(crate) output_file_flag: Option<String>,
+    pub(crate) color_flag: Option<String>,
+    pub(crate) pager_flag: Option<String>,
     pub(crate) theme: Theme,
     pub(crate) stylesheet_registry: Option<crate::StylesheetRegistry>,
     pub(crate) template_registry: Option<Rc<TemplateRegistry>>,
@@ -382,10 +396,13 @@ impl App {
 }
 
 pub struct AppBuilder {
+    pub(crate) name: Option<String>,
     pub(crate) registry: TopicRegistry,
     pub(crate) output_flag: Option<String>,
-    pub(crate) output_mode_fallback: OutputMode,
+    pub(crate) output_mode_fallback: Representation,
     pub(crate) output_file_flag: Option<String>,
+    pub(crate) color_flag: Option<String>,
+    pub(crate) pager_flag: Option<String>,
     pub(crate) theme: Option<Theme>,
     pub(crate) stylesheet_registry: Option<crate::StylesheetRegistry>,
     pub(crate) template_registry: Option<TemplateRegistry>,
@@ -431,10 +448,13 @@ pub struct AppBuilder {
 impl AppBuilder {
     pub(crate) fn new() -> Self {
         Self {
+            name: None,
             registry: TopicRegistry::new(),
             output_flag: Some("output".to_string()),
-            output_mode_fallback: OutputMode::Auto,
+            output_mode_fallback: Representation::Human,
             output_file_flag: Some("output-file-path".to_string()),
+            color_flag: Some("color".to_string()),
+            pager_flag: Some("no-pager".to_string()),
             theme: None,
             stylesheet_registry: None,
             template_registry: None,
@@ -572,6 +592,8 @@ impl AppBuilder {
             let taken = [
                 self.output_flag.as_deref(),
                 self.output_file_flag.as_deref(),
+                self.color_flag.as_deref(),
+                self.pager_flag.as_deref(),
             ];
             if taken.contains(&Some(flag))
                 || (installs_config_command && config_tree_takes_long(flag))
@@ -594,6 +616,8 @@ impl AppBuilder {
             let taken = [
                 ("output_flag", self.output_flag.as_deref()),
                 ("output_file_flag", self.output_file_flag.as_deref()),
+                ("color_flag", self.color_flag.as_deref()),
+                ("pager_flag", self.pager_flag.as_deref()),
             ]
             .into_iter()
             .find_map(|(option, flag)| {
@@ -634,10 +658,13 @@ impl AppBuilder {
         }
 
         let app = App {
+            name: self.name,
             registry: self.registry,
             output_flag: self.output_flag,
             output_mode_fallback: self.output_mode_fallback,
             output_file_flag: self.output_file_flag,
+            color_flag: self.color_flag,
+            pager_flag: self.pager_flag,
             theme: self
                 .theme
                 .take()
@@ -682,6 +709,28 @@ impl AppBuilder {
                     path, &name, None,
                 )));
             };
+            if pending.recipe.emits_events() {
+                let event_name = format!("{name}.event");
+                if let Err(error) = registry.get_content(&event_name) {
+                    let message = match error {
+                        standout_render::RegistryError::NotFound { .. } => {
+                            missing_event_template_message(path, &name, &event_name)
+                        }
+                        _ => TemplateRefreshError::new(&event_name, registry, error.to_string())
+                            .to_string(),
+                    };
+                    return Err(SetupError::Template(message));
+                }
+                // A handler returning `Output::Silent` renders no summary, and
+                // the build cannot read which variant it returns, so a missing
+                // summary template is a render error on the run instead.
+                if matches!(
+                    registry.get_content(&name),
+                    Err(standout_render::RegistryError::NotFound { .. })
+                ) {
+                    continue;
+                }
+            }
             registry.get_content(&name).map_err(|error| {
                 let message = match error {
                     standout_render::RegistryError::NotFound { .. } => {
@@ -779,6 +828,7 @@ impl App {
                 &self.context_registry,
                 self.template_engine.clone(),
                 self.template_registry.clone(),
+                self.strict_style_tags,
             );
             commands.insert(path.clone(), dispatch);
         }
@@ -796,6 +846,20 @@ impl App {
 
     pub fn registry(&self) -> &TopicRegistry {
         &self.registry
+    }
+
+    fn emits_events_for(&self, path: &str) -> bool {
+        self.pending_commands
+            .borrow()
+            .get(path)
+            .is_some_and(|pending| pending.recipe.emits_events())
+    }
+
+    pub(crate) fn pageable_for(&self, path: &str) -> bool {
+        self.pending_commands
+            .borrow()
+            .get(path)
+            .is_some_and(|pending| pending.recipe.pageable())
     }
 
     fn csv_projection_for(&self, path: &str) -> Option<crate::CsvProjection> {
@@ -841,6 +905,7 @@ impl App {
     {
         if let Err(error) = self
             .config_override_flag_collision(&cmd)
+            .and_then(|()| self.framework_flag_collision(&cmd))
             .and_then(|()| self.config_command_collision(&cmd))
         {
             return HelpResult::Error(clap::Error::raw(
@@ -869,14 +934,28 @@ impl App {
                 )
             }
             Err(ParseFailure::Clap(e)) => {
-                return match self.intercept_display_help(&mut cmd, &args, &e, None, None) {
+                let color_policy = self.resolve_color_policy(
+                    self.typed_color_from_unparsed(&args),
+                    ColorPolicy::Auto,
+                    None,
+                );
+                return match self.intercept_display_help(
+                    &mut cmd,
+                    &args,
+                    &e,
+                    None,
+                    color_policy,
+                    None,
+                ) {
                     Some(display) => display.into(),
                     None => HelpResult::Error(e),
-                }
+                };
             }
         };
 
-        match self.intercept_help_word(&mut cmd, &matches, None, None) {
+        let color_policy =
+            self.resolve_color_policy(self.typed_color_policy(&matches), ColorPolicy::Auto, None);
+        match self.intercept_help_word(&mut cmd, &matches, None, color_policy, None) {
             Some(display) => display.into(),
             None => HelpResult::Matches(matches),
         }
@@ -887,25 +966,31 @@ impl App {
         cmd: &mut Command,
         matches: &ArgMatches,
         target: Option<crate::TargetProperties>,
+        color_policy: ColorPolicy,
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> Option<HelpDisplay> {
         if !self.help_handling {
             return None;
         }
         let (name, sub_matches) = matches.subcommand()?;
-        (name == "help").then(|| self.render_help_word(cmd, matches, sub_matches, target, warnings))
+        (name == "help").then(|| {
+            self.render_help_word(cmd, matches, sub_matches, target, color_policy, warnings)
+        })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn intercept_display_help(
         &self,
         cmd: &mut Command,
         args: &[std::ffi::OsString],
         error: &clap::Error,
         target: Option<crate::TargetProperties>,
+        color_policy: ColorPolicy,
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> Option<HelpDisplay> {
-        (self.help_handling && error.kind() == clap::error::ErrorKind::DisplayHelp)
-            .then(|| self.render_help_for_display_help_error(cmd, args, target, warnings))
+        (self.help_handling && error.kind() == clap::error::ErrorKind::DisplayHelp).then(|| {
+            self.render_help_for_display_help_error(cmd, args, target, color_policy, warnings)
+        })
     }
 
     fn help_target_properties(
@@ -944,8 +1029,9 @@ impl App {
         &self,
         data: &T,
         template: crate::TemplateRef,
-        format: OutputMode,
+        format: Representation,
         target: crate::TargetProperties,
+        color_policy: ColorPolicy,
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> Result<String, RenderError> {
         render_via_request(
@@ -953,6 +1039,7 @@ impl App {
             template,
             self.help_theme(),
             format,
+            color_policy,
             target,
             self.template_engine.clone(),
             self.template_registry.clone(),
@@ -961,27 +1048,21 @@ impl App {
         )
     }
 
-    fn help_display(
-        &self,
-        cmd: &Command,
-        rendered: Result<String, RenderError>,
-        use_pager: bool,
-    ) -> HelpDisplay {
+    fn help_display(&self, cmd: &Command, rendered: Result<String, RenderError>) -> HelpDisplay {
         match rendered {
-            Ok(text) => HelpDisplay::Rendered {
-                text,
-                paged: use_pager,
-            },
+            Ok(text) => HelpDisplay::Rendered { text },
             Err(e) => Self::render_failure(cmd, e),
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_help_word(
         &self,
         cmd: &mut Command,
         matches: &ArgMatches,
         sub_matches: &ArgMatches,
         target: Option<crate::TargetProperties>,
+        color_policy: ColorPolicy,
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
         let format = self.extract_output_mode(matches);
@@ -991,18 +1072,22 @@ impl App {
             length: HelpLength::Long,
             ..Default::default()
         };
-        let use_pager = sub_matches.get_flag("page");
-
         if let Some(topic_args) = sub_matches.get_many::<String>("topic") {
             let keywords: Vec<_> = topic_args.map(|s| s.as_str()).collect();
             if !keywords.is_empty() {
                 return self.handle_help_request(
-                    cmd, &keywords, use_pager, config, format, target, warnings,
+                    cmd,
+                    &keywords,
+                    config,
+                    format,
+                    target,
+                    color_policy,
+                    warnings,
                 );
             }
         }
 
-        self.render_root_help(cmd, config, format, target, warnings, use_pager)
+        self.render_root_help(cmd, config, format, target, color_policy, warnings)
     }
 
     fn render_failure(cmd: &Command, error: impl std::fmt::Display) -> HelpDisplay {
@@ -1017,10 +1102,10 @@ impl App {
         &self,
         cmd: &Command,
         config: HelpConfig,
-        format: OutputMode,
+        format: Representation,
         target: crate::TargetProperties,
+        color_policy: ColorPolicy,
         warnings: Option<standout_render::warnings::WarningBuffer>,
-        use_pager: bool,
     ) -> HelpDisplay {
         if help_is_a_document(format) {
             return self.help_document(cmd, &[], config.length, format);
@@ -1044,21 +1129,27 @@ impl App {
         .expect("the root is always at the empty path");
         self.help_display(
             cmd,
-            self.render_help_surface(&data, template, human_help_format(format), target, warnings),
-            use_pager,
+            self.render_help_surface(
+                &data,
+                template,
+                human_help_format(format),
+                target,
+                color_policy,
+                warnings,
+            ),
         )
     }
 
-    /// Never paged; `csv` has no help projection and is a render error.
+    /// `csv` has no help projection and is a render error.
     fn help_document(
         &self,
         cmd: &Command,
         path: &[&str],
         length: HelpLength,
-        format: OutputMode,
+        format: Representation,
     ) -> HelpDisplay {
         match render_help_document(cmd, path, length, format) {
-            Ok(Some(text)) => HelpDisplay::Rendered { text, paged: false },
+            Ok(Some(text)) => HelpDisplay::Rendered { text },
             Ok(None) => HelpDisplay::Clap(cmd.clone().error(
                 clap::error::ErrorKind::InvalidSubcommand,
                 format!("The subcommand '{}' wasn't recognized", path.join(" ")),
@@ -1072,6 +1163,7 @@ impl App {
         cmd: &mut Command,
         args: &[std::ffi::OsString],
         target: Option<crate::TargetProperties>,
+        color_policy: ColorPolicy,
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
         let request = Self::help_request(cmd, args);
@@ -1084,11 +1176,19 @@ impl App {
         };
 
         if request.target.is_empty() {
-            return self.render_root_help(cmd, config, format, target, warnings, false);
+            return self.render_root_help(cmd, config, format, target, color_policy, warnings);
         }
 
         let keywords: Vec<&str> = request.target.iter().map(|s| s.as_str()).collect();
-        self.handle_help_request(cmd, &keywords, false, config, format, target, warnings)
+        self.handle_help_request(
+            cmd,
+            &keywords,
+            config,
+            format,
+            target,
+            color_policy,
+            warnings,
+        )
     }
 
     fn help_request(cmd: &Command, args: &[std::ffi::OsString]) -> HelpRequest {
@@ -1148,10 +1248,10 @@ impl App {
         &self,
         cmd: &mut Command,
         keywords: &[&str],
-        use_pager: bool,
         config: HelpConfig,
-        format: OutputMode,
+        format: Representation,
         target: crate::TargetProperties,
+        color_policy: ColorPolicy,
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
         let sub_name = keywords[0];
@@ -1170,8 +1270,14 @@ impl App {
                 topics_list_data(&self.registry, &format!("{} help", cmd.get_name()), &target);
             return self.help_display(
                 cmd,
-                self.render_help_surface(&data, template, page_format, target, warnings),
-                use_pager,
+                self.render_help_surface(
+                    &data,
+                    template,
+                    page_format,
+                    target,
+                    color_policy,
+                    warnings,
+                ),
             );
         }
 
@@ -1196,8 +1302,14 @@ impl App {
             ) {
                 return self.help_display(
                     cmd,
-                    self.render_help_surface(&data, template, page_format, target, warnings),
-                    use_pager,
+                    self.render_help_surface(
+                        &data,
+                        template,
+                        page_format,
+                        target,
+                        color_policy,
+                        warnings,
+                    ),
                 );
             }
         }
@@ -1218,9 +1330,9 @@ impl App {
                     template,
                     page_format,
                     target,
+                    color_policy,
                     warnings,
                 ),
-                use_pager,
             );
         }
 
@@ -1290,27 +1402,17 @@ impl App {
             || cmd.get_positionals().next().is_none()
     }
 
-    pub fn extract_output_mode(&self, matches: &ArgMatches) -> OutputMode {
-        self.extract_output_mode_over(matches, None)
+    pub fn extract_output_mode(&self, matches: &ArgMatches) -> Representation {
+        self.typed_output_mode(matches)
+            .unwrap_or(self.output_mode_fallback)
     }
 
-    pub(crate) fn extract_output_mode_over(
-        &self,
-        matches: &ArgMatches,
-        term: Option<&crate::TermSettings>,
-    ) -> OutputMode {
-        self.typed_output_mode(matches).unwrap_or_else(|| {
-            term.and_then(|term| term.output)
-                .map_or(self.output_mode_fallback, OutputMode::from)
-        })
-    }
-
-    pub(crate) fn typed_output_mode(&self, matches: &ArgMatches) -> Option<OutputMode> {
+    pub(crate) fn typed_output_mode(&self, matches: &ArgMatches) -> Option<Representation> {
         self.output_flag.as_ref()?;
-        match matches.try_get_one::<String>("_output_mode") {
+        match matches.try_get_one::<String>(OUTPUT_MODE_ARG) {
             // A `DefaultValue` source means the user never typed `--output`.
             Ok(Some(value))
-                if matches.value_source("_output_mode") != Some(ValueSource::DefaultValue) =>
+                if matches.value_source(OUTPUT_MODE_ARG) != Some(ValueSource::DefaultValue) =>
             {
                 parse_output_mode_flag(value.as_str())
             }
@@ -1318,10 +1420,76 @@ impl App {
         }
     }
 
+    /// The run's color policy, in precedence order: an explicit `--color`, the
+    /// policy the caller named, `NO_COLOR`, the resolved `[term] color`, and
+    /// last the destination, which `Auto` leaves to `resolve_style_mode`.
+    /// `NO_COLOR` is read here only to outrank a configured `always`; below the
+    /// key it is a destination fact the process edge already probes.
+    pub(crate) fn resolve_color_policy(
+        &self,
+        typed: Option<ColorPolicy>,
+        named: ColorPolicy,
+        term: Option<&crate::TermSettings>,
+    ) -> ColorPolicy {
+        if let Some(policy) = typed {
+            return policy;
+        }
+        if named != ColorPolicy::Auto {
+            return named;
+        }
+        match term.and_then(|term| term.color).map(ColorPolicy::from) {
+            Some(ColorPolicy::Always) if no_color_is_set() => ColorPolicy::Never,
+            Some(policy) => policy,
+            None => ColorPolicy::Auto,
+        }
+    }
+
+    pub(crate) fn typed_color_policy(&self, matches: &ArgMatches) -> Option<ColorPolicy> {
+        self.color_flag.as_ref()?;
+        match matches.try_get_one::<String>(COLOR_ARG) {
+            // A `DefaultValue` source means the user never typed `--color`.
+            Ok(Some(value))
+                if matches.value_source(COLOR_ARG) != Some(ValueSource::DefaultValue) =>
+            {
+                parse_color_flag(value.as_str())
+            }
+            _ => None,
+        }
+    }
+
+    /// The pre-parse read the help and usage paths use, where no `ArgMatches` exists yet.
+    pub(crate) fn typed_color_from_unparsed(
+        &self,
+        args: &[std::ffi::OsString],
+    ) -> Option<ColorPolicy> {
+        self.color_flag
+            .as_deref()
+            .and_then(|flag| last_unparsed_flag_value(flag, args))
+            .and_then(parse_color_flag)
+    }
+
+    /// A named file is the run's destination whatever else the invocation asks
+    /// for, so the page lands there, never in a pager.
+    pub(crate) fn output_file_from_unparsed(
+        &self,
+        args: &[std::ffi::OsString],
+    ) -> Option<std::path::PathBuf> {
+        self.output_file_flag
+            .as_deref()
+            .and_then(|flag| last_unparsed_flag_value(flag, args))
+            .map(std::path::PathBuf::from)
+    }
+
+    pub(crate) fn paging_is_suppressed(&self, args: &[std::ffi::OsString]) -> bool {
+        self.pager_flag
+            .as_deref()
+            .is_some_and(|flag| unparsed_flag_is_present(flag, args))
+    }
+
     pub(crate) fn extract_output_mode_from_unparsed(
         &self,
         args: &[std::ffi::OsString],
-    ) -> OutputMode {
+    ) -> Representation {
         let Some(flag) = self.output_flag.as_deref() else {
             return self.output_mode_fallback;
         };
@@ -1330,36 +1498,44 @@ impl App {
             .unwrap_or(self.output_mode_fallback)
     }
 
-    /// One handler, hooks and render included; `sink` takes `ctx.stream()` entries under `ndjson`.
-    pub fn run_command<F, T>(
+    /// One handler, hooks and render included. A typed `--color` outranks
+    /// `color_policy`, which decides the run unless it is `Auto`; an `Auto`
+    /// policy falls to `[term] color` (`NO_COLOR` turning a configured `always`
+    /// down) and last to the destination. `sink` takes the handler's events as
+    /// it emits them.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_command<H>(
         &self,
         path: &str,
         matches: &ArgMatches,
-        handler: F,
+        mut handler: H,
         template: crate::TemplateRef,
+        color_policy: ColorPolicy,
         sink: StreamSink,
     ) -> Result<RenderedOutput, HookError>
     where
-        F: FnOnce(&ArgMatches, &CommandContext) -> HandlerResult<T>,
-        T: Serialize,
+        H: Handler,
     {
         let config = self
             .resolve_config(matches)
             .map_err(|error| HookError::pre_dispatch("Config error").with_source(error))?;
-        let output_mode = self.extract_output_mode_over(
+        let resolved = self.resolve_run(
             matches,
             config.as_ref().and_then(|config| config.term.as_ref()),
+            None,
+            color_policy,
+            self.output_mode_fallback,
+            self.process_edge_target(),
         );
-        let stream = if output_mode.is_stream() {
-            EntryStream::writing_to(sink)
-        } else {
-            EntryStream::discarding()
-        };
+        let (output_mode, color_policy, target) = (
+            resolved.representation,
+            resolved.color_policy,
+            resolved.target,
+        );
         let mut ctx = CommandContext::new(
             path.split('.').map(String::from).collect(),
             self.app_state.clone(),
-        )
-        .with_stream(stream);
+        );
         let warnings = WarningBuffer::new();
         self.seed_startup_warnings(&warnings);
         ctx.extensions.insert(InputSources::from_process());
@@ -1374,7 +1550,34 @@ impl App {
             hooks.run_pre_dispatch(matches, &mut ctx)?;
         }
 
-        let (output, status) = match handler(matches, &ctx) {
+        let destination = std::rc::Rc::new(crate::cli::events::EventDestination::new(
+            sink,
+            crate::cli::events::EventContext {
+                command_path: path.to_string(),
+                template: crate::cli::events::rendered_event_template(&template),
+                theme: self.theme.clone(),
+                context_registry: self.context_registry.clone(),
+                template_engine: self.template_engine.clone(),
+                template_registry: self.template_registry.clone(),
+                representation: output_mode,
+                color_policy,
+                target,
+                warnings: Some(warnings.clone()),
+                strict_style_tags: self.strict_style_tags,
+            },
+        ));
+        let mut results = Results::<H::Event>::for_run(None, destination.clone());
+        let handled = handler
+            .handle(matches, &ctx, &mut results)
+            .map(HandlerOutcome::into_output);
+        drop(results);
+        if let Some(failure) = destination.take_failure() {
+            return Err(HookError::post_output("Render error").with_source(failure));
+        }
+        let document_records = emits_events::<H::Event>()
+            .then(|| destination.take_document_records())
+            .flatten();
+        let (output, status) = match handled {
             Ok(output) => output.split_exit_status(),
             Err(e) => return Err(HookError::post_output("Handler error").with_source(e)),
         };
@@ -1383,6 +1586,29 @@ impl App {
                 .map_err(|e| HookError::post_output("Render error").with_source(e))
         };
         reject_status_without_a_carrier(output.is_binary(), output.is_artifact())?;
+
+        let render_value = |data: serde_json::Value| -> Result<RenderedOutput, HookError> {
+            let request = RenderRequest {
+                data,
+                template: template.clone(),
+                theme: self.theme.clone(),
+                format: output_mode,
+                color_policy,
+                target,
+                engine: self.template_engine.clone(),
+                registry: self.template_registry.clone(),
+                context_registry: Some(self.context_registry.clone()),
+                csv_projection: self.csv_projection_for(path),
+                extras: HashMap::new(),
+                warnings: Some(warnings.clone()),
+            };
+            render_request_split(&request)
+                .map(|rendered| {
+                    RenderedOutput::Text(TextOutput::new(rendered.formatted, rendered.raw))
+                })
+                .map_err(|e| HookError::post_output("Render error").with_source(e))
+        };
+        let event_rows = output_mode == crate::Representation::Csv;
 
         let output = match output {
             HandlerOutput::Render(data) => {
@@ -1393,30 +1619,20 @@ impl App {
                     json_data = hooks.run_post_dispatch(matches, &ctx, json_data)?;
                 }
 
-                let mut target = TargetProperties::detect();
-                target.ambiguous_width = self.ambiguous_width;
-                let request = RenderRequest {
-                    data: json_data,
-                    template: template.clone(),
-                    theme: self.theme.clone(),
-                    format: output_mode,
-                    color_policy: ColorPolicy::Auto,
-                    target,
-                    engine: self.template_engine.clone(),
-                    registry: self.template_registry.clone(),
-                    context_registry: Some(self.context_registry.clone()),
-                    csv_projection: self.csv_projection_for(path),
-                    extras: HashMap::new(),
-                    warnings: Some(warnings),
-                };
-                match render_request_split(&request) {
-                    Ok(rendered) => {
-                        RenderedOutput::Text(TextOutput::new(rendered.formatted, rendered.raw))
+                match document_records {
+                    Some(mut records) if !event_rows => {
+                        records.push(standout_render::result_record(json_data));
+                        run_document(records, output_mode)?
                     }
-                    Err(e) => return Err(HookError::post_output("Render error").with_source(e)),
+                    Some(records) => render_value(serde_json::Value::Array(records))?,
+                    None => render_value(json_data)?,
                 }
             }
-            HandlerOutput::Silent => RenderedOutput::Silent,
+            HandlerOutput::Silent => match document_records {
+                Some(records) if !event_rows => run_document(records, output_mode)?,
+                Some(records) => render_value(serde_json::Value::Array(records))?,
+                None => RenderedOutput::Silent,
+            },
             HandlerOutput::Binary { data, filename } => RenderedOutput::Binary(data, filename),
             HandlerOutput::Artifact(artifact) => {
                 let (bytes, suggested_destination, stdout_allowed, report) = artifact.into_parts();
@@ -1451,6 +1667,12 @@ impl App {
             None => output,
         };
         reject_status_without_a_carrier(output.is_binary(), output.is_artifact())?;
+        super::dispatch::reject_payload_from_a_post_output_hook(
+            emits_events::<H::Event>(),
+            output.is_binary(),
+            output.is_artifact(),
+        )
+        .map_err(|e| HookError::post_output("Render error").with_source(e))?;
         super::dispatch::reject_payload_under_stream(
             output_mode,
             output.is_binary(),
@@ -1465,6 +1687,7 @@ impl App {
         self.validate_questionnaire_surfaces(cmd)?;
         self.unreachable_registrations(cmd)?;
         self.config_override_flag_collision(cmd)?;
+        self.framework_flag_collision(cmd)?;
         self.config_command_collision(cmd)?;
         let expected_args: HashMap<String, Vec<ExpectedArg>> = self
             .pending_commands
@@ -1474,6 +1697,20 @@ impl App {
             .collect();
         super::app::verify_recursive(cmd, &expected_args, &[], true)
     }
+}
+
+/// The one document an incremental command ends in under `json` or `yaml`. No
+/// warning record joins the array: `run_command` owns no stdout of its own.
+fn run_document(
+    records: Vec<serde_json::Value>,
+    output_mode: crate::Representation,
+) -> Result<RenderedOutput, HookError> {
+    let document = standout_render::serialize_record_array(records, output_mode)
+        .map_err(|e| HookError::post_output("Render error").with_source(e))?;
+    Ok(RenderedOutput::Text(TextOutput::new(
+        document.clone(),
+        document,
+    )))
 }
 
 fn claims_help(cmd: &Command) -> bool {
@@ -1507,36 +1744,62 @@ fn duplicate_help_word(claim: &str) -> SetupError {
 const HELP_PROBE_SHORT: &str = "__standout_help_short";
 const HELP_PROBE_LONG: &str = "__standout_help_long";
 
-pub(crate) const OUTPUT_MODE_FLAG_VALUES: [&str; 8] = [
-    "auto",
-    "term",
-    "text",
-    "term-debug",
-    "json",
-    "yaml",
-    "csv",
-    "ndjson",
-];
+/// `--output` names a structured encoding and nothing else; the human
+/// representation is what a bare invocation renders and has no spelling.
+/// `term-debug` stays as the diagnostic view of the template's style tags.
+pub(crate) const OUTPUT_MODE_FLAG_VALUES: [&str; 5] =
+    ["json", "yaml", "csv", "ndjson", "term-debug"];
 
-fn parse_output_mode_flag(value: &str) -> Option<OutputMode> {
+fn parse_output_mode_flag(value: &str) -> Option<Representation> {
     match value {
-        "auto" => Some(OutputMode::Auto),
-        "term" => Some(OutputMode::Term),
-        "text" => Some(OutputMode::Text),
-        "term-debug" => Some(OutputMode::TermDebug),
-        "json" => Some(OutputMode::Json),
-        "yaml" => Some(OutputMode::Yaml),
-        "csv" => Some(OutputMode::Csv),
-        "ndjson" => Some(OutputMode::Ndjson),
+        "json" => Some(Representation::Json),
+        "yaml" => Some(Representation::Yaml),
+        "csv" => Some(Representation::Csv),
+        "ndjson" => Some(Representation::Ndjson),
+        "term-debug" => Some(Representation::TermDebug),
         _ => None,
     }
 }
 
-pub(crate) fn output_mode_flag_spelling(mode: OutputMode) -> &'static str {
+/// `None` for the human representation, which the flag cannot name.
+pub(crate) fn output_mode_flag_spelling(representation: Representation) -> Option<&'static str> {
     OUTPUT_MODE_FLAG_VALUES
         .into_iter()
-        .find(|value| parse_output_mode_flag(value) == Some(mode))
-        .unwrap_or("auto")
+        .find(|value| parse_output_mode_flag(value) == Some(representation))
+}
+
+/// `--color` decides whether human text carries escape sequences, on its own
+/// and whatever `--output` names.
+pub(crate) const COLOR_FLAG_VALUES: [&str; 3] = ["auto", "always", "never"];
+
+pub(crate) const COLOR_ARG: &str = "_color";
+pub(crate) const NO_PAGER_ARG: &str = "_no_pager";
+pub(crate) const OUTPUT_MODE_ARG: &str = "_output_mode";
+pub(crate) const OUTPUT_FILE_ARG: &str = "_output_file_path";
+
+pub(crate) const COLOR_FLAG_DEFAULT: &str = "auto";
+
+/// The convention: set and non-empty asks for no color.
+fn no_color_is_set() -> bool {
+    std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty())
+}
+
+fn parse_color_flag(value: &str) -> Option<ColorPolicy> {
+    match value {
+        "auto" => Some(ColorPolicy::Auto),
+        "always" => Some(ColorPolicy::Always),
+        "never" => Some(ColorPolicy::Never),
+        _ => None,
+    }
+}
+
+fn unparsed_flag_is_present(flag: &str, args: &[std::ffi::OsString]) -> bool {
+    let long = format!("--{flag}");
+    args.iter()
+        .skip(1)
+        .filter_map(|arg| arg.to_str())
+        .take_while(|arg| *arg != "--")
+        .any(|arg| arg == long)
 }
 
 fn last_unparsed_flag_value<'a>(flag: &str, args: &'a [std::ffi::OsString]) -> Option<&'a str> {
@@ -1586,20 +1849,12 @@ fn help_word_command(has_subcommands: bool) -> Command {
         ("Print this message", "The topic to print help for")
     };
 
-    Command::new("help")
-        .about(about)
-        .arg(
-            Arg::new("topic")
-                .action(ArgAction::Set)
-                .num_args(1..)
-                .help(topic_help),
-        )
-        .arg(
-            Arg::new("page")
-                .long("page")
-                .action(ArgAction::SetTrue)
-                .help("Display help through a pager"),
-        )
+    Command::new("help").about(about).arg(
+        Arg::new("topic")
+            .action(ArgAction::Set)
+            .num_args(1..)
+            .help(topic_help),
+    )
 }
 
 #[cfg(test)]

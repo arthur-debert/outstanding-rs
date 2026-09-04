@@ -7,6 +7,7 @@ use standout::{embed_styles, embed_templates};
 
 pub(crate) fn build(user_scope: SearchPath) -> Result<App> {
     Ok(App::builder()
+        .name(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
         .default_command_with(|ctx| {
             Some(if ctx.stdin_is_piped() { "add" } else { "list" }.to_string())
@@ -26,7 +27,7 @@ mod tests {
     use crate::cli;
     use serde_json::{json, Value as JsonValue};
     use serial_test::serial;
-    use standout::OutputMode;
+    use standout::Representation;
     use standout_test::{TestHarness, TestResult};
     use tempfile::TempDir;
 
@@ -56,7 +57,7 @@ mod tests {
 
         fn harness(&self) -> TestHarness {
             TestHarness::new()
-                .no_color()
+                .stdout_is_terminal(false)
                 .cwd(self.dir.path().to_path_buf())
         }
 
@@ -126,7 +127,9 @@ mod tests {
         let tdoo = Tdoo::new();
 
         tdoo.run_with(
-            TestHarness::new().no_color().piped_stdin("ship the docs\n"),
+            TestHarness::new()
+                .stdout_is_terminal(false)
+                .piped_stdin("ship the docs\n"),
             ["tdoo", "add"],
         )
         .assert_success();
@@ -155,7 +158,12 @@ mod tests {
     fn naked_invocation_at_a_terminal_lists() {
         let tdoo = Tdoo::new();
 
-        let result = tdoo.run_with(TestHarness::new().no_color().interactive_stdin(), ["tdoo"]);
+        let result = tdoo.run_with(
+            TestHarness::new()
+                .stdout_is_terminal(false)
+                .interactive_stdin(),
+            ["tdoo"],
+        );
 
         result.assert_success();
         result.assert_stdout_contains("Nothing here yet");
@@ -167,7 +175,9 @@ mod tests {
         let tdoo = Tdoo::new();
 
         let result = tdoo.run_with(
-            TestHarness::new().no_color().piped_stdin("ship the docs\n"),
+            TestHarness::new()
+                .stdout_is_terminal(false)
+                .piped_stdin("ship the docs\n"),
             ["tdoo"],
         );
 
@@ -185,7 +195,9 @@ mod tests {
         let tdoo = Tdoo::new();
 
         let result = tdoo.run_with(
-            TestHarness::new().no_color().piped_stdin("not a todo\n"),
+            TestHarness::new()
+                .stdout_is_terminal(false)
+                .piped_stdin("not a todo\n"),
             ["tdoo", "list"],
         );
 
@@ -290,7 +302,7 @@ mod tests {
         let result = tdoo.run(["tdoo", "list"]);
 
         result.assert_success();
-        assert_eq!(result.output_mode(), OutputMode::Json);
+        assert_eq!(result.output_mode(), Representation::Json);
         let value: JsonValue = serde_json::from_str(result.stdout()).unwrap();
         assert_eq!(value["todos"][0]["title"], "ship the docs");
     }
@@ -347,7 +359,9 @@ mod tests {
         human.assert_artifact_report_contains("warning: 1 completed todo(s) omitted");
 
         let json = tdoo.run_with(
-            TestHarness::new().no_color().output_mode(OutputMode::Json),
+            TestHarness::new()
+                .stdout_is_terminal(false)
+                .output_mode(Representation::Json),
             ["tdoo", "export", "--stdout"],
         );
         let value: JsonValue = serde_json::from_str(json.artifact_report().unwrap()).unwrap();
@@ -386,7 +400,7 @@ mod tests {
 
         tdoo.run_with(
             TestHarness::new()
-                .no_color()
+                .stdout_is_terminal(false)
                 .env("TODO_AUDIT_LOG", log_path.to_str().unwrap()),
             ["tdoo", "add", "--title", "audited"],
         )

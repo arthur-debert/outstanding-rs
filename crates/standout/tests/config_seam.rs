@@ -6,7 +6,8 @@ use standout::cli::{
     App, AppBuilder, CommandContextInput, DiagnosticKind, DispatchResult, ExitStatus, FnHandler,
     HelpResult, MissingConfig, Output, RunErrorKind, StreamSink, TermSettings,
 };
-use standout::{EmbeddedTemplates, InputSources, OutputMode, SetupError, TemplateRef};
+use standout::ColorPolicy;
+use standout::{EmbeddedTemplates, InputSources, Representation, SetupError, TemplateRef};
 use standout_test::{serial, TestHarness};
 
 const TEMPLATES: &[(&str, &str)] = &[("show", "index at {{ index_dir }}")];
@@ -229,18 +230,18 @@ fn term_output_decides_the_mode_when_the_flag_is_absent() {
         ["cfgapp", "show"],
     );
     bare.assert_success();
-    assert_eq!(bare.output_mode(), OutputMode::Json);
+    assert_eq!(bare.output_mode(), Representation::Json);
     let document: serde_json::Value = serde_json::from_str(bare.stdout()).unwrap();
     assert_eq!(document["index_dir"], "/from-file");
 
     let flagged = TestHarness::new().fixture("cfgapp.toml", TERM_JSON).run(
         &configured_app(),
         cfgapp(),
-        ["cfgapp", "show", "--output", "term"],
+        ["cfgapp", "show", "--output", "yaml"],
     );
     flagged.assert_success();
-    assert_eq!(flagged.output_mode(), OutputMode::Term);
-    flagged.assert_stdout_contains("index at /from-file");
+    assert_eq!(flagged.output_mode(), Representation::Yaml);
+    flagged.assert_stdout_contains("index_dir: /from-file");
 
     let help = TestHarness::new().fixture("cfgapp.toml", TERM_JSON).run(
         &configured_app(),
@@ -248,7 +249,7 @@ fn term_output_decides_the_mode_when_the_flag_is_absent() {
         ["cfgapp", "--help"],
     );
     help.assert_success();
-    assert_eq!(help.output_mode(), OutputMode::Auto);
+    assert_eq!(help.output_mode(), Representation::Human);
 }
 
 #[test]
@@ -265,7 +266,7 @@ fn term_settings_are_not_read_without_the_accessor() {
     );
 
     result.assert_success();
-    assert_eq!(result.output_mode(), OutputMode::Auto);
+    assert_eq!(result.output_mode(), Representation::Human);
 }
 
 #[test]
@@ -435,7 +436,7 @@ fn dispatch_parsed(file: &str, args: &[&str]) -> standout::cli::CompletedRun {
     let _cwd = Cwd::enter(dir.path());
     let app = configured_app();
     let matches = parse(&app, args);
-    app.dispatch(matches, OutputMode::Text)
+    app.dispatch(matches, Representation::Human)
 }
 
 fn dispatch_extracted(file: &str, args: &[&str]) -> standout::cli::CompletedRun {
@@ -452,16 +453,16 @@ fn dispatch_extracted(file: &str, args: &[&str]) -> standout::cli::CompletedRun 
 #[serial]
 fn dispatch_takes_term_output_only_when_the_flag_was_not_typed() {
     let bare = dispatch_extracted(TERM_JSON, &["cfgapp", "show"]);
-    assert_eq!(bare.output_mode(), OutputMode::Json);
+    assert_eq!(bare.output_mode(), Representation::Json);
     let document: serde_json::Value = serde_json::from_str(bare.output().unwrap()).unwrap();
     assert_eq!(document["index_dir"], "/from-file");
 
-    let flagged = dispatch_extracted(TERM_JSON, &["cfgapp", "show", "--output", "term"]);
-    assert_eq!(flagged.output_mode(), OutputMode::Term);
-    assert_eq!(flagged.output(), Some("index at /from-file"));
+    let flagged = dispatch_extracted(TERM_JSON, &["cfgapp", "show", "--output", "yaml"]);
+    assert_eq!(flagged.output_mode(), Representation::Yaml);
+    assert!(flagged.output().unwrap().contains("index_dir: /from-file"));
 
     let unset = dispatch_parsed("index_dir = \"/from-file\"\n", &["cfgapp", "show"]);
-    assert_eq!(unset.output_mode(), OutputMode::Text);
+    assert_eq!(unset.output_mode(), Representation::Human);
 }
 
 #[test]
@@ -478,11 +479,12 @@ fn run_command_resolves_the_config_like_dispatch() {
         app.run_command(
             "show",
             sub,
-            |_matches, ctx| {
+            FnHandler::new(|_matches, ctx| {
                 let config: &FixtureConfig = ctx.config()?;
                 Ok(Output::Render(json!({ "index_dir": config.index_dir })))
-            },
+            }),
             TemplateRef::Inline("index at {{ index_dir }}".to_string()),
+            ColorPolicy::Auto,
             StreamSink::new(Vec::new()),
         )
     };
@@ -495,12 +497,12 @@ fn run_command_resolves_the_config_like_dispatch() {
         "cfgapp",
         "show",
         "--output",
-        "term",
+        "yaml",
         "--set",
         "index_dir=/from-flag",
     ])
     .unwrap();
-    assert_eq!(flagged.as_text(), Some("index at /from-flag"));
+    assert!(flagged.as_text().unwrap().contains("index_dir: /from-flag"));
 
     std::fs::write(&file, BAD_FILE).unwrap();
     let failed = run(&["cfgapp", "show"]).unwrap_err();

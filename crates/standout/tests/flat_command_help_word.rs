@@ -9,7 +9,6 @@ use standout_fixtures::downstream;
 fn help_text(result: HelpResult) -> String {
     match result {
         HelpResult::Help(h) => h,
-        HelpResult::PagedHelp(h) => h,
         other => panic!("expected rendered help, got: {other:?}"),
     }
 }
@@ -123,16 +122,6 @@ fn the_help_word_parses_its_own_arguments() {
         tagged.contains("[header]USAGE[/header]"),
         "output:\n{tagged}"
     );
-
-    let paged = fixture.app().get_matches_from(
-        fixture.command(),
-        ["lookma", "help", "--page"],
-        &standout::InputSources::from_process(),
-    );
-    assert!(
-        matches!(paged, HelpResult::PagedHelp(_)),
-        "expected paged help, got: {paged:?}"
-    );
 }
 
 #[test]
@@ -181,6 +170,7 @@ fn the_policy_reads_the_shape_the_framework_leaves_behind() {
     let app = App::builder()
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .help_handling(true)
+        .no_color_flag()
         .command_with(
             "",
             FnHandler::new(|_m, ctx| {

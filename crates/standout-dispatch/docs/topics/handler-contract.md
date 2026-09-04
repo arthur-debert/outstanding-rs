@@ -501,6 +501,70 @@ Bytes are owned; streaming is deliberately not part of this contract.
 
 ---
 
+## Incremental commands
+
+`Handler` carries three associated types. `Output` is the batch value or the
+summary; `Event` is the type of the values the command produces while it runs;
+`Outcome` is what `handle` wraps the value in, and `HandlerOutcome` admits
+`Output<T>` only under `NoEvents`, so a command that declares events has
+`Summary<T>` and no payload variant to return. A batch command sets
+`Event = NoEvents`, whose uninhabited type leaves `emit` with no argument that
+can be constructed, and ignores the third parameter.
+
+```rust,ignore
+pub trait Handler {
+    type Event: Serialize + 'static;
+    type Output: Serialize;
+    type Outcome: HandlerOutcome<Self::Output, Self::Event>;
+
+    fn handle(
+        &mut self,
+        matches: &ArgMatches,
+        ctx: &CommandContext,
+        results: &mut Results<Self::Event>,
+    ) -> Result<Self::Outcome, anyhow::Error>;
+}
+```
+
+`emits_events::<H::Event>()` is how the consuming framework asks whether a
+command is incremental: every event type but `NoEvents` says it is. The fact
+comes from the handler's own signature rather than a declaration beside it, so
+no handler can say one thing and do another, and the framework can decide
+before the handler runs what counting one invocation's events could only tell
+it afterwards. It decides at build time that the command needs its
+`<name>.event` template; and it refuses an incremental command under an
+encoding that carries a command's results as one document before the handler
+runs.
+
+`Event` is `'static` because an associated type carries no lifetime from
+`handle`'s parameters: an event holding a borrow of something the handler was
+passed has no way to name it here.
+
+`Results::emit` takes the event by value, returns once the framework has
+retained it and written it, and fails when the value does not serialize
+(`EmitError::Serialize`), the destination cannot turn it into bytes
+(`EmitError::Render`) or cannot write them (`EmitError::Write`). `Serialize` is
+the whole bound `Results` adds: an event may hold an `Rc` or anything else that
+does not cross threads.
+
+`Results` is `&mut` and not `Clone`, so a handler cannot store it or keep
+emitting past its own run, and it exposes `emit` and nothing else: a handler
+cannot ask which representation is running or where the bytes go.
+
+The adapter behind a two-argument closure (`FnHandler`) sets `Event = NoEvents`;
+`EventsFnHandler` is the adapter behind a three-argument closure taking
+`&mut Results<E>`, and that closure returns `Summary<T>` — `Render` or
+`Silent`, with an exit status — rather than `Output<T>`. `#[handler]` picks
+between the two adapters, and between the two outcomes, from whether the
+function declares a `Results` parameter.
+
+`RunRecorder` is the framework's own retention of the same values, passed to
+the dispatch closure rather than held on the context, so a handler cannot
+record values the channel never saw. `EventSink` is what the consuming
+framework implements to render or frame an event for a representation.
+
+---
+
 ## CommandContext
 
 `CommandContext` provides execution environment information and state access:
@@ -510,7 +574,6 @@ pub struct CommandContext {
     pub command_path: Vec<String>,
     pub app_state: Rc<Extensions>,
     pub extensions: Extensions,
-    pub stream: EntryStream,
 }
 ```
 
@@ -520,7 +583,10 @@ pub struct CommandContext {
 
 **extensions**: Per-request, mutable state injected by pre-dispatch hooks. Use for user sessions, request IDs, computed values.
 
-**stream** (`ctx.stream()`): The run's entry stream. `emit(&value)` writes the value as one JSON line when the consuming framework resolved a stream output mode and does nothing otherwise; `is_live()` says which. The dispatch layer never writes to it itself.
+The context carries no presentation state. A command that produces its result
+while it runs receives the typed results channel as the third parameter of
+`Handler::handle`, not through the context; see
+[Incremental commands](#incremental-commands).
 
 > For comprehensive coverage of state management, see [App State and Extensions](app-state.md).
 

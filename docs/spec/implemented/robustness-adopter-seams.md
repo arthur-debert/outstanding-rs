@@ -49,10 +49,13 @@ concept beyond the seam itself.
 - **Output mode is app-selectable** (#356): `AppBuilder` gains the configured fallback
   ROB04 stubbed — the mode used when the flag is absent. Precedence stays the ROB04
   composition contract, `flag > later config > App fallback`: an explicit `--output`
-  always wins, which is what systemdlike's suite asserts (`--output text`/`term`
-  outranks `SYSTEMDLIKE_COLORS`, `NO_COLOR` and detection). The env-driven case the
-  pilot hit is a fallback computed by the app at build time, not an override; forcing
-  color regardless of mode is ANSI presentation (`docs/spec/typed-command-output.md`),
+  always wins, which is what systemdlike's suite asserts. Those cases spelled the
+  explicit flag `--output text`/`term`; they ask with `--color never`/`always` since
+  [Typed Command Output](./typed-command-output.md) retired the two values, and the
+  produced member waits on #519 to be re-accepted against the new spelling. The
+  env-driven case the pilot hit is a fallback computed by the app at build time,
+  not an override; forcing
+  color regardless of mode is ANSI presentation (`docs/spec/implemented/typed-command-output.md`),
   which has its own precedence contract. Appending the app's own `--output` to the
   user's argv is no longer the way.
 - **An app-owned status and diagnostic** (#357): a handler can return a domain error
@@ -88,7 +91,7 @@ concept beyond the seam itself.
 - Choosing or pruning idioms (ROB05). Where this epic adds a builder method or an
   `Output` / error variant, it adds it to the blessed path only.
 - The machine-mode error envelope, ANSI presentation, the pager, incremental results and
-  operational verbosity (the parity program, `docs/spec/typed-command-output.md`). #356
+  operational verbosity (the parity program, `docs/spec/implemented/typed-command-output.md`). #356
   gives the *app* a mode setter; the *user*-facing presentation setting is that Spec's.
 - Fixing the corpus archetype implementations produced by the pilot (they are not
   committed) or re-running the pilot (corpus completion).

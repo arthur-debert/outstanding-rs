@@ -1,7 +1,8 @@
 use clap::Subcommand;
 use serde_json::json;
 use standout::cli::{App, CommandContext, Dispatch, GroupBuilder, HandlerResult, Output};
-use standout::{EmbeddedSource, OutputMode, TemplateResource};
+use standout::ColorPolicy;
+use standout::{EmbeddedSource, Representation, TemplateResource};
 use standout_test::TestHarness;
 
 mod handlers {
@@ -212,9 +213,10 @@ fn test_template_absence_attributes_build_mixed_apps() {
             .subcommand(clap::Command::new("show-all"))
     };
 
-    let rendered = TestHarness::new()
-        .text_output()
-        .run(&app, command(), ["app", "export"]);
+    let rendered =
+        TestHarness::new()
+            .color(ColorPolicy::Never)
+            .run(&app, command(), ["app", "export"]);
     rendered.assert_success();
     assert_eq!(rendered.stdout(), "Hello Ada");
 
@@ -226,10 +228,11 @@ fn test_template_absence_attributes_build_mixed_apps() {
     binary.assert_success();
     assert_eq!(binary.binary(), Some((&[1, 2, 3][..], "data.bin")));
 
-    let structured =
-        TestHarness::new()
-            .output_mode(OutputMode::Json)
-            .run(&app, command(), ["app", "show-all"]);
+    let structured = TestHarness::new().output_mode(Representation::Json).run(
+        &app,
+        command(),
+        ["app", "show-all"],
+    );
     structured.assert_success();
     assert_eq!(structured.stdout(), "{\n  \"name\": \"Ada\"\n}");
 }
@@ -318,7 +321,7 @@ fn inputs_attribute_resolves_a_chain_for_a_derive_registered_command() {
         .build()
         .unwrap();
 
-    let from_arg = TestHarness::new().output_mode(OutputMode::Json).run(
+    let from_arg = TestHarness::new().output_mode(Representation::Json).run(
         &app,
         input_command(),
         ["app", "write", "--note", "from the argument"],
@@ -327,13 +330,13 @@ fn inputs_attribute_resolves_a_chain_for_a_derive_registered_command() {
     assert!(from_arg.stdout().contains("from the argument"));
 
     let from_stdin = TestHarness::new()
-        .output_mode(OutputMode::Json)
+        .output_mode(Representation::Json)
         .piped_stdin("from stdin\n")
         .run(&app, input_command(), ["app", "write"]);
     from_stdin.assert_success();
     assert!(from_stdin.stdout().contains("from stdin"));
 
-    let rejected = TestHarness::new().output_mode(OutputMode::Json).run(
+    let rejected = TestHarness::new().output_mode(Representation::Json).run(
         &app,
         input_command(),
         ["app", "write", "--note", "   "],

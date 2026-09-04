@@ -10,7 +10,7 @@ use standout::cli::{render_help, App, HelpConfig, Output, RenderedOutput};
 use standout::context::{ContextRegistry, RenderContext};
 use standout::{
     render_request, AmbiguousWidth, ColorMode, ColorPolicy, IconMode, InputSources,
-    MiniJinjaEngine, OutputMode, RenderRequest, SharedTemplateEngine, TargetProperties,
+    MiniJinjaEngine, RenderRequest, Representation, SharedTemplateEngine, TargetProperties,
     TemplateRef, TemplateRegistry, Theme,
 };
 
@@ -49,18 +49,26 @@ fn greet_command_with_output() -> Command {
             .long("output")
             .value_name("MODE")
             .global(true)
-            .value_parser(["auto", "term", "text", "term-debug", "json", "yaml", "csv"])
-            .default_value("auto"),
+            .value_parser(["json", "yaml", "csv", "ndjson", "term-debug"]),
     )
 }
 
 fn run_command_greet(app: &App, matches: &clap::ArgMatches) -> RenderedOutput {
+    run_command_greet_with(app, matches, ColorPolicy::Auto)
+}
+
+fn run_command_greet_with(
+    app: &App,
+    matches: &clap::ArgMatches,
+    color: ColorPolicy,
+) -> RenderedOutput {
     let sub = matches.subcommand_matches("greet").unwrap();
     app.run_command(
         "greet",
         sub,
-        |_m, _ctx| Ok(Output::Render(json!({"name": "Ada", "label": "hi"}))),
+        FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada", "label": "hi"})))),
         standout::TemplateRef::Inline((COMPOSITION_TEMPLATE).to_string()),
+        color,
         standout::cli::StreamSink::new(Vec::new()),
     )
     .expect("run_command should render")
@@ -118,8 +126,8 @@ fn composition_request(
         data: json!({"name": "Ada", "label": "hi"}),
         template: TemplateRef::Inline(COMPOSITION_TEMPLATE.to_string()),
         theme: app.get_default_theme().clone(),
-        format: OutputMode::Term,
-        color_policy: ColorPolicy::Auto,
+        format: Representation::Human,
+        color_policy: ColorPolicy::Always,
         target,
         engine: shared_engine(shout_engine()),
         registry: Some(Rc::new(registry)),
@@ -144,10 +152,11 @@ fn dispatch_render_inline_and_render_request_agree_byte_for_byte() {
     let target = capable_target();
     let data = json!({"name": "Ada", "label": "hi"});
 
-    let dispatched = app.run_with(
+    let dispatched = app.run_with_color(
         greet_command(),
-        ["app", "greet", "--output=term"],
+        ["app", "greet"],
         target,
+        ColorPolicy::Always,
         InputSources::from_process(),
     );
     let dispatch_out = dispatched
@@ -159,7 +168,7 @@ fn dispatch_render_inline_and_render_request_agree_byte_for_byte() {
         .render_with(
             standout::TemplateRef::Inline((COMPOSITION_TEMPLATE).to_string()),
             &data,
-            OutputMode::Term,
+            Representation::Human,
             target,
         )
         .unwrap();
@@ -168,7 +177,7 @@ fn dispatch_render_inline_and_render_request_agree_byte_for_byte() {
         .render_with(
             standout::TemplateRef::Named(("greet").to_string()),
             &data,
-            OutputMode::Term,
+            Representation::Human,
             target,
         )
         .unwrap();
@@ -209,7 +218,7 @@ fn run_command_and_dispatch_agree_byte_for_byte() {
         .unwrap();
 
     let dispatch_out = app
-        .dispatch(matches, OutputMode::Auto)
+        .dispatch(matches, Representation::Human)
         .output()
         .expect("dispatch should render")
         .to_string();
@@ -261,30 +270,22 @@ fn run_command_honours_parsed_output_mode_and_splits_raw() {
     assert_eq!(parsed["name"], "Ada");
     assert_eq!(parsed["label"], "hi");
 
-    let term_matches = greet_command_with_output()
-        .try_get_matches_from(["app", "greet", "--output=term"])
+    let human_matches = greet_command_with_output()
+        .try_get_matches_from(["app", "greet"])
         .unwrap();
-    let term_dispatch = dispatch_greet(&app, term_matches);
-    let term_matches = greet_command_with_output()
-        .try_get_matches_from(["app", "greet", "--output=term"])
-        .unwrap();
-    let term_run = run_command_greet(&app, &term_matches);
-    let formatted = term_run.as_text().expect("term should render text");
-    let raw = term_run.as_raw_text().expect("term should carry raw");
-    assert_eq!(
-        formatted, term_dispatch,
-        "run_command --output=term formatted must match dispatch"
-    );
+    let human_run = run_command_greet_with(&app, &human_matches, ColorPolicy::Always);
+    let formatted = human_run.as_text().expect("the human page renders text");
+    let raw = human_run.as_raw_text().expect("the human page carries raw");
     assert!(
         formatted.contains("ADA")
             && formatted.contains("INC")
             && formatted.contains("9.9")
             && formatted.contains("w"),
-        "term template must consume filter, include, and context:\n{formatted}"
+        "the human template must consume filter, include, and context:\n{formatted}"
     );
     assert!(
         formatted.contains("\x1b["),
-        "explicit term under a styled theme must emit ANSI in formatted:\n{formatted:?}"
+        "an always color policy under a styled theme must emit ANSI in formatted:\n{formatted:?}"
     );
     assert!(
         !raw.contains("\x1b["),
@@ -292,7 +293,7 @@ fn run_command_honours_parsed_output_mode_and_splits_raw() {
     );
     assert_ne!(
         formatted, raw,
-        "formatted and raw must diverge under a styled term render"
+        "formatted and raw must diverge under a styled colored render"
     );
     assert!(
         raw.contains("ADA") && raw.contains("INC") && raw.contains("9.9") && raw.contains("hi"),
@@ -312,7 +313,7 @@ where
         .to_string()
 }
 
-fn standalone_help(mode: OutputMode) -> Result<String, standout::RenderError> {
+fn standalone_help(mode: Representation) -> Result<String, standout::RenderError> {
     render_help(
         &help_command(),
         Some(HelpConfig {
@@ -331,7 +332,7 @@ fn help_path_agrees_byte_for_byte_with_standalone_help_in_every_mode() {
         auto.contains("USAGE") && auto.contains("Demo"),
         "app help-path must render human help:\n{auto}"
     );
-    let via_standalone = standalone_help(OutputMode::Text).unwrap();
+    let via_standalone = standalone_help(Representation::Human).unwrap();
     assert!(
         via_standalone.contains("USAGE") && via_standalone.contains("Demo"),
         "standalone render_help must render human help:\n{via_standalone}"
@@ -351,13 +352,13 @@ fn help_path_agrees_byte_for_byte_with_standalone_help_in_every_mode() {
     );
     assert_eq!(json_document["usage"], "app [OPTIONS]");
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&standalone_help(OutputMode::Json).unwrap())
+        serde_json::from_str::<serde_json::Value>(&standalone_help(Representation::Json).unwrap())
             .unwrap()["usage"],
         "app",
         "standalone help documents the bare command, without the framework's flags"
     );
     assert!(
-        standalone_help(OutputMode::Csv).is_err(),
+        standalone_help(Representation::Csv).is_err(),
         "csv has no help projection"
     );
 }

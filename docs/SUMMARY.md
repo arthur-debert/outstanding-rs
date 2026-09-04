@@ -59,6 +59,7 @@
 - [Execution Outcomes](./topics/execution-outcomes.md)
 - [Error Handling](./topics/error-handling.md)
 - [Output Modes](./topics/output-modes.md)
+- [Incremental Commands](./topics/incremental-commands.md)
 - [App Configuration](./topics/app-configuration.md)
 - [Configuration Files](./topics/config-files.md)
 - [Testing](./topics/testing.md)

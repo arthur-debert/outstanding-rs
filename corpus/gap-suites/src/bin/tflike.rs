@@ -1,12 +1,13 @@
 //! The in-repo `tflike` archetype (`corpus/archetypes/tflike/spec.md`) the
-//! suites run against. It carries exactly the capability the framework has,
-//! so the assertions still wrapped in `expect_gap` keep failing against it;
-//! the README beside this package says which.
+//! suites run against; the README beside this package says which gates it
+//! answers. Nothing here writes to stderr and nothing here draws progress:
+//! `apply` reports each resource as a typed event, and how that reaches the
+//! user is the representation's decision, not the handler's.
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use serde::Serialize;
 use standout::cli::{
-    App, CommandContext, Diagnostic, ExitStatus, FnHandler, HandlerResult, Output,
+    App, CommandContext, Diagnostic, EventsFnHandler, ExitStatus, Results, Summary, SummaryResult,
 };
 use standout::EmbeddedTemplates;
 use std::collections::BTreeSet;
@@ -16,13 +17,22 @@ const FORMAT_VERSION: u32 = 1;
 
 const TEMPLATES: &[(&str, &str)] = &[
     (
-        "plan",
-        "{% for change in changes %}{{ change.action }} {{ change.resource }}\n{% endfor %}\
-         Plan: {{ add }} to add, {{ remove }} to remove.",
+        "plan.event",
+        concat!(
+            r#"{% if event.type == "version" %}tflike format {{ event.format_version }}"#,
+            r#"{% elif event.type == "planned_change" %}{{ event.action }} {{ event.resource }}"#,
+            r#"{% elif event.type == "change_summary" %}Plan: {{ event.add }} to add, {{ event.remove }} to remove.{% endif %}"#,
+        ),
     ),
     (
-        "apply",
-        "Apply complete: {{ add }} added, {{ remove }} removed.",
+        "apply.event",
+        concat!(
+            r#"{% if event.type == "version" %}tflike format {{ event.format_version }}"#,
+            r#"{% elif event.type == "planned_change" %}{{ event.action }} {{ event.resource }}"#,
+            r#"{% elif event.type == "apply_start" %}applying {{ event.resource }}"#,
+            r#"{% elif event.type == "apply_complete" %}applied {{ event.resource }}"#,
+            r#"{% elif event.type == "change_summary" %}Apply complete: {{ event.add }} added, {{ event.remove }} removed.{% endif %}"#,
+        ),
     ),
 ];
 
@@ -48,9 +58,11 @@ fn command() -> Command {
 
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-enum Entry<'a> {
+enum Entry {
     Version { format_version: u32 },
-    PlannedChange { resource: &'a str, action: Action },
+    PlannedChange { resource: String, action: Action },
+    ApplyStart { resource: String },
+    ApplyComplete { resource: String },
     ChangeSummary { add: usize, remove: usize },
 }
 
@@ -61,13 +73,11 @@ enum Action {
     Delete,
 }
 
-#[derive(Serialize)]
 struct Change {
     resource: String,
     action: Action,
 }
 
-#[derive(Serialize)]
 struct Plan {
     changes: Vec<Change>,
     add: usize,
@@ -165,38 +175,39 @@ fn load(matches: &ArgMatches) -> Result<Loaded, anyhow::Error> {
     })
 }
 
-fn plan(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Plan> {
-    let stream = ctx.stream();
-    stream.emit(&Entry::Version {
+fn plan(
+    matches: &ArgMatches,
+    _ctx: &CommandContext,
+    results: &mut Results<Entry>,
+) -> SummaryResult<()> {
+    results.emit(Entry::Version {
         format_version: FORMAT_VERSION,
     })?;
     let Loaded { plan, .. } = load(matches)?;
     for change in &plan.changes {
-        stream.emit(&Entry::PlannedChange {
-            resource: &change.resource,
+        results.emit(Entry::PlannedChange {
+            resource: change.resource.clone(),
             action: change.action,
         })?;
     }
-    stream.emit(&Entry::ChangeSummary {
+    results.emit(Entry::ChangeSummary {
         add: plan.add,
         remove: plan.remove,
     })?;
     let changed = matches.get_flag("detailed-exitcode") && !plan.changes.is_empty();
-    let output = if stream.is_live() {
-        Output::Silent
-    } else {
-        Output::Render(plan)
-    };
     Ok(if changed {
-        output.with_exit_status(ExitStatus::from(2))
+        Summary::Silent.with_exit_status(ExitStatus::from(2))
     } else {
-        output
+        Summary::Silent
     })
 }
 
-fn apply(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Plan> {
-    let stream = ctx.stream();
-    stream.emit(&Entry::Version {
+fn apply(
+    matches: &ArgMatches,
+    _ctx: &CommandContext,
+    results: &mut Results<Entry>,
+) -> SummaryResult<()> {
+    results.emit(Entry::Version {
         format_version: FORMAT_VERSION,
     })?;
     let Loaded {
@@ -205,6 +216,9 @@ fn apply(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Plan> {
         state_path,
     } = load(matches)?;
     for change in &plan.changes {
+        results.emit(Entry::ApplyStart {
+            resource: change.resource.clone(),
+        })?;
         let verb = match change.action {
             Action::Create => "creation",
             Action::Delete => "deletion",
@@ -220,30 +234,28 @@ fn apply(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Plan> {
             Action::Create => state.insert(change.resource.clone()),
             Action::Delete => state.remove(&change.resource),
         };
-        eprintln!("{}: {verb} complete", change.resource);
+        results.emit(Entry::ApplyComplete {
+            resource: change.resource.clone(),
+        })?;
     }
     let mut recorded = state.into_iter().collect::<Vec<_>>().join("\n");
     if !recorded.is_empty() {
         recorded.push('\n');
     }
     std::fs::write(&state_path, recorded)?;
-    stream.emit(&Entry::ChangeSummary {
+    results.emit(Entry::ChangeSummary {
         add: plan.add,
         remove: plan.remove,
     })?;
-    Ok(if stream.is_live() {
-        Output::Silent
-    } else {
-        Output::Render(plan)
-    })
+    Ok(Summary::Silent)
 }
 
 fn app() -> App {
     App::builder()
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
-        .command_with("plan", FnHandler::new(plan), |cfg| cfg)
+        .command_with("plan", EventsFnHandler::new(plan), |cfg| cfg)
         .unwrap()
-        .command_with("apply", FnHandler::new(apply), |cfg| cfg)
+        .command_with("apply", EventsFnHandler::new(apply), |cfg| cfg)
         .unwrap()
         .build()
         .unwrap()

@@ -348,7 +348,7 @@ framework-rendered or intentionally opaque bytes:
 
 ```toml
 [invariants]
-modes = ["text", "term", "json"]
+modes = ["text", "term", "json"]      # `--color never`, `--color always`, `--output json`
 colors = ["off", "on"]
 
 [[invariants.theme]]
@@ -542,7 +542,8 @@ through the full loop against a produced binary that builds and then fails
 every invocation, so a suite that cannot execute is a red test rather than a
 wasted blind run.
 
-**Two gap-only archetypes**, every acceptance case `expected = "fail"`:
+**Two gap archetypes**, whose acceptance cases were authored `expected = "fail"`
+and flip to `"pass"` as the owning epic closes each milestone group:
 
 | Archetype | Survey | Shape |
 | --- | --- | --- |

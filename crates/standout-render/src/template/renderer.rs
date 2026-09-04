@@ -18,7 +18,7 @@ use super::engine::{MiniJinjaEngine, TemplateEngine};
 use super::registry::{walk_template_dir, ResolvedTemplate, TemplateRegistry};
 use super::registry_error;
 use crate::error::RenderError;
-use crate::output::OutputMode;
+use crate::output::Representation;
 use crate::request::{render_request, SharedTemplateEngine, TargetProperties, TemplateRef};
 use crate::theme::Theme;
 use crate::AmbiguousWidth;
@@ -31,7 +31,8 @@ pub struct Renderer {
     registry_initialized: bool,
     template_dirs: Vec<std::path::PathBuf>,
     theme: Theme,
-    output_mode: OutputMode,
+    representation: Representation,
+    color_policy: ColorPolicy,
     ambiguous_width: AmbiguousWidth,
     icon_mode: Option<crate::IconMode>,
     color_scheme: Option<crate::ColorMode>,
@@ -39,16 +40,16 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn new(theme: Theme) -> Result<Self, RenderError> {
-        Self::with_output(theme, OutputMode::Auto)
+        Self::with_output(theme, Representation::Human)
     }
 
-    pub fn with_output(theme: Theme, mode: OutputMode) -> Result<Self, RenderError> {
-        Self::with_output_and_engine(theme, mode, Box::new(MiniJinjaEngine::new()))
+    pub fn with_output(theme: Theme, representation: Representation) -> Result<Self, RenderError> {
+        Self::with_output_and_engine(theme, representation, Box::new(MiniJinjaEngine::new()))
     }
 
     pub fn with_output_and_engine(
         theme: Theme,
-        mode: OutputMode,
+        representation: Representation,
         engine: Box<dyn TemplateEngine>,
     ) -> Result<Self, RenderError> {
         theme
@@ -61,7 +62,8 @@ impl Renderer {
             registry_initialized: false,
             template_dirs: Vec::new(),
             theme,
-            output_mode: mode,
+            representation,
+            color_policy: ColorPolicy::Auto,
             ambiguous_width: AmbiguousWidth::Narrow,
             icon_mode: None,
             color_scheme: None,
@@ -134,8 +136,17 @@ impl Renderer {
         self
     }
 
-    pub fn set_output_mode(&mut self, mode: OutputMode) {
-        self.output_mode = mode;
+    pub fn set_representation(&mut self, representation: Representation) {
+        self.representation = representation;
+    }
+
+    pub fn set_color_policy(&mut self, policy: ColorPolicy) {
+        self.color_policy = policy;
+    }
+
+    pub fn with_color_policy(mut self, policy: ColorPolicy) -> Self {
+        self.set_color_policy(policy);
+        self
     }
 
     pub fn refresh(&mut self) -> Result<(), RenderError> {
@@ -199,8 +210,8 @@ impl Renderer {
             data: serde_json::to_value(data)?,
             template: TemplateRef::Named(name.to_string()),
             theme: self.theme.clone(),
-            format: self.output_mode,
-            color_policy: ColorPolicy::Auto,
+            format: self.representation,
+            color_policy: self.color_policy,
             target,
             engine: self.engine.clone(),
             registry: Some(Rc::new(self.registry.clone())),
@@ -248,7 +259,9 @@ mod tests {
     #[test]
     fn test_renderer_add_and_render() {
         let theme = Theme::new().add("ok", Style::new().green());
-        let mut renderer = Renderer::with_output(theme, OutputMode::Text).unwrap();
+        let mut renderer = Renderer::with_output(theme, Representation::Human)
+            .unwrap()
+            .with_color_policy(ColorPolicy::Never);
 
         renderer
             .add_template("test", r#"[ok]{{ message }}[/ok]"#)
@@ -268,7 +281,9 @@ mod tests {
     #[test]
     fn test_renderer_unknown_template_error() {
         let theme = Theme::new();
-        let mut renderer = Renderer::with_output(theme, OutputMode::Text).unwrap();
+        let mut renderer = Renderer::with_output(theme, Representation::Human)
+            .unwrap()
+            .with_color_policy(ColorPolicy::Never);
 
         let result = renderer.render(
             "nonexistent",
@@ -285,7 +300,9 @@ mod tests {
             .add("a", Style::new().red())
             .add("b", Style::new().blue());
 
-        let mut renderer = Renderer::with_output(theme, OutputMode::Text).unwrap();
+        let mut renderer = Renderer::with_output(theme, Representation::Human)
+            .unwrap()
+            .with_color_policy(ColorPolicy::Never);
         renderer
             .add_template("tmpl_a", r#"A: [a]{{ message }}[/a]"#)
             .unwrap();
@@ -483,11 +500,13 @@ mod tests {
     }
 
     #[test]
-    fn test_renderer_set_output_mode() {
+    fn test_renderer_set_color_policy() {
         use console::Style;
 
         let theme = Theme::new().add("highlight", Style::new().green().force_styling(true));
-        let mut renderer = Renderer::with_output(theme, OutputMode::Term).unwrap();
+        let mut renderer = Renderer::with_output(theme, Representation::Human)
+            .unwrap()
+            .with_color_policy(ColorPolicy::Always);
         renderer
             .add_template("test", "[highlight]hello[/highlight]")
             .unwrap();
@@ -498,13 +517,16 @@ mod tests {
         let term_output = renderer.render("test", &Empty {}).unwrap();
         assert!(
             term_output.contains("\x1b["),
-            "Expected ANSI codes in Term mode, got: {:?}",
+            "Expected ANSI codes under an always color policy, got: {:?}",
             term_output
         );
 
-        renderer.set_output_mode(OutputMode::Text);
+        renderer.set_color_policy(ColorPolicy::Never);
         let text_output = renderer.render("test", &Empty {}).unwrap();
-        assert_eq!(text_output, "hello", "Expected plain text in Text mode");
+        assert_eq!(
+            text_output, "hello",
+            "Expected plain text under a never color policy"
+        );
     }
 
     #[test]
@@ -617,7 +639,9 @@ mod tests {
             templates: HashMap::new(),
         });
         let mut renderer =
-            Renderer::with_output_and_engine(Theme::new(), OutputMode::Text, engine).unwrap();
+            Renderer::with_output_and_engine(Theme::new(), Representation::Human, engine)
+                .unwrap()
+                .with_color_policy(ColorPolicy::Never);
 
         renderer.add_template("test", "content").unwrap();
 
@@ -636,7 +660,9 @@ mod tests {
 
         let engine = Box::new(SimpleEngine::new());
         let mut renderer =
-            Renderer::with_output_and_engine(Theme::new(), OutputMode::Text, engine).unwrap();
+            Renderer::with_output_and_engine(Theme::new(), Representation::Human, engine)
+                .unwrap()
+                .with_color_policy(ColorPolicy::Never);
 
         renderer.add_template("welcome", "Hello, {name}!").unwrap();
 
@@ -665,7 +691,9 @@ mod tests {
             IconDefinition::new("[ok]").with_nerdfont("\u{f00c}"),
         );
 
-        let mut renderer = Renderer::with_output(theme, OutputMode::Text).unwrap();
+        let mut renderer = Renderer::with_output(theme, Representation::Human)
+            .unwrap()
+            .with_color_policy(ColorPolicy::Never);
         renderer
             .add_template("test", "{{ icons.check }} {{ message }}")
             .unwrap();
@@ -690,7 +718,7 @@ mod tests {
             IconDefinition::new("[ok]").with_nerdfont("\u{f00c}"),
         );
 
-        let mut renderer = Renderer::with_output(theme, OutputMode::Text)
+        let mut renderer = Renderer::with_output(theme, Representation::Human)
             .unwrap()
             .with_icon_mode(IconMode::NerdFont);
         renderer
@@ -711,7 +739,9 @@ mod tests {
     #[test]
     fn test_renderer_without_icons() {
         let theme = Theme::new().add("ok", Style::new().green());
-        let mut renderer = Renderer::with_output(theme, OutputMode::Text).unwrap();
+        let mut renderer = Renderer::with_output(theme, Representation::Human)
+            .unwrap()
+            .with_color_policy(ColorPolicy::Never);
         renderer
             .add_template("test", "[ok]{{ message }}[/ok]")
             .unwrap();
@@ -731,14 +761,16 @@ mod tests {
     fn renderer_applies_width_policy_to_filters_and_tables() {
         let template = "{{ '↦≈Δ' | display_width }}|{% set t = tabular([{\"width\": 7}], width=7) %}{{ t.row(['↦≈Δ']) }}";
 
-        let mut narrow = Renderer::with_output(Theme::new(), OutputMode::Text).unwrap();
+        let mut narrow = Renderer::with_output(Theme::new(), Representation::Human)
+            .unwrap()
+            .with_color_policy(ColorPolicy::Never);
         narrow.add_template("width", template).unwrap();
         assert_eq!(
             narrow.render("width", &serde_json::json!({})).unwrap(),
             "3|↦≈Δ    "
         );
 
-        let mut wide = Renderer::with_output(Theme::new(), OutputMode::Text)
+        let mut wide = Renderer::with_output(Theme::new(), Representation::Human)
             .unwrap()
             .with_ambiguous_width(AmbiguousWidth::Wide);
         wide.add_template("width", template).unwrap();

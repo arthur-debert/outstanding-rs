@@ -27,10 +27,15 @@
 > - `ctx.output_mode()` in the examples does not exist; `ctx.stream().is_live()`
 >   is the one mode predicate a handler has. `DiagnosticKind` has one name beyond
 >   D1's list, `framework`, the kind of a warning entry.
+> - The streaming example below is superseded. A handler emits typed events
+>   through the `Results<E>` channel it is handed, and neither `ctx.stream()` nor
+>   `is_live()` survives: see
+>   [Typed Command Output](./typed-command-output.md) and
+>   [ADR-0041](../../adr/0041-hand-the-handler-a-typed-results-sink.md).
 
 First epic of the capability-parity program to execute. The program's order is PAR02,
 then PAR01 (config layering) and PAR04 (corpus runner) side by side, then the
-terminal-behavior epic that `docs/spec/typed-command-output.md` has since replaced, then
+terminal-behavior epic that `docs/spec/implemented/typed-command-output.md` has since replaced, then
 PAR05 (named configuration sets). PAR02 depends on nothing
 unfinished: the composition-contracts work (ADRs 0025 to 0035) already put every
 failure through one function, `emit_run_result` in
@@ -315,6 +320,6 @@ WS02, WS03 and WS04 start after WS01 merges and can run in parallel.
 ## Out of scope
 
 Human-mode error wording, operational verbosity and the warning channel's levels (a
-separate future feature), incremental result events (`docs/spec/typed-command-output.md`),
+separate future feature), incremental result events (`docs/spec/implemented/typed-command-output.md`),
 schema migration tooling, YAML or JSON streaming
 beyond one value per line, a machine-readable form for `term` or `text`.

@@ -1,7 +1,8 @@
 # Acceptance suite for the `tflike` archetype. Format: corpus/README.md.
-# Written spec-first (ROB03-WS03). Gap-only archetype: every case is
-# expected-fail, owned by PAR02 (diagnostic group) or the typed command output
-# Spec (progress group).
+# Written spec-first (ROB03-WS03) as a gap archetype, in two milestone groups:
+# the diagnostic cases owned by PAR02, which stay expected-fail because the
+# runner has no produced tflike binary, and the progress cases owned by TERM01,
+# which pass.
 # The byte-precise form of these assertions — per-line NDJSON parseability,
 # lifecycle ordering, state-file rewrites — lives in `corpus/gap-suites`
 # (tests/tflike_diagnostic.rs, tests/tflike_progress.rs) and runs today under
@@ -126,15 +127,14 @@ exit_code = 1
 stdout_contains = ["diagnostic", "error"]
 stderr = ""
 
-# --- progress milestone (typed command output) -------------------------------
+# --- progress milestone (TERM01, typed command output) -----------------------
 
 [[case]]
 name = "apply-lifecycle-events-ride-the-stream"
 group = "progress"
 stresses = "apply emits an apply_start/apply_complete pair per changed resource in the stream"
-expected = "fail"
+expected = "pass"
 gap = "typed-command-output"
-reason = "no typed incremental result carries the lifecycle events"
 [case.run]
 argv = ["apply", "--config", "main.tfl", "--output", "ndjson"]
 timeout_seconds = 10
@@ -148,9 +148,8 @@ stdout_contains = ["apply_start", "apply_complete", "web", "db", "change_summary
 name = "apply-deletion-emits-lifecycle-and-summary"
 group = "progress"
 stresses = "a deletion apply carries the same lifecycle events and terminal summary"
-expected = "fail"
+expected = "pass"
 gap = "typed-command-output"
-reason = "no typed incremental result carries the lifecycle events"
 [case.run]
 argv = ["apply", "--config", "main.tfl", "--output", "ndjson"]
 timeout_seconds = 10
@@ -165,9 +164,8 @@ stdout_contains = ["apply_start", "apply_complete", "change_summary"]
 name = "progress-silent-under-structured-mode"
 group = "progress"
 stresses = "structured mode suppresses progress entirely: no ANSI on stdout, nothing at all on stderr"
-expected = "fail"
+expected = "pass"
 gap = "typed-command-output"
-reason = "no representation-aware suppression of progress rendering exists"
 [case.run]
 argv = ["apply", "--config", "main.tfl", "--output", "ndjson"]
 timeout_seconds = 10

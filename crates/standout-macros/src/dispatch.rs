@@ -37,6 +37,7 @@ struct VariantAttrs {
     pipe_to_clipboard: bool,
     simple: bool,
     pure: bool,
+    pageable: bool,
 }
 
 struct VariantInfo {
@@ -141,6 +142,9 @@ impl Parse for VariantAttrs {
                 Meta::Path(p) if p.is_ident("structured_only") => {
                     attrs.structured_only = true;
                 }
+                Meta::Path(p) if p.is_ident("pageable") => {
+                    attrs.pageable = true;
+                }
                 Meta::NameValue(nv) if nv.path.is_ident("pre_dispatch") => {
                     if let Expr::Path(expr_path) = &nv.value {
                         attrs.pre_dispatch = Some(expr_path.path.clone());
@@ -226,7 +230,7 @@ impl Parse for VariantAttrs {
                 _ => {
                     return Err(Error::new(
                         meta.span(),
-                        "unknown attribute, expected one of: name, handler, template_name, inputs, silent, binary, structured_only, pre_dispatch, post_dispatch, post_output, questionnaire, nested, skip, default, list_view, item_type, pipe_to, pipe_through, pipe_to_clipboard, simple, pure",
+                        "unknown attribute, expected one of: name, handler, template_name, inputs, silent, binary, structured_only, pageable, pre_dispatch, post_dispatch, post_output, questionnaire, nested, skip, default, list_view, item_type, pipe_to, pipe_through, pipe_to_clipboard, simple, pure",
                     ));
                 }
             }
@@ -261,6 +265,7 @@ impl VariantAttrs {
             pipe_to_clipboard,
             simple,
             pure,
+            pageable,
         } = other;
 
         self.name = name.or(self.name.take());
@@ -284,6 +289,7 @@ impl VariantAttrs {
         self.pipe_to_clipboard |= pipe_to_clipboard;
         self.simple |= simple;
         self.pure |= pure;
+        self.pageable |= pageable;
     }
 
     /// Runs after `merge`, so a conflicting pair split across two attributes is
@@ -515,7 +521,8 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                     || (v.attrs.list_view && v.attrs.item_type.is_some())
                     || v.attrs.pipe_to.is_some()
                     || v.attrs.pipe_through.is_some()
-                    || v.attrs.pipe_to_clipboard;
+                    || v.attrs.pipe_to_clipboard
+                    || v.attrs.pageable;
 
                 let handler_expr = if v.attrs.list_view {
                      if let Some(item_type_str) = &v.attrs.item_type {
@@ -592,6 +599,9 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                     } else {
                         None
                     };
+                    let pageable_call = v.attrs.pageable.then(|| {
+                        quote! { __cfg = __cfg.pageable(); }
+                    });
 
                     quote! {
                         let __builder = __builder.command_with(#cmd_name, #handler_expr, |mut __cfg| {
@@ -605,6 +615,7 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                             #pipe_to_call
                             #pipe_through_call
                             #pipe_clipboard_call
+                            #pageable_call
                             __cfg
                         });
                     }

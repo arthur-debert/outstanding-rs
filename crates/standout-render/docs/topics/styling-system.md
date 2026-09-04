@@ -233,19 +233,19 @@ Aliases can chain: `a` → `b` → `c` → concrete style. Cycles are detected a
 
 When a template references a style tag not defined in the active theme,
 `standout-render` degrades it to unstyled text instead of failing the render.
-`Term` and `Text` mode treat unknown tags identically; the difference between
-them is only whether *known* tags render as ANSI (`Term`) or as plain text
-(`Text`). What happens to an unknown tag depends on whether its open and close markers
-are balanced:
+`Ansi` and `Plain` style modes treat unknown tags identically; the difference
+between them is only whether *known* tags render as ANSI (`Ansi`) or as plain
+text (`Plain`). What happens to an unknown tag depends on whether its open and
+close markers are balanced:
 
 - A **balanced pair**, `[unknown]x[/unknown]`, has its markers removed; the
   inner text `x` is kept as unstyled text.
 - An **unbalanced** tag, `[unknown]` with no matching close, is emitted verbatim
   as literal text — the brackets survive, so the output contains `[unknown]`.
-  This is why a stray `[compute]` appears verbatim under `--output text`.
+  This is why a stray `[compute]` appears verbatim in a plain render.
 
-`TermDebug` mode keeps every tag, known or unknown, as literal text for
-inspection.
+The `Debug` style mode, which `Representation::TermDebug` renders as, keeps
+every tag — known or unknown — as literal text for inspection.
 
 There is no `?` marker: an unknown tag is never rewritten to `[unknown?]` in
 rendered output. Instead, each unresolved tag is recorded as a warning (see

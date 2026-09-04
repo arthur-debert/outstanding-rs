@@ -413,8 +413,7 @@ fn run_mode(
     isolation: &workspace::Isolation,
 ) -> Result<(Option<i32>, String), String> {
     let mut args: Vec<String> = command.argv.clone();
-    args.push("--output".to_string());
-    args.push(invocation.mode.as_str().to_string());
+    args.extend(invocation.mode.argv().iter().map(|arg| arg.to_string()));
     let mut env: Vec<(String, String)> = invocation
         .theme_env
         .iter()

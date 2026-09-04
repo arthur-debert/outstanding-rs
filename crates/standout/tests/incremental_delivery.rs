@@ -1,0 +1,445 @@
+//! When an emitted event reaches the destination, and what a reader that walks
+//! away does to the rest of the run.
+
+use clap::{ArgMatches, Command};
+use serde::Serialize;
+use serde_json::json;
+use standout::cli::{
+    App, CommandContext, Diagnostic, DiagnosticKind, DispatchResult, EventsFnHandler, ExitStatus,
+    Handler, OutputKind, Results, RunErrorKind, StreamSink, Summary, SummaryResult,
+};
+use standout::{
+    AmbiguousWidth, ColorMode, ColorPolicy, EmbeddedTemplates, IconMode, InputSources,
+    Representation, TargetProperties,
+};
+use std::cell::RefCell;
+use std::io::Write;
+use std::rc::Rc;
+
+const TEMPLATES: &[(&str, &str)] = &[
+    ("apply", "{{ add }} added"),
+    ("apply.event", "starting {{ event.resource }}"),
+];
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum Event<'a> {
+    ApplyStart { resource: &'a str },
+}
+
+const RESOURCES: [&str; 3] = ["web", "db", "cache"];
+
+fn command() -> Command {
+    Command::new("app").subcommand(Command::new("apply"))
+}
+
+/// `seen` holds what had arrived when each `emit` returned.
+fn app(seen: Rc<RefCell<Vec<String>>>, written: Rc<RefCell<Vec<u8>>>) -> App {
+    App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "apply",
+            EventsFnHandler::new(
+                move |_, _ctx, results: &mut Results<Event>| -> SummaryResult<serde_json::Value> {
+                    for resource in RESOURCES {
+                        results.emit(Event::ApplyStart { resource })?;
+                        seen.borrow_mut()
+                            .push(String::from_utf8_lossy(&written.borrow()).into_owned());
+                    }
+                    Ok(Summary::Render(json!({ "add": RESOURCES.len() })))
+                },
+            ),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+fn target() -> TargetProperties {
+    target_that(false)
+}
+
+fn target_that(is_terminal: bool) -> TargetProperties {
+    TargetProperties {
+        width: None,
+        stdout_is_terminal: is_terminal,
+        stderr_is_terminal: is_terminal,
+        stdout_color_capability: false,
+        stderr_color_capability: false,
+        color_scheme: ColorMode::Dark,
+        icon_mode: IconMode::Classic,
+        ambiguous_width: AmbiguousWidth::Narrow,
+    }
+}
+
+#[derive(Clone, Default)]
+struct Shared(Rc<RefCell<Vec<u8>>>);
+
+impl Write for Shared {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.borrow_mut().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn run_watching(representation: Representation) -> Vec<String> {
+    run_watching_on(representation, target())
+}
+
+fn run_watching_on(representation: Representation, target: TargetProperties) -> Vec<String> {
+    let destination = Shared::default();
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let app = app(seen.clone(), destination.0.clone());
+    let args: Vec<String> = match representation {
+        Representation::Ndjson => vec!["app".into(), "--output=ndjson".into(), "apply".into()],
+        _ => vec!["app".into(), "apply".into()],
+    };
+    let run = app.run_with_sink(
+        command(),
+        args,
+        target,
+        ColorPolicy::Never,
+        InputSources::from_process(),
+        StreamSink::new(destination.clone()),
+    );
+    assert!(matches!(run.outcome(), DispatchResult::Handled(_)));
+    let seen = seen.borrow().clone();
+    seen
+}
+
+#[test]
+fn each_rendered_event_is_written_before_the_handler_produces_the_next() {
+    let seen = run_watching(Representation::Human);
+    assert_eq!(
+        seen,
+        vec![
+            "starting web\n".to_string(),
+            "starting web\nstarting db\n".to_string(),
+            "starting web\nstarting db\nstarting cache\n".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn a_terminal_destination_writes_each_event_at_the_same_point_a_pipe_does() {
+    assert_eq!(
+        run_watching_on(Representation::Human, target_that(true)),
+        run_watching(Representation::Human),
+    );
+}
+
+#[test]
+fn each_framed_event_is_written_before_the_handler_produces_the_next() {
+    let seen = run_watching(Representation::Ndjson);
+    assert_eq!(seen.len(), 3);
+    assert_eq!(seen[0], "{\"type\":\"apply_start\",\"resource\":\"web\"}\n");
+    assert_eq!(seen[2].lines().count(), 3, "{}", seen[2]);
+}
+
+/// Accepts one write, then reports the pipe the way `head -1` leaves it.
+struct ReaderLeft(Rc<RefCell<usize>>);
+
+impl Write for ReaderLeft {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let mut writes = self.0.borrow_mut();
+        *writes += 1;
+        if *writes > 1 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "reader left",
+            ));
+        }
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_reader_that_leaves_lets_the_handler_finish_and_keeps_the_command_s_status() {
+    let reached = Rc::new(RefCell::new(Vec::new()));
+    let handler_reached = reached.clone();
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "apply",
+            EventsFnHandler::new(
+                move |_, _ctx, results: &mut Results<Event>| -> SummaryResult<serde_json::Value> {
+                    for resource in RESOURCES {
+                        results.emit(Event::ApplyStart { resource })?;
+                        handler_reached.borrow_mut().push(resource);
+                    }
+                    Ok(Summary::Render(json!({ "add": RESOURCES.len() })))
+                },
+            ),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let run = app.run_with_sink(
+        command(),
+        ["app", "apply"],
+        target(),
+        ColorPolicy::Never,
+        InputSources::from_process(),
+        StreamSink::new(ReaderLeft(Rc::new(RefCell::new(0)))),
+    );
+
+    assert_eq!(
+        *reached.borrow(),
+        RESOURCES,
+        "the handler ran to completion"
+    );
+    assert!(
+        matches!(run.outcome(), DispatchResult::Handled(_)),
+        "a reader that left is not the command's failure"
+    );
+    assert_eq!(run.exit_status(), Some(ExitStatus::SUCCESS));
+    assert_eq!(
+        run.results().len(),
+        RESOURCES.len() + 1,
+        "the values the run produced stand whether or not anyone read them"
+    );
+}
+
+fn render_error(outcome: &DispatchResult) -> String {
+    match outcome {
+        DispatchResult::Error(error) => {
+            assert_eq!(error.kind(), RunErrorKind::Render, "{error}");
+            error.to_string()
+        }
+        other => panic!("expected a render error, got {other:?}"),
+    }
+}
+
+const UNRESOLVED_TAG_TEMPLATES: &[(&str, &str)] = &[
+    ("apply", "{{ add }} added"),
+    ("apply.event", "[nope]starting {{ event.resource }}[/nope]"),
+];
+
+#[test]
+fn strict_mode_fails_an_event_with_an_unresolved_style_tag_before_it_is_written() {
+    let destination = Shared::default();
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(UNRESOLVED_TAG_TEMPLATES, ""))
+        .strict_style_tags(true)
+        .command_with(
+            "apply",
+            EventsFnHandler::new(
+                |_, _ctx, results: &mut Results<Event>| -> SummaryResult<serde_json::Value> {
+                    results.emit(Event::ApplyStart { resource: "web" })?;
+                    Ok(Summary::Render(json!({ "add": 1 })))
+                },
+            ),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let outcome = app
+        .run_with_sink(
+            command(),
+            ["app", "apply"],
+            target(),
+            ColorPolicy::Never,
+            InputSources::from_process(),
+            StreamSink::new(destination.clone()),
+        )
+        .into_outcome();
+
+    assert!(render_error(&outcome).contains("left 1 style tag unresolved: nope"));
+    assert!(
+        destination.0.borrow().is_empty(),
+        "strict mode writes nothing it is about to reject"
+    );
+}
+
+#[test]
+fn csv_takes_the_events_as_its_rows_once_the_command_ends() {
+    let destination = Shared::default();
+    let ran = Rc::new(RefCell::new(false));
+    let handler_ran = ran.clone();
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "apply",
+            EventsFnHandler::new(
+                move |_, _ctx, results: &mut Results<Event>| -> SummaryResult<serde_json::Value> {
+                    *handler_ran.borrow_mut() = true;
+                    results.emit(Event::ApplyStart { resource: "web" })?;
+                    Ok(Summary::Render(json!({ "add": 1 })))
+                },
+            ),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let outcome = app
+        .run_with_sink(
+            command(),
+            ["app", "--output=csv", "apply"],
+            target(),
+            ColorPolicy::Never,
+            InputSources::from_process(),
+            StreamSink::new(destination.clone()),
+        )
+        .into_outcome();
+
+    assert!(*ran.borrow());
+    assert_eq!(outcome.output(), Some("type,resource\napply_start,web\n"));
+    assert!(
+        destination.0.borrow().is_empty(),
+        "the rows are the run's one document, not bytes the handler streamed"
+    );
+}
+
+#[test]
+fn an_emit_failure_the_handler_swallows_still_fails_the_run() {
+    let destination = Shared::default();
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(UNRESOLVED_TAG_TEMPLATES, ""))
+        .strict_style_tags(true)
+        .command_with(
+            "apply",
+            EventsFnHandler::new(
+                |_, _ctx, results: &mut Results<Event>| -> SummaryResult<serde_json::Value> {
+                    let _ = results.emit(Event::ApplyStart { resource: "web" });
+                    Ok(Summary::Render(json!({ "add": 1 })))
+                },
+            ),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let outcome = app
+        .run_with_sink(
+            command(),
+            ["app", "apply"],
+            target(),
+            ColorPolicy::Never,
+            InputSources::from_process(),
+            StreamSink::new(destination.clone()),
+        )
+        .into_outcome();
+
+    assert!(render_error(&outcome).contains("left 1 style tag unresolved: nope"));
+    assert_eq!(outcome.error_kind(), Some(RunErrorKind::Render));
+    assert!(destination.0.borrow().is_empty());
+}
+
+/// Refuses every write for a reason that is not the reader walking away.
+struct NoRoom;
+
+impl Write for NoRoom {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::other("no room"))
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// The diagnostic a process writes for this outcome, read back off the bytes.
+fn wire_diagnostic(outcome: &DispatchResult, representation: Representation) -> Diagnostic {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    standout::cli::emit_run_result(outcome, representation, &mut stdout, &mut stderr)
+        .expect("an in-memory destination never fails a write");
+    let stdout = String::from_utf8(stdout).unwrap();
+    standout::cli::parse_diagnostic(representation, &stdout).unwrap()
+}
+
+#[test]
+fn an_event_the_destination_refuses_fails_the_run_as_a_final_write() {
+    let app = app(
+        Rc::new(RefCell::new(Vec::new())),
+        Rc::new(RefCell::new(Vec::new())),
+    );
+
+    let outcome = app
+        .run_with_sink(
+            command(),
+            ["app", "--output=ndjson", "apply"],
+            target(),
+            ColorPolicy::Never,
+            InputSources::from_process(),
+            StreamSink::new(NoRoom),
+        )
+        .into_outcome();
+
+    assert_eq!(
+        outcome.error_kind(),
+        Some(RunErrorKind::FinalWrite(OutputKind::Text))
+    );
+    assert_eq!(
+        wire_diagnostic(&outcome, Representation::Ndjson).kind,
+        DiagnosticKind::FinalWrite
+    );
+}
+
+struct HandWritten {
+    ran: Rc<RefCell<bool>>,
+}
+
+impl Handler for HandWritten {
+    type Event = Event<'static>;
+    type Output = serde_json::Value;
+    type Outcome = Summary<serde_json::Value>;
+
+    fn handle(
+        &mut self,
+        _: &ArgMatches,
+        _: &CommandContext,
+        results: &mut Results<Self::Event>,
+    ) -> SummaryResult<serde_json::Value> {
+        *self.ran.borrow_mut() = true;
+        results.emit(Event::ApplyStart { resource: "web" })?;
+        Ok(Summary::Render(json!({ "add": 1 })))
+    }
+}
+
+fn hand_written_run(args: &[&str], handler: HandWritten, destination: Shared) -> DispatchResult {
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with("apply", handler, |cfg| cfg)
+        .unwrap()
+        .build()
+        .unwrap();
+
+    app.run_with_sink(
+        command(),
+        args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>(),
+        target(),
+        ColorPolicy::Never,
+        InputSources::from_process(),
+        StreamSink::new(destination),
+    )
+    .into_outcome()
+}
+
+#[test]
+fn a_hand_written_emitter_writes_its_events_as_csv_rows() {
+    let destination = Shared::default();
+    let ran = Rc::new(RefCell::new(false));
+    let outcome = hand_written_run(
+        &["app", "--output=csv", "apply"],
+        HandWritten { ran: ran.clone() },
+        destination.clone(),
+    );
+
+    assert!(*ran.borrow());
+    assert_eq!(outcome.output(), Some("type,resource\napply_start,web\n"));
+    assert!(destination.0.borrow().is_empty());
+}

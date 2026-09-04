@@ -1,6 +1,6 @@
 use console::Style;
 use serde::Serialize;
-use standout::{OutputMode, Renderer, Theme};
+use standout::{Renderer, Representation, Theme};
 
 #[derive(Serialize)]
 struct Empty {}
@@ -11,7 +11,7 @@ fn test_nesting_complex() {
         .add("title", Style::new().bold())
         .add("critical", Style::new().red());
 
-    let mut renderer = Renderer::with_output(theme, OutputMode::Term).unwrap();
+    let mut renderer = Renderer::with_output(theme, Representation::Human).unwrap();
 
     renderer
         .add_template("inner", "Inner: [critical]CRIT[/critical]")

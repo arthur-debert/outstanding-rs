@@ -7,6 +7,7 @@ use clap::Command;
 use standout::cli::FnHandler;
 use standout::cli::{App, CommandContext, GroupBuilder, HandlerResult, Output};
 use standout::input::questionnaire::QuestionnaireInput;
+use standout::ColorPolicy;
 use standout_fixtures::derive_surface::{app, command, Commands, ProvisionAnswers};
 use standout_test::TestHarness;
 
@@ -29,19 +30,22 @@ fn derive_registers_kebab_case_and_renamed_commands() {
 
 #[test]
 fn handler_function_runs_under_the_derive() {
-    let result =
-        TestHarness::new()
-            .text_output()
-            .run(&app(), command(), ["unitctl", "list-units", "--all"]);
+    let result = TestHarness::new().color(ColorPolicy::Never).run(
+        &app(),
+        command(),
+        ["unitctl", "list-units", "--all"],
+    );
     result.assert_success();
     assert_eq!(result.stdout(), "ssh, cron");
 }
 
 #[test]
 fn handler_function_runs_under_a_renamed_variant() {
-    let result = TestHarness::new()
-        .text_output()
-        .run(&app(), command(), ["unitctl", "about-this"]);
+    let result = TestHarness::new().color(ColorPolicy::Never).run(
+        &app(),
+        command(),
+        ["unitctl", "about-this"],
+    );
     result.assert_success();
     assert_eq!(result.stdout(), "unitctl");
 }
@@ -57,7 +61,7 @@ fn handler_function_runs_under_a_silent_variant() {
 #[serial_test::serial(questionnaire)]
 fn handler_function_drives_a_questionnaire_command() {
     let result = TestHarness::new()
-        .text_output()
+        .color(ColorPolicy::Never)
         .fixture("answers.txt", answer_sheet("db-1"))
         .run(
             &app(),
@@ -73,10 +77,11 @@ fn handler_function_runs_under_a_keyword_named_variant() {
     let builder = Commands::dispatch_config()(GroupBuilder::new());
     assert!(builder.contains("move"));
 
-    let result =
-        TestHarness::new()
-            .text_output()
-            .run(&app(), command(), ["unitctl", "move", "--type"]);
+    let result = TestHarness::new().color(ColorPolicy::Never).run(
+        &app(),
+        command(),
+        ["unitctl", "move", "--type"],
+    );
     result.assert_success();
     assert_eq!(result.stdout(), "typed");
 }

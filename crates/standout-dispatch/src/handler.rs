@@ -1,7 +1,7 @@
 use crate::artifact::{Artifact, ArtifactRun};
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::hooks::HookPhase;
-use crate::stream::EntryStream;
+use crate::results::{NoEvents, Results};
 use crate::verify::ExpectedArg;
 use clap::ArgMatches;
 use serde::Serialize;
@@ -85,7 +85,6 @@ pub struct CommandContext {
     pub command_path: Vec<String>,
     pub app_state: Rc<Extensions>,
     pub extensions: Extensions,
-    pub stream: EntryStream,
 }
 impl CommandContext {
     pub fn new(command_path: Vec<String>, app_state: Rc<Extensions>) -> Self {
@@ -93,16 +92,7 @@ impl CommandContext {
             command_path,
             app_state,
             extensions: Extensions::new(),
-            stream: EntryStream::discarding(),
         }
-    }
-    pub fn with_stream(mut self, stream: EntryStream) -> Self {
-        self.stream = stream;
-        self
-    }
-    /// Live under `ndjson`, discarding in every other mode.
-    pub fn stream(&self) -> &EntryStream {
-        &self.stream
     }
 }
 impl Default for CommandContext {
@@ -111,7 +101,6 @@ impl Default for CommandContext {
             command_path: Vec::new(),
             app_state: Rc::new(Extensions::new()),
             extensions: Extensions::new(),
-            stream: EntryStream::discarding(),
         }
     }
 }
@@ -182,6 +171,149 @@ impl<T: Serialize> Output<T> {
     }
 }
 pub type HandlerResult<T> = Result<Output<T>, anyhow::Error>;
+
+/// What a command that declares events returns once the events are done: they
+/// already carried the run's results, so a payload has nowhere left to go.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum Summary<T: Serialize> {
+    Render(T),
+    Silent,
+    /// Emitted as `summary` alone would be; the process exits with `status`.
+    WithStatus {
+        summary: Box<Summary<T>>,
+        status: ExitStatus,
+    },
+}
+
+impl<T: Serialize> Summary<T> {
+    /// A signal beside the result, never a failure; a later call replaces the earlier status.
+    pub fn with_exit_status(self, status: ExitStatus) -> Self {
+        let (summary, _) = self.split_exit_status();
+        Summary::WithStatus {
+            summary: Box::new(summary),
+            status,
+        }
+    }
+
+    pub fn split_exit_status(self) -> (Self, Option<ExitStatus>) {
+        match self {
+            Summary::WithStatus { summary, status } => {
+                (summary.split_exit_status().0, Some(status))
+            }
+            other => (other, None),
+        }
+    }
+
+    pub fn exit_status(&self) -> ExitStatus {
+        match self {
+            Summary::WithStatus { status, .. } => *status,
+            _ => ExitStatus::SUCCESS,
+        }
+    }
+
+    pub fn map_render(self, f: impl FnOnce(T) -> T) -> Self {
+        match self {
+            Summary::Render(data) => Summary::Render(f(data)),
+            Summary::WithStatus { summary, status } => Summary::WithStatus {
+                summary: Box::new(summary.map_render(f)),
+                status,
+            },
+            other => other,
+        }
+    }
+
+    fn declared(&self) -> &Self {
+        match self {
+            Summary::WithStatus { summary, .. } => summary.declared(),
+            other => other,
+        }
+    }
+
+    pub fn is_render(&self) -> bool {
+        matches!(self.declared(), Summary::Render(_))
+    }
+
+    pub fn is_silent(&self) -> bool {
+        matches!(self.declared(), Summary::Silent)
+    }
+}
+
+impl<T: Serialize> From<Summary<T>> for Output<T> {
+    fn from(summary: Summary<T>) -> Self {
+        match summary {
+            Summary::Render(data) => Output::Render(data),
+            Summary::Silent => Output::Silent,
+            Summary::WithStatus { summary, status } => Output::WithStatus {
+                output: Box::new(Output::from(*summary)),
+                status,
+            },
+        }
+    }
+}
+
+pub type SummaryResult<T> = Result<Summary<T>, anyhow::Error>;
+
+#[diagnostic::on_unimplemented(
+    message = "a command that declares events returns a `Summary`, not an `Output`",
+    note = "the events carried the run's results already, so a summary is `Render` or `Silent`"
+)]
+pub trait IntoSummaryResult<T: Serialize> {
+    fn into_summary_result(self) -> SummaryResult<T>;
+}
+
+#[diagnostic::do_not_recommend]
+impl<T, E> IntoSummaryResult<T> for Result<T, E>
+where
+    T: Serialize,
+    E: Into<anyhow::Error>,
+{
+    fn into_summary_result(self) -> SummaryResult<T> {
+        self.map(Summary::Render).map_err(Into::into)
+    }
+}
+
+impl<T, E> IntoSummaryResult<T> for Result<Summary<T>, E>
+where
+    T: Serialize,
+    E: Into<anyhow::Error>,
+{
+    fn into_summary_result(self) -> SummaryResult<T> {
+        self.map_err(Into::into)
+    }
+}
+
+mod outcome {
+    pub trait Sealed {}
+}
+
+/// What `Handler::handle` may return, tied to the command's event type:
+/// `Output<T>` is an outcome only for `NoEvents`, so a command that declares
+/// events has `Summary<T>` and no payload variant to return.
+#[diagnostic::on_unimplemented(
+    message = "a command that declares events returns `Summary<{T}>`, not `Output<{T}>`",
+    note = "the events carried the run's results already, so a summary is `Render` or `Silent`"
+)]
+pub trait HandlerOutcome<T: Serialize, E: Serialize + 'static>: outcome::Sealed {
+    fn into_output(self) -> Output<T>;
+}
+
+impl<T: Serialize> outcome::Sealed for Output<T> {}
+
+impl<T: Serialize> outcome::Sealed for Summary<T> {}
+
+impl<T: Serialize> HandlerOutcome<T, NoEvents> for Output<T> {
+    fn into_output(self) -> Output<T> {
+        self
+    }
+}
+
+impl<T: Serialize, E: Serialize + 'static> HandlerOutcome<T, E> for Summary<T> {
+    fn into_output(self) -> Output<T> {
+        Output::from(self)
+    }
+}
+
 pub trait IntoHandlerResult<T: Serialize> {
     fn into_handler_result(self) -> HandlerResult<T>;
 }
@@ -312,7 +444,6 @@ pub enum SuccessKind {
     Command,
     ClapHelp,
     ClapVersion,
-    PagedHelp,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -339,6 +470,7 @@ pub struct RunOutput {
     text: String,
     kind: SuccessKind,
     status: ExitStatus,
+    warnings_included: bool,
 }
 impl RunOutput {
     pub fn command(text: impl Into<String>) -> Self {
@@ -346,9 +478,6 @@ impl RunOutput {
     }
     pub fn clap_help(text: impl Into<String>) -> Self {
         Self::new(text, SuccessKind::ClapHelp)
-    }
-    pub fn paged_help(text: impl Into<String>) -> Self {
-        Self::new(text, SuccessKind::PagedHelp)
     }
     pub fn clap_version(text: impl Into<String>) -> Self {
         Self::new(text, SuccessKind::ClapVersion)
@@ -358,11 +487,21 @@ impl RunOutput {
             text: text.into(),
             kind,
             status: ExitStatus::SUCCESS,
+            warnings_included: false,
         }
     }
     pub fn with_exit_status(mut self, status: ExitStatus) -> Self {
         self.status = status;
         self
+    }
+    /// Marks output whose document already carries the run's warning records,
+    /// so the framework neither appends them nor renders them to stderr.
+    pub fn with_warnings_included(mut self, included: bool) -> Self {
+        self.warnings_included = included;
+        self
+    }
+    pub const fn warnings_included(&self) -> bool {
+        self.warnings_included
     }
     pub fn as_str(&self) -> &str {
         &self.text
@@ -649,9 +788,20 @@ impl DispatchResult {
     }
 }
 pub trait Handler {
+    /// The type of the values the command produces while it runs, or
+    /// [`NoEvents`] for a command that produces none, which is what
+    /// [`emits_events`](crate::emits_events) reads.
+    type Event: Serialize + 'static;
     type Output: Serialize;
-    fn handle(&mut self, matches: &ArgMatches, ctx: &CommandContext)
-        -> HandlerResult<Self::Output>;
+    /// [`Output`] for a batch command, [`Summary`] for one that declares
+    /// events: [`HandlerOutcome`] admits the first only under [`NoEvents`].
+    type Outcome: HandlerOutcome<Self::Output, Self::Event>;
+    fn handle(
+        &mut self,
+        matches: &ArgMatches,
+        ctx: &CommandContext,
+        results: &mut Results<Self::Event>,
+    ) -> Result<Self::Outcome, anyhow::Error>;
     fn expected_args(&self) -> Vec<ExpectedArg> {
         Vec::new()
     }
@@ -682,9 +832,61 @@ where
     R: IntoHandlerResult<T>,
     T: Serialize,
 {
+    type Event = NoEvents;
     type Output = T;
-    fn handle(&mut self, matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<T> {
+    type Outcome = Output<T>;
+    fn handle(
+        &mut self,
+        matches: &ArgMatches,
+        ctx: &CommandContext,
+        _results: &mut Results<NoEvents>,
+    ) -> HandlerResult<T> {
         (self.f)(matches, ctx).into_handler_result()
+    }
+}
+/// The adapter behind a three-argument closure, whose third parameter is the
+/// command's typed results channel, so `Event` is the closure's event type.
+pub struct EventsFnHandler<F, E, T, R = SummaryResult<T>>
+where
+    E: Serialize + 'static,
+    T: Serialize,
+{
+    f: F,
+    _event: std::marker::PhantomData<fn(E)>,
+    _phantom: std::marker::PhantomData<fn() -> (T, R)>,
+}
+impl<F, E, T, R> EventsFnHandler<F, E, T, R>
+where
+    F: FnMut(&ArgMatches, &CommandContext, &mut Results<E>) -> R,
+    R: IntoSummaryResult<T>,
+    E: Serialize + 'static,
+    T: Serialize,
+{
+    pub fn new(f: F) -> Self {
+        Self {
+            f,
+            _event: std::marker::PhantomData,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+impl<F, E, T, R> Handler for EventsFnHandler<F, E, T, R>
+where
+    F: FnMut(&ArgMatches, &CommandContext, &mut Results<E>) -> R,
+    R: IntoSummaryResult<T>,
+    E: Serialize + 'static,
+    T: Serialize,
+{
+    type Event = E;
+    type Output = T;
+    type Outcome = Summary<T>;
+    fn handle(
+        &mut self,
+        matches: &ArgMatches,
+        ctx: &CommandContext,
+        results: &mut Results<E>,
+    ) -> SummaryResult<T> {
+        (self.f)(matches, ctx, results).into_summary_result()
     }
 }
 pub struct SimpleFnHandler<F, T, R = HandlerResult<T>>
@@ -713,8 +915,15 @@ where
     R: IntoHandlerResult<T>,
     T: Serialize,
 {
+    type Event = NoEvents;
     type Output = T;
-    fn handle(&mut self, matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<T> {
+    type Outcome = Output<T>;
+    fn handle(
+        &mut self,
+        matches: &ArgMatches,
+        _ctx: &CommandContext,
+        _results: &mut Results<NoEvents>,
+    ) -> HandlerResult<T> {
         (self.f)(matches).into_handler_result()
     }
 }
@@ -729,10 +938,28 @@ mod tests {
             command_path: vec!["config".into(), "get".into()],
             app_state: Rc::new(Extensions::new()),
             extensions: Extensions::new(),
-            stream: EntryStream::discarding(),
         };
         assert_eq!(ctx.command_path, vec!["config", "get"]);
     }
+    #[derive(Debug, thiserror::Error)]
+    #[error("the store refused")]
+    struct StoreRefused;
+
+    #[test]
+    fn a_summary_carrying_an_error_of_its_own_converts_to_a_summary_result() {
+        let rendered: Result<Summary<u8>, StoreRefused> = Ok(Summary::Render(7));
+        assert!(matches!(
+            rendered.into_summary_result(),
+            Ok(Summary::Render(7))
+        ));
+
+        let refused: Result<Summary<u8>, StoreRefused> = Err(StoreRefused);
+        assert_eq!(
+            refused.into_summary_result().unwrap_err().to_string(),
+            "the store refused"
+        );
+    }
+
     #[test]
     fn external_failure_rejects_success_and_preserves_metadata() {
         assert_eq!(
@@ -832,7 +1059,6 @@ mod tests {
             command_path: vec!["list".into()],
             app_state: app_state.clone(),
             extensions: Extensions::new(),
-            stream: EntryStream::discarding(),
         };
         let db = ctx.app_state.get::<Database>().unwrap();
         assert_eq!(db.url, "postgres://localhost");
@@ -849,7 +1075,6 @@ mod tests {
             command_path: vec![],
             app_state: Rc::new(app_state),
             extensions: Extensions::new(),
-            stream: EntryStream::discarding(),
         };
         assert!(ctx.app_state.get_required::<Present>().is_ok());
         #[derive(Debug)]
@@ -1089,7 +1314,7 @@ mod tests {
         });
         let ctx = CommandContext::default();
         let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
-        let result = handler.handle(&matches, &ctx);
+        let result = handler.handle(&matches, &ctx, &mut Results::discarding());
         assert!(result.is_ok());
     }
     #[test]
@@ -1101,9 +1326,9 @@ mod tests {
         });
         let ctx = CommandContext::default();
         let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
-        let _ = handler.handle(&matches, &ctx);
-        let _ = handler.handle(&matches, &ctx);
-        let result = handler.handle(&matches, &ctx);
+        let _ = handler.handle(&matches, &ctx, &mut Results::discarding());
+        let _ = handler.handle(&matches, &ctx, &mut Results::discarding());
+        let result = handler.handle(&matches, &ctx, &mut Results::discarding());
         assert!(result.is_ok());
         if let Ok(Output::Render(count)) = result {
             assert_eq!(count, 3);
@@ -1168,13 +1393,43 @@ mod tests {
         }
     }
     #[test]
+    fn a_summary_becomes_the_output_the_presentation_pipeline_consumes() {
+        assert!(Output::from(Summary::Render("done".to_string())).is_render());
+        assert!(Output::from(Summary::<String>::Silent).is_silent());
+
+        let carried =
+            Output::from(Summary::Render("done".to_string()).with_exit_status(ExitStatus::from(2)));
+        assert_eq!(carried.exit_status(), ExitStatus::from(2));
+        assert!(carried.is_render());
+    }
+
+    #[test]
+    fn a_later_exit_status_on_a_summary_replaces_the_earlier_one() {
+        let summary = Summary::<String>::Silent
+            .with_exit_status(ExitStatus::from(2))
+            .with_exit_status(ExitStatus::from(3));
+        let (declared, status) = summary.split_exit_status();
+        assert_eq!(status, Some(ExitStatus::from(3)));
+        assert!(declared.is_silent());
+    }
+
+    #[test]
+    fn a_plain_value_from_an_emitting_closure_becomes_a_rendered_summary() {
+        use super::IntoSummaryResult;
+        let summary = Ok::<_, anyhow::Error>("hello".to_string())
+            .into_summary_result()
+            .unwrap();
+        assert!(matches!(summary, Summary::Render(ref s) if s == "hello"));
+    }
+
+    #[test]
     fn test_fn_handler_with_auto_wrap() {
         let mut handler = FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
             Ok::<_, anyhow::Error>("auto-wrapped".to_string())
         });
         let ctx = CommandContext::default();
         let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
-        let result = handler.handle(&matches, &ctx);
+        let result = handler.handle(&matches, &ctx, &mut Results::discarding());
         assert!(result.is_ok());
         match result.unwrap() {
             Output::Render(s) => assert_eq!(s, "auto-wrapped"),
@@ -1187,7 +1442,7 @@ mod tests {
             FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::<()>::Silent));
         let ctx = CommandContext::default();
         let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
-        let result = handler.handle(&matches, &ctx);
+        let result = handler.handle(&matches, &ctx, &mut Results::discarding());
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), Output::Silent));
     }
@@ -1206,7 +1461,7 @@ mod tests {
         });
         let ctx = CommandContext::default();
         let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
-        let result = handler.handle(&matches, &ctx);
+        let result = handler.handle(&matches, &ctx, &mut Results::discarding());
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -1221,7 +1476,7 @@ mod tests {
         });
         let ctx = CommandContext::default();
         let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
-        let result = handler.handle(&matches, &ctx);
+        let result = handler.handle(&matches, &ctx, &mut Results::discarding());
         assert!(result.is_ok());
         match result.unwrap() {
             Output::Render(s) => assert_eq!(s, "no context needed"),
@@ -1243,7 +1498,7 @@ mod tests {
                     .action(clap::ArgAction::SetTrue),
             )
             .get_matches_from(vec!["test", "-v"]);
-        let result = handler.handle(&matches, &ctx);
+        let result = handler.handle(&matches, &ctx, &mut Results::discarding());
         assert!(result.is_ok());
         match result.unwrap() {
             Output::Render(v) => assert!(v),
@@ -1256,7 +1511,7 @@ mod tests {
         let mut handler = SimpleFnHandler::new(|_m: &ArgMatches| Ok(Output::<()>::Silent));
         let ctx = CommandContext::default();
         let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
-        let result = handler.handle(&matches, &ctx);
+        let result = handler.handle(&matches, &ctx, &mut Results::discarding());
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), Output::Silent));
     }
@@ -1268,7 +1523,7 @@ mod tests {
         });
         let ctx = CommandContext::default();
         let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
-        let result = handler.handle(&matches, &ctx);
+        let result = handler.handle(&matches, &ctx, &mut Results::discarding());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("simple error"));
     }
@@ -1282,9 +1537,9 @@ mod tests {
         });
         let ctx = CommandContext::default();
         let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
-        let _ = handler.handle(&matches, &ctx);
-        let _ = handler.handle(&matches, &ctx);
-        let result = handler.handle(&matches, &ctx);
+        let _ = handler.handle(&matches, &ctx, &mut Results::discarding());
+        let _ = handler.handle(&matches, &ctx, &mut Results::discarding());
+        let result = handler.handle(&matches, &ctx, &mut Results::discarding());
         assert!(result.is_ok());
         match result.unwrap() {
             Output::Render(n) => assert_eq!(n, 3),

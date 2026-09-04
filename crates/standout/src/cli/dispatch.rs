@@ -7,6 +7,7 @@ use crate::cli::builder::{SharedTemplateEngine, TemplateAbsence, TemplateRef};
 use crate::cli::handler::Output as HandlerOutput;
 use crate::cli::handler::{
     AppFailure, CommandContext, Diagnostic, ExitStatus, ExternalFailure, RunError, RunErrorKind,
+    RunRecorder, StreamSink,
 };
 use crate::cli::hooks::{ArtifactOutput, HookError, Hooks};
 use crate::context::ContextRegistry;
@@ -26,9 +27,20 @@ pub enum DispatchOutput {
     Binary(Vec<u8>, String),
     Artifact {
         output: ArtifactOutput,
-        request: Box<RenderRequest>,
+        /// What the artifact's report renders through, if the run ends with
+        /// one. The post-output hooks can still add a report or take one away,
+        /// so nothing here is resolved until they have returned.
+        render: Box<PendingRender>,
     },
     Silent {
+        status: ExitStatus,
+    },
+    /// An incremental command under `json` or `yaml`: its retained event
+    /// records, then the summary's `result` record. The framework appends the
+    /// run's warning records only if the post-output hooks return the document
+    /// unchanged. CSV, whose rows are the events alone, arrives as `Text`.
+    Records {
+        records: Vec<serde_json::Value>,
         status: ExitStatus,
     },
 }
@@ -74,8 +86,38 @@ pub(crate) fn payload_without_a_stream(output: &str) -> RunError {
     )
 }
 
+/// A post-output hook hands back a `RenderedOutput`, which it may build as
+/// `Binary` or `Artifact`, and it builds it while the run is under way. On a
+/// command whose event type is not `NoEvents` the events already carried the
+/// run's results, so a payload from the hook would be a second document sharing
+/// one file or one stdout. The handler's own return cannot reach this shape:
+/// `Handler::Outcome` is a `Summary` for every event type but `NoEvents`.
+pub(crate) fn reject_payload_from_a_post_output_hook(
+    emits_events: bool,
+    is_binary: bool,
+    is_artifact: bool,
+) -> Result<(), RunError> {
+    if !emits_events {
+        return Ok(());
+    }
+    let payload = if is_binary {
+        "binary"
+    } else if is_artifact {
+        "artifact"
+    } else {
+        return Ok(());
+    };
+    Err(RunError::new(
+        format!(
+            "{payload} output was produced by the post_output hook of a command that emits \
+             events; the events carried the run's results, so the hook returns text or silence"
+        ),
+        RunErrorKind::Render,
+    ))
+}
+
 pub(crate) fn reject_payload_under_stream(
-    output_mode: crate::OutputMode,
+    output_mode: crate::Representation,
     is_binary: bool,
     is_artifact: bool,
 ) -> Result<(), RunError> {
@@ -96,7 +138,7 @@ fn render_time_template(
     command_path: &str,
     template: &TemplateRef,
     template_registry: Option<&Rc<crate::TemplateRegistry>>,
-    output_mode: crate::OutputMode,
+    output_mode: crate::Representation,
 ) -> Result<standout_render::TemplateRef, RunError> {
     match template {
         TemplateRef::Named(name) => {
@@ -116,13 +158,11 @@ fn render_time_template(
                 TemplateAbsence::Silent | TemplateAbsence::Binary => Err(
                     absent_template_render_error(command_path, *reason, output_mode),
                 ),
+                // A structured-only command has no template, so its human
+                // representation is the JSON a bare invocation serializes; only
+                // the style-tag diagnostic view has nothing to show.
                 TemplateAbsence::StructuredOnly => {
-                    if matches!(
-                        output_mode,
-                        crate::OutputMode::Term
-                            | crate::OutputMode::Text
-                            | crate::OutputMode::TermDebug
-                    ) {
+                    if output_mode.is_debug() {
                         return Err(absent_template_render_error(
                             command_path,
                             *reason,
@@ -136,36 +176,58 @@ fn render_time_template(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_render_request(
-    command_path: &str,
-    json_data: serde_json::Value,
-    template: &TemplateRef,
-    theme: &Theme,
-    context_registry: &ContextRegistry,
-    template_engine: &SharedTemplateEngine,
-    template_registry: Option<&Rc<crate::TemplateRegistry>>,
-    output_mode: crate::OutputMode,
-    structured_output_projection: Option<&StructuredOutputProjection>,
+/// Everything a render needs but its data and its resolved template: a
+/// post-output hook can add a report to an artifact that returned without one,
+/// so only a run that ends with a report resolves a template.
+pub(crate) struct PendingRender {
+    command_path: String,
+    template: TemplateRef,
+    theme: Theme,
+    context_registry: ContextRegistry,
+    template_engine: SharedTemplateEngine,
+    template_registry: Option<Rc<crate::TemplateRegistry>>,
+    output_mode: crate::Representation,
+    color_policy: ColorPolicy,
+    csv_projection: Option<crate::CsvProjection>,
     target: TargetProperties,
     warnings: Option<standout_render::warnings::WarningBuffer>,
-) -> Result<RenderRequest, RunError> {
-    let template = render_time_template(command_path, template, template_registry, output_mode)?;
-    Ok(RenderRequest {
-        data: json_data,
-        template,
-        theme: theme.clone(),
-        format: output_mode,
-        color_policy: ColorPolicy::Auto,
-        target,
-        engine: template_engine.clone(),
-        registry: template_registry.cloned(),
-        context_registry: Some(context_registry.clone()),
-        csv_projection: structured_output_projection
-            .map(|projection| projection.csv_projection().clone()),
-        extras: HashMap::new(),
-        warnings,
-    })
+}
+
+impl PendingRender {
+    fn request(
+        &self,
+        data: serde_json::Value,
+        template: standout_render::TemplateRef,
+    ) -> RenderRequest {
+        RenderRequest {
+            data,
+            template,
+            theme: self.theme.clone(),
+            format: self.output_mode,
+            color_policy: self.color_policy,
+            target: self.target,
+            engine: self.template_engine.clone(),
+            registry: self.template_registry.clone(),
+            context_registry: Some(self.context_registry.clone()),
+            csv_projection: self.csv_projection.clone(),
+            extras: HashMap::new(),
+            warnings: self.warnings.clone(),
+        }
+    }
+
+    pub(crate) fn resolved(&self, data: serde_json::Value) -> Result<RenderRequest, RunError> {
+        let template = render_time_template(
+            &self.command_path,
+            &self.template,
+            self.template_registry.as_ref(),
+            self.output_mode,
+        )?;
+        Ok(self.request(data, template))
+    }
+
+    fn untemplated(&self, data: serde_json::Value) -> RenderRequest {
+        self.request(data, standout_render::TemplateRef::Absent)
+    }
 }
 
 fn render_via_request(request: &RenderRequest) -> Result<(String, String), RunError> {
@@ -180,7 +242,7 @@ fn render_error(error: standout_render::RenderError) -> RunError {
 fn absent_template_render_error(
     command_path: &str,
     reason: TemplateAbsence,
-    output_mode: crate::OutputMode,
+    output_mode: crate::Representation,
 ) -> RunError {
     let reason = match reason {
         TemplateAbsence::Silent => "silent",
@@ -215,15 +277,18 @@ pub(crate) fn render_handler_output<T: Serialize>(
     result: crate::cli::HandlerResult<T>,
     matches: &ArgMatches,
     ctx: &CommandContext,
+    recorder: &RunRecorder,
     hooks: Option<&Hooks>,
     template: &TemplateRef,
     theme: &Theme,
     context_registry: &ContextRegistry,
     template_engine: &SharedTemplateEngine,
     template_registry: Option<&Rc<crate::TemplateRegistry>>,
-    output_mode: crate::OutputMode,
+    output_mode: crate::Representation,
+    color_policy: ColorPolicy,
     structured_output_projection: Option<&StructuredOutputProjection>,
     target: TargetProperties,
+    document_records: Option<Vec<serde_json::Value>>,
 ) -> Result<DispatchOutput, RunError> {
     let (output, status) = match result {
         Ok(output) => output.split_exit_status(),
@@ -237,27 +302,47 @@ pub(crate) fn render_handler_output<T: Serialize>(
         .extensions
         .get::<standout_render::warnings::WarningBuffer>()
         .cloned();
-    let request_for = |json_data: serde_json::Value| {
-        build_render_request(
-            &command_path,
-            json_data,
-            template,
-            theme,
-            context_registry,
-            template_engine,
-            template_registry,
-            output_mode,
-            structured_output_projection,
-            target,
-            warnings.clone(),
-        )
+    let render = PendingRender {
+        command_path,
+        template: template.clone(),
+        theme: theme.clone(),
+        context_registry: context_registry.clone(),
+        template_engine: template_engine.clone(),
+        template_registry: template_registry.cloned(),
+        output_mode,
+        color_policy,
+        csv_projection: structured_output_projection
+            .map(|projection| projection.csv_projection().clone()),
+        target,
+        warnings,
+    };
+
+    let event_document = |events: Vec<serde_json::Value>,
+                          summary: Option<serde_json::Value>|
+     -> Result<DispatchOutput, RunError> {
+        if output_mode == crate::Representation::Csv {
+            let request = render.untemplated(serde_json::Value::Array(events));
+            let (formatted, raw) = render_via_request(&request)?;
+            return Ok(DispatchOutput::Text {
+                formatted,
+                raw,
+                status,
+            });
+        }
+        let mut records = events;
+        records.extend(summary.map(standout_render::result_record));
+        Ok(DispatchOutput::Records { records, status })
     };
 
     match output {
         HandlerOutput::Render(data) => {
             let json_data = serialize_handler_data(&data)?;
             let json_data = run_post_dispatch_hooks(json_data, matches, ctx, hooks)?;
-            let request = request_for(json_data)?;
+            recorder.record(json_data.clone());
+            if let Some(events) = document_records {
+                return event_document(events, Some(json_data));
+            }
+            let request = render.resolved(json_data)?;
             let (formatted, raw) = render_via_request(&request)?;
             Ok(DispatchOutput::Text {
                 formatted,
@@ -265,7 +350,10 @@ pub(crate) fn render_handler_output<T: Serialize>(
                 status,
             })
         }
-        HandlerOutput::Silent => Ok(DispatchOutput::Silent { status }),
+        HandlerOutput::Silent => match document_records {
+            Some(events) => event_document(events, None),
+            None => Ok(DispatchOutput::Silent { status }),
+        },
         HandlerOutput::Binary { data, filename } => Ok(DispatchOutput::Binary(data, filename)),
         HandlerOutput::Artifact(artifact) => {
             let (bytes, suggested_destination, stdout_allowed, report) = artifact.into_parts();
@@ -278,9 +366,8 @@ pub(crate) fn render_handler_output<T: Serialize>(
                 None => None,
             };
 
-            let request = request_for(serde_json::Value::Null)?;
             Ok(DispatchOutput::Artifact {
-                request: Box::new(request),
+                render: Box::new(render),
                 output: ArtifactOutput {
                     bytes,
                     suggested_destination,
@@ -373,13 +460,19 @@ pub(crate) fn hook_run_error(mut error: HookError, phase: crate::cli::HookPhase)
         .with_source(error)
 }
 
+/// The recorder and the sink are parameters rather than `CommandContext`
+/// members: a handler that could reach them could record or write values the
+/// typed `Results` channel never saw.
 pub type DispatchFn = Rc<
     RefCell<
         dyn FnMut(
             &ArgMatches,
             &CommandContext,
+            &RunRecorder,
+            &StreamSink,
             Option<&Hooks>,
-            crate::OutputMode,
+            crate::Representation,
+            ColorPolicy,
             &crate::Theme,
             TargetProperties,
         ) -> Result<DispatchOutput, RunError>,
@@ -391,10 +484,23 @@ pub fn dispatch(
     dispatch_fn: &DispatchFn,
     matches: &ArgMatches,
     ctx: &CommandContext,
+    recorder: &RunRecorder,
+    sink: &StreamSink,
     hooks: Option<&Hooks>,
-    output_mode: crate::OutputMode,
+    output_mode: crate::Representation,
+    color_policy: ColorPolicy,
     theme: &crate::Theme,
     target: TargetProperties,
 ) -> Result<DispatchOutput, RunError> {
-    (dispatch_fn.borrow_mut())(matches, ctx, hooks, output_mode, theme, target)
+    (dispatch_fn.borrow_mut())(
+        matches,
+        ctx,
+        recorder,
+        sink,
+        hooks,
+        output_mode,
+        color_policy,
+        theme,
+        target,
+    )
 }

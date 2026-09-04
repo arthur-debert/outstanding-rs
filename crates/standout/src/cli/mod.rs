@@ -19,6 +19,8 @@ mod config;
 mod default_command;
 mod dispatch;
 mod emit;
+pub(crate) mod events;
+pub(crate) mod pager;
 mod questionnaire;
 mod result;
 
@@ -34,7 +36,7 @@ pub mod hooks;
 pub mod macros;
 
 pub use builder::{App, AppBuilder, STRICT_STYLE_TAGS_ENV};
-pub use config::{MissingConfig, TermOutput, TermSettings};
+pub use config::{MissingConfig, TermColor, TermOutput, TermSettings};
 
 pub use group::{CommandConfig, GroupBuilder};
 
@@ -51,18 +53,21 @@ pub use help::{
 };
 
 pub use handler::{
-    AppFailure, Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext,
-    CommandContextInput, ContractSurface, Diagnostic, DiagnosticKind, DiagnosticPosition,
-    DiagnosticRange, DispatchResult, EntryStream, Envelope, ExitStatus, ExternalFailure, FnHandler,
-    Handler, HandlerResult, InvalidAppStatus, InvalidExternalStatus, Output, OutputKind, RunError,
-    RunErrorKind, RunOutput, Severity, StreamCapture, StreamError, StreamSink, SuccessKind,
+    emits_events, AppFailure, Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun,
+    CommandContext, CommandContextInput, ContractSurface, Delivery, Diagnostic, DiagnosticKind,
+    DiagnosticPosition, DiagnosticRange, DispatchResult, EmitError, Envelope, EventsFnHandler,
+    ExitStatus, ExternalFailure, FnHandler, Handler, HandlerOutcome, HandlerResult,
+    InvalidAppStatus, InvalidExternalStatus, NoEvents, Output, OutputKind, Results, RunError,
+    RunErrorKind, RunOutput, RunRecorder, Severity, StreamCapture, StreamSink, SuccessKind,
+    Summary, SummaryResult,
 };
 
 pub use help::{HelpArg, HelpDocument, HelpSubcommand};
 
 pub use emit::{
     carries_diagnostic_document, carries_warning_entries, emit_run_result, emit_warning_entries,
-    parse_diagnostic, render_diagnostic, DiagnosticDocumentError,
+    parse_diagnostic, render_diagnostic, warning_records, warnings_delivered_on_stdout,
+    DiagnosticDocumentError,
 };
 
 pub use hooks::{ArtifactOutput, HookError, HookPhase, Hooks, RenderedOutput};

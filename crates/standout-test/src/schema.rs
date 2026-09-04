@@ -11,7 +11,7 @@
 //! to accept an intentional change.
 
 use serde_json::Value;
-use standout_render::OutputMode;
+use standout_render::Representation;
 use std::path::{Path, PathBuf};
 
 pub(crate) const UPDATE_ENV: &str = "STANDOUT_UPDATE_SNAPSHOTS";
@@ -41,7 +41,7 @@ pub(crate) fn schema_of(value: &Value) -> Value {
     }
 }
 
-pub(crate) fn document_value(output_mode: OutputMode, stdout: &str) -> Result<Value, String> {
+pub(crate) fn document_value(output_mode: Representation, stdout: &str) -> Result<Value, String> {
     standout_render::deserialize_document::<Value>(output_mode, stdout).map_err(|error| {
         format!(
             "stdout is not a {output_mode:?} document ({error}):\n--- stdout ---\n{stdout}\n--------------"
@@ -95,7 +95,7 @@ fn write_snapshot(path: &Path, rendered: &str) -> Result<(), String> {
 }
 
 #[track_caller]
-pub(crate) fn assert_schema_snapshot(output_mode: OutputMode, stdout: &str, name: &str) {
+pub(crate) fn assert_schema_snapshot(output_mode: Representation, stdout: &str, name: &str) {
     let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")
         .map(PathBuf::from)
         .expect("assert_schema_snapshot needs CARGO_MANIFEST_DIR, which `cargo test` sets");
@@ -186,10 +186,10 @@ mod tests {
 
     #[test]
     fn the_document_is_read_in_the_runs_mode() {
-        let json = document_value(OutputMode::Json, "{\"a\": 1}").unwrap();
-        let yaml = document_value(OutputMode::Yaml, "a: 1\n").unwrap();
+        let json = document_value(Representation::Json, "{\"a\": 1}").unwrap();
+        let yaml = document_value(Representation::Yaml, "a: 1\n").unwrap();
         assert_eq!(schema_of(&json), schema_of(&yaml));
-        let error = document_value(OutputMode::Text, "hello").unwrap_err();
-        assert!(error.contains("not a Text document"), "{error}");
+        let error = document_value(Representation::Human, "hello").unwrap_err();
+        assert!(error.contains("not a Human document"), "{error}");
     }
 }

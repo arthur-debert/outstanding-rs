@@ -52,10 +52,11 @@ deliberate: an item kept with a stated reason cannot be quietly removed as
 
 ### 2. The structural shape of each `--output` mode's bytes
 
-`--output` accepts `auto`, `term`, `text`, `term-debug`, `json`, `yaml`, `csv`
-and `ndjson`. All eight are classified here.
+`--output` accepts `json`, `yaml`, `csv`, `ndjson` and `term-debug`; the human
+representation has no `--output` name and is what a bare invocation renders.
+All six are classified here.
 
-**Structured modes** (`json`, `yaml`, `csv`, `ndjson`): the document a
+**Structured encodings** (`json`, `yaml`, `csv`, `ndjson`): the document a
 handler's data produces — its field names and its nesting — is contract.
 Changing it changes what a consuming script parses. A document that carries a
 `schema_version` key says which version of that shape it satisfies; see
@@ -64,27 +65,29 @@ records only ([Output Modes](./output-modes.md#csv-output)), and `ndjson` is
 a stream of one object per line whose handler-emitted entries are the
 application's contract with its consumers
 ([Output Modes](./output-modes.md#ndjson-mode)). Where a failure and the
-warnings go under each structured mode is contract as
+warnings go under each structured encoding is contract as
 [Execution Outcomes](./execution-outcomes.md#failures-under-a-structured-mode)
 states it, and so are the diagnostic document's field names
 ([Error Handling](./error-handling.md#the-diagnostic-document)).
 
-**Human modes** (`text`, `term`): the bytes are **not** contract. Themes,
-wording, column widths and layout may change in any release. What is contract
-is the pair of properties a script can rely on without reading words:
+**The human representation**: the bytes are **not** contract. Themes, wording,
+column widths and layout may change in any release. What is contract is the
+pair of properties a script can rely on without reading words:
 
-- *The style transformation.* `text` removes Standout's style tags and adds no
-  ANSI of its own; `term` turns every resolved style tag into ANSI; neither
-  touches ANSI a handler or a template wrote literally
-  ([Term vs Text](./output-modes.md#term-vs-text)).
+- *The style transformation.* A plain style mode removes Standout's style tags
+  and adds no ANSI of its own; an ANSI style mode turns every resolved style
+  tag into escape sequences; neither touches ANSI a handler or a template wrote
+  literally ([Literal escape bytes](./output-modes.md#literal-escape-bytes)).
 - *The split between the streams.* Data goes to stdout; diagnostics and
   warnings go to stderr.
 
-**`auto`** is contract as a *resolution rule* rather than as bytes: it resolves
-to `term` when the destination reports color capability and to `text` when it
-does not, and a `term` request under a never-color policy resolves to `text`.
-What a caller may rely on is which of the two modes it lands in, and then that
-mode's own contract.
+The **style resolution** is contract as a rule rather than as bytes: under an
+`auto` color policy the page carries escape sequences when the destination
+reports color capability and none when it does not, an `always` policy always
+carries them and a `never` policy never does
+([The style decision](./output-modes.md#the-style-decision)). What a caller may
+rely on is which of the two it lands in, and then that style mode's own
+contract.
 
 **`term-debug`** is **internal**. It prints style tags unresolved, as evidence
 for the framework's own snapshots; both that tag vocabulary and its spelling

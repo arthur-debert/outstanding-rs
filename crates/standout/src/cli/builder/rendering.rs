@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use super::{refresh_named_template, App};
 use crate::setup::SetupError;
 use crate::{
-    render_request, ColorPolicy, OutputMode, RenderRequest, TargetProperties, TemplateRef,
+    render_request, ColorPolicy, RenderRequest, Representation, TargetProperties, TemplateRef,
 };
 use standout_render::RegistryError;
 
@@ -13,7 +13,7 @@ impl App {
         &self,
         template: TemplateRef,
         data: &T,
-        mode: OutputMode,
+        mode: Representation,
         mut target: TargetProperties,
     ) -> Result<String, SetupError> {
         target.ambiguous_width = self.ambiguous_width;
@@ -58,7 +58,7 @@ impl App {
         &self,
         template: TemplateRef,
         data: &T,
-        mode: OutputMode,
+        mode: Representation,
         registry: Option<std::rc::Rc<crate::TemplateRegistry>>,
         target: TargetProperties,
     ) -> Result<String, SetupError> {

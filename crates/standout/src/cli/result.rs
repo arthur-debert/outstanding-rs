@@ -1,5 +1,7 @@
-use crate::cli::handler::{DispatchResult, ExitStatus, RunError, RunErrorKind, RunOutput};
-use crate::OutputMode;
+use crate::cli::handler::{
+    Delivery, DispatchResult, ExitStatus, RunError, RunErrorKind, RunOutput, RunRecorder,
+};
+use crate::{ColorPolicy, Representation};
 
 #[must_use = "exit the process with `status`, or otherwise act on the outcome"]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,7 +14,10 @@ pub struct ProcessOutcome {
 pub struct CompletedRun {
     inner: DispatchResult,
     warnings: Vec<String>,
-    output_mode: OutputMode,
+    output_mode: Representation,
+    color_policy: ColorPolicy,
+    results: Vec<serde_json::Value>,
+    delivery: Delivery,
     entries: String,
 }
 
@@ -20,12 +25,17 @@ impl CompletedRun {
     pub fn from_dispatch(
         inner: DispatchResult,
         warnings: Vec<String>,
-        output_mode: OutputMode,
+        output_mode: Representation,
+        color_policy: ColorPolicy,
+        recorder: &RunRecorder,
     ) -> Self {
         Self {
             inner,
             warnings,
             output_mode,
+            color_policy,
+            results: recorder.records(),
+            delivery: recorder.delivery(),
             entries: String::new(),
         }
     }
@@ -39,7 +49,8 @@ impl CompletedRun {
         &self.inner
     }
 
-    /// The `ctx.stream()` lines `run_with` and `dispatch` capture, newlines included.
+    /// The event lines `run_with` and `dispatch` capture as the handler emits
+    /// them, newlines included.
     pub fn entries(&self) -> &str {
         &self.entries
     }
@@ -52,8 +63,22 @@ impl CompletedRun {
         &self.warnings
     }
 
-    pub fn output_mode(&self) -> OutputMode {
+    pub fn output_mode(&self) -> Representation {
         self.output_mode
+    }
+
+    pub fn color_policy(&self) -> ColorPolicy {
+        self.color_policy
+    }
+
+    /// The run's result values as data, whatever representation it selected.
+    pub fn results(&self) -> &[serde_json::Value] {
+        &self.results
+    }
+
+    /// Where the rendered bytes went.
+    pub fn delivery(&self) -> &Delivery {
+        &self.delivery
     }
 }
 
@@ -69,13 +94,12 @@ impl std::ops::Deref for CompletedRun {
 pub enum HelpResult {
     Matches(clap::ArgMatches),
     Help(String),
-    PagedHelp(String),
     Error(clap::Error),
 }
 
 #[derive(Debug)]
 pub(crate) enum HelpDisplay {
-    Rendered { text: String, paged: bool },
+    Rendered { text: String },
     Clap(clap::Error),
     RenderFailed(clap::Error),
 }
@@ -83,8 +107,7 @@ pub(crate) enum HelpDisplay {
 impl From<HelpDisplay> for HelpResult {
     fn from(display: HelpDisplay) -> Self {
         match display {
-            HelpDisplay::Rendered { text, paged: true } => HelpResult::PagedHelp(text),
-            HelpDisplay::Rendered { text, paged: false } => HelpResult::Help(text),
+            HelpDisplay::Rendered { text } => HelpResult::Help(text),
             HelpDisplay::Clap(e) | HelpDisplay::RenderFailed(e) => HelpResult::Error(e),
         }
     }
@@ -93,11 +116,7 @@ impl From<HelpDisplay> for HelpResult {
 impl From<HelpDisplay> for DispatchResult {
     fn from(display: HelpDisplay) -> Self {
         match display {
-            HelpDisplay::Rendered { text, paged } => DispatchResult::Handled(if paged {
-                RunOutput::paged_help(text)
-            } else {
-                RunOutput::clap_help(text)
-            }),
+            HelpDisplay::Rendered { text } => DispatchResult::Handled(RunOutput::clap_help(text)),
             HelpDisplay::Clap(e) if e.use_stderr() => {
                 DispatchResult::Error(RunError::new(e.to_string(), RunErrorKind::ClapUsage))
             }

@@ -4,7 +4,7 @@ use standout::cli::handler::{CommandContext, Output};
 use standout::cli::App;
 use standout::cli::FnHandler;
 use standout::EmbeddedTemplates;
-use standout::OutputMode;
+use standout::Representation;
 
 const TEMPLATES: &[(&str, &str)] = &[("run", "Name: {{ name }}, Count: {{ count }}")];
 
@@ -48,7 +48,7 @@ fn test_app_output_mode_auto() {
         .render_with(
             standout::TemplateRef::Inline((simple_template()).to_string()),
             &TestData::sample(),
-            OutputMode::Auto,
+            Representation::Human,
             standout::TargetProperties::detect(),
         )
         .expect("Render failed");
@@ -76,7 +76,7 @@ fn test_app_output_mode_term() {
         .render_with(
             standout::TemplateRef::Inline((simple_template()).to_string()),
             &TestData::sample(),
-            OutputMode::Term,
+            Representation::Human,
             standout::TargetProperties::detect(),
         )
         .expect("Render failed");
@@ -104,7 +104,7 @@ fn test_app_output_mode_text() {
         .render_with(
             standout::TemplateRef::Inline((simple_template()).to_string()),
             &TestData::sample(),
-            OutputMode::Text,
+            Representation::Human,
             standout::TargetProperties::detect(),
         )
         .expect("Render failed");
@@ -132,7 +132,7 @@ fn test_app_output_mode_json() {
         .render_with(
             standout::TemplateRef::Inline((simple_template()).to_string()),
             &TestData::sample(),
-            OutputMode::Json,
+            Representation::Json,
             standout::TargetProperties::detect(),
         )
         .expect("Render failed");
@@ -161,7 +161,7 @@ fn test_app_output_mode_yaml() {
         .render_with(
             standout::TemplateRef::Inline((simple_template()).to_string()),
             &TestData::sample(),
-            OutputMode::Yaml,
+            Representation::Yaml,
             standout::TargetProperties::detect(),
         )
         .expect("Render failed");
@@ -189,7 +189,7 @@ fn test_app_output_mode_csv() {
         .render_with(
             standout::TemplateRef::Inline((simple_template()).to_string()),
             &TestData::sample(),
-            OutputMode::Csv,
+            Representation::Csv,
             standout::TargetProperties::detect(),
         )
         .expect_err("a nested `items` array is not a flat record")
@@ -201,7 +201,7 @@ fn test_app_output_mode_csv() {
         .render_with(
             standout::TemplateRef::Inline((simple_template()).to_string()),
             &serde_json::json!({ "name": "test", "count": 42 }),
-            OutputMode::Csv,
+            Representation::Csv,
             standout::TargetProperties::detect(),
         )
         .expect("Render failed");
@@ -227,7 +227,7 @@ fn test_local_app_output_mode_auto() {
         .render_with(
             standout::TemplateRef::Inline((simple_template()).to_string()),
             &TestData::sample(),
-            OutputMode::Auto,
+            Representation::Human,
             standout::TargetProperties::detect(),
         )
         .expect("Render failed");
@@ -255,7 +255,7 @@ fn test_local_app_output_mode_term() {
         .render_with(
             standout::TemplateRef::Inline((simple_template()).to_string()),
             &TestData::sample(),
-            OutputMode::Term,
+            Representation::Human,
             standout::TargetProperties::detect(),
         )
         .expect("Render failed");
@@ -283,7 +283,7 @@ fn test_local_app_output_mode_text() {
         .render_with(
             standout::TemplateRef::Inline((simple_template()).to_string()),
             &TestData::sample(),
-            OutputMode::Text,
+            Representation::Human,
             standout::TargetProperties::detect(),
         )
         .expect("Render failed");
@@ -311,7 +311,7 @@ fn test_local_app_output_mode_json() {
         .render_with(
             standout::TemplateRef::Inline((simple_template()).to_string()),
             &TestData::sample(),
-            OutputMode::Json,
+            Representation::Json,
             standout::TargetProperties::detect(),
         )
         .expect("Render failed");
@@ -340,7 +340,7 @@ fn test_local_app_output_mode_yaml() {
         .render_with(
             standout::TemplateRef::Inline((simple_template()).to_string()),
             &TestData::sample(),
-            OutputMode::Yaml,
+            Representation::Yaml,
             standout::TargetProperties::detect(),
         )
         .expect("Render failed");
@@ -368,7 +368,7 @@ fn test_local_app_output_mode_csv() {
         .render_with(
             standout::TemplateRef::Inline((simple_template()).to_string()),
             &TestData::sample(),
-            OutputMode::Csv,
+            Representation::Csv,
             standout::TargetProperties::detect(),
         )
         .expect_err("a nested `items` array is not a flat record")
@@ -397,7 +397,7 @@ fn test_render_inline_json_consistency() {
         .render_with(
             standout::TemplateRef::Inline((simple_template()).to_string()),
             &data,
-            OutputMode::Json,
+            Representation::Json,
             standout::TargetProperties::detect(),
         )
         .expect("First render failed");
@@ -405,7 +405,7 @@ fn test_render_inline_json_consistency() {
         .render_with(
             standout::TemplateRef::Inline((simple_template()).to_string()),
             &data,
-            OutputMode::Json,
+            Representation::Json,
             standout::TargetProperties::detect(),
         )
         .expect("Second render failed");
@@ -437,7 +437,7 @@ fn test_render_inline_text_consistency() {
         .render_with(
             standout::TemplateRef::Inline((simple_template()).to_string()),
             &data,
-            OutputMode::Text,
+            Representation::Human,
             standout::TargetProperties::detect(),
         )
         .expect("First render failed");
@@ -445,7 +445,7 @@ fn test_render_inline_text_consistency() {
         .render_with(
             standout::TemplateRef::Inline((simple_template()).to_string()),
             &data,
-            OutputMode::Text,
+            Representation::Human,
             standout::TargetProperties::detect(),
         )
         .expect("Second render failed");
@@ -481,7 +481,7 @@ fn test_style_tags_in_term_mode() {
         .render_with(
             standout::TemplateRef::Inline((template).to_string()),
             &TestData::sample(),
-            OutputMode::Term,
+            Representation::Human,
             standout::TargetProperties::detect(),
         )
         .expect("Render failed");
@@ -517,7 +517,7 @@ fn test_style_tags_stripped_in_text_mode() {
         .render_with(
             standout::TemplateRef::Inline((template).to_string()),
             &TestData::sample(),
-            OutputMode::Text,
+            Representation::Human,
             standout::TargetProperties::detect(),
         )
         .expect("Render failed");
@@ -555,7 +555,7 @@ fn test_style_tags_kept_in_term_debug_mode() {
         .render_with(
             standout::TemplateRef::Inline((template).to_string()),
             &TestData::sample(),
-            OutputMode::TermDebug,
+            Representation::TermDebug,
             standout::TargetProperties::detect(),
         )
         .expect("Render failed");

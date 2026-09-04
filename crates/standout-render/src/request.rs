@@ -1,8 +1,9 @@
 //! Boundary types for an explicit render: destination facts and the request.
 //!
 //! [`TargetProperties`] is what this invocation's destination looks like.
-//! [`RenderRequest`] is what to render, including those properties and a
-//! resolved [`ColorPolicy`] independent of [`crate::OutputMode`]. The pure
+//! [`RenderRequest`] is what to render, including those properties, the
+//! [`crate::Representation`] to produce and a [`ColorPolicy`] independent of
+//! it. The pure
 //! leaf entry is [`render_request`]; convenience wrappers detect at their
 //! edge, build a request, and delegate here. Detection lives at
 //! [`TargetProperties::detect`].
@@ -19,7 +20,7 @@ use crate::environment::{
     probe_stderr_color_capability, probe_stdout_color_capability, probe_terminal_width,
 };
 use crate::error::RenderError;
-use crate::output::OutputMode;
+use crate::output::{Representation, StyleMode};
 use crate::projection::CsvProjection;
 use crate::template::{
     load_inline_dependencies, load_named_template, render_engine_split_inline,
@@ -60,8 +61,9 @@ impl TargetProperties {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ColorPolicy {
+    #[default]
     Auto,
     Always,
     Never,
@@ -82,7 +84,7 @@ pub struct RenderRequest {
     pub data: serde_json::Value,
     pub template: TemplateRef,
     pub theme: Theme,
-    pub format: OutputMode,
+    pub format: Representation,
     pub color_policy: ColorPolicy,
     pub target: TargetProperties,
     pub engine: SharedTemplateEngine,
@@ -121,56 +123,43 @@ pub fn render_request_split(request: &RenderRequest) -> Result<RenderResult, Ren
     render_from_request(request)
 }
 
-fn resolve_render_format(request: &RenderRequest) -> OutputMode {
-    match request.format {
-        OutputMode::Auto => resolve_style_mode(request),
-        other => other,
+pub(crate) fn resolve_style_mode(
+    representation: Representation,
+    color_policy: ColorPolicy,
+    target: &TargetProperties,
+) -> StyleMode {
+    if representation == Representation::TermDebug {
+        return StyleMode::Debug;
     }
-}
-
-fn resolve_style_mode(request: &RenderRequest) -> OutputMode {
-    if request.format == OutputMode::TermDebug {
-        return OutputMode::TermDebug;
-    }
-    match request.color_policy {
-        ColorPolicy::Never => OutputMode::Text,
-        ColorPolicy::Always => OutputMode::Term,
-        ColorPolicy::Auto => match request.format {
-            OutputMode::Text => OutputMode::Text,
-            OutputMode::Term => OutputMode::Term,
-            OutputMode::Auto => {
-                if request.target.stdout_color_capability {
-                    OutputMode::Term
-                } else {
-                    OutputMode::Text
-                }
+    match color_policy {
+        ColorPolicy::Never => StyleMode::Plain,
+        ColorPolicy::Always => StyleMode::Ansi,
+        ColorPolicy::Auto => {
+            if target.stdout_color_capability {
+                StyleMode::Ansi
+            } else {
+                StyleMode::Plain
             }
-            other => other,
-        },
+        }
     }
 }
 
 fn serialize_structured(
     data: &serde_json::Value,
-    format: OutputMode,
+    format: Representation,
 ) -> Result<RenderResult, RenderError> {
-    let output = match format {
-        OutputMode::Json => serde_json::to_string_pretty(data)?,
-        OutputMode::Yaml => serde_yaml::to_string(data)?,
-        OutputMode::Csv => crate::util::write_csv(data)?,
-        OutputMode::Ndjson => crate::document::result_entry(data)?,
-        _ => unreachable!("serialize_structured requires a structured OutputMode"),
-    };
-    Ok(RenderResult::plain(output))
+    Ok(RenderResult::plain(crate::document::serialize_structured(
+        data, format,
+    )?))
 }
 
 fn render_from_request(request: &RenderRequest) -> Result<RenderResult, RenderError> {
-    if matches!(request.template, TemplateRef::Absent) && request.format == OutputMode::Auto {
-        return serialize_structured(&request.data, OutputMode::Json);
+    if matches!(request.template, TemplateRef::Absent) && request.format == Representation::Human {
+        return serialize_structured(&request.data, Representation::Json);
     }
 
     if request.format.is_structured() {
-        if request.format == OutputMode::Csv {
+        if request.format == Representation::Csv {
             if let Some(projection) = &request.csv_projection {
                 let csv = projection
                     .render(&request.data)
@@ -181,7 +170,7 @@ fn render_from_request(request: &RenderRequest) -> Result<RenderResult, RenderEr
         return serialize_structured(&request.data, request.format);
     }
 
-    let style_mode = resolve_style_mode(request);
+    let style_mode = resolve_style_mode(request.format, request.color_policy, &request.target);
     let empty_registry = ContextRegistry::new();
     let context_registry = request.context_registry.as_ref().unwrap_or(&empty_registry);
     let render_ctx = render_context_from_request(request);
@@ -240,7 +229,8 @@ pub(crate) fn convenience_request(
     template: TemplateRef,
     data: serde_json::Value,
     theme: Theme,
-    format: OutputMode,
+    format: Representation,
+    color_policy: ColorPolicy,
     target: TargetProperties,
     context_registry: Option<ContextRegistry>,
     registry: Option<Rc<TemplateRegistry>>,
@@ -251,7 +241,7 @@ pub(crate) fn convenience_request(
         template,
         theme,
         format,
-        color_policy: ColorPolicy::Auto,
+        color_policy,
         target,
         engine: convenience_engine(),
         registry,
@@ -266,7 +256,8 @@ pub(crate) fn convenience_request(
 // same name so width stays a destination fact, not a leftover context key.
 fn render_context_from_request(request: &RenderRequest) -> RenderContext<'_> {
     let mut ctx = RenderContext::with_ambiguous_width(
-        resolve_render_format(request),
+        request.format,
+        resolve_style_mode(request.format, request.color_policy, &request.target),
         request.target.width,
         request.target.ambiguous_width,
         &request.theme,
@@ -311,8 +302,8 @@ mod tests {
             data: json!({"count": 1}),
             template: TemplateRef::Named("list".into()),
             theme: Theme::new(),
-            format: OutputMode::Text,
-            color_policy: ColorPolicy::Auto,
+            format: Representation::Human,
+            color_policy: ColorPolicy::Never,
             target: sample_target(),
             engine: sample_engine(),
             registry: None,
@@ -365,7 +356,7 @@ mod tests {
         let request = RenderRequest {
             data: json!({"name": "Ada"}),
             template: TemplateRef::Inline("{{ name }} {{ label }}".into()),
-            format: OutputMode::Text,
+            format: Representation::Human,
             context_registry: Some(registry),
             extras: HashMap::from([("label".into(), "from-extra".into())]),
             ..sample_request()
@@ -384,8 +375,8 @@ mod tests {
         };
         let held: Vec<RenderRequest> = vec![stored.request];
         assert_eq!(held.len(), 1);
-        assert_eq!(held[0].format, OutputMode::Text);
-        assert_eq!(held[0].color_policy, ColorPolicy::Auto);
+        assert_eq!(held[0].format, Representation::Human);
+        assert_eq!(held[0].color_policy, ColorPolicy::Never);
         match &held[0].template {
             TemplateRef::Named(name) => assert_eq!(name, "list"),
             TemplateRef::Inline(_) | TemplateRef::Absent => {
@@ -430,7 +421,7 @@ mod tests {
     #[test]
     fn render_request_format_policy_and_capabilities_vary_independently() {
         let request = RenderRequest {
-            format: OutputMode::Json,
+            format: Representation::Json,
             color_policy: ColorPolicy::Always,
             target: TargetProperties {
                 stdout_color_capability: false,
@@ -441,7 +432,7 @@ mod tests {
             },
             ..sample_request()
         };
-        assert_eq!(request.format, OutputMode::Json);
+        assert_eq!(request.format, Representation::Json);
         assert_eq!(request.color_policy, ColorPolicy::Always);
         assert!(!request.target.stdout_color_capability);
         assert!(request.target.stderr_color_capability);
@@ -466,7 +457,7 @@ mod tests {
         let request = sample_request();
         let debug = format!("{request:?}");
         assert!(debug.contains("RenderRequest"));
-        assert!(debug.contains("color_policy: Auto"));
+        assert!(debug.contains("color_policy: Never"));
         assert!(debug.contains("has_registry: false"));
     }
 
@@ -475,7 +466,7 @@ mod tests {
         let request = RenderRequest {
             data: json!({"msg": "hello"}),
             template: TemplateRef::Inline("{{ msg }}".into()),
-            format: OutputMode::Text,
+            format: Representation::Human,
             ..sample_request()
         };
         assert_eq!(render_request(&request).unwrap(), "hello");
@@ -486,7 +477,7 @@ mod tests {
         let request = RenderRequest {
             data: json!({"msg": "hi"}),
             template: TemplateRef::Inline("[tone]{{ msg }}[/tone]".into()),
-            format: OutputMode::Auto,
+            format: Representation::Human,
             color_policy: ColorPolicy::Auto,
             target: TargetProperties {
                 stdout_color_capability: false,
@@ -502,7 +493,7 @@ mod tests {
     }
 
     fn styled_inline_request(
-        format: OutputMode,
+        format: Representation,
         color_policy: ColorPolicy,
         stdout_color_capability: bool,
     ) -> RenderRequest {
@@ -521,47 +512,35 @@ mod tests {
     }
 
     #[test]
-    fn color_policy_controls_ansi_independently_of_human_format_and_capability() {
-        let formats = [OutputMode::Auto, OutputMode::Term, OutputMode::Text];
-        let policies = [ColorPolicy::Auto, ColorPolicy::Always, ColorPolicy::Never];
-        for format in formats {
-            for policy in policies {
-                for capable in [true, false] {
-                    let expect_ansi = match policy {
-                        ColorPolicy::Always => true,
-                        ColorPolicy::Never => false,
-                        ColorPolicy::Auto => match format {
-                            OutputMode::Term => true,
-                            OutputMode::Text => false,
-                            OutputMode::Auto => capable,
-                            _ => unreachable!("matrix only covers human formats"),
-                        },
-                    };
-                    let request = styled_inline_request(format, policy, capable);
-                    let rendered = render_request_split(&request).unwrap();
-                    assert_eq!(
-                        rendered.formatted.contains("\x1b["),
-                        expect_ansi,
-                        "format={format:?} policy={policy:?} capable={capable} formatted={:?}",
-                        rendered.formatted
-                    );
-                    assert_eq!(
-                        rendered.raw, "hi",
-                        "format={format:?} policy={policy:?} capable={capable}"
-                    );
-                    assert!(
-                        !rendered.raw.contains("\x1b["),
-                        "raw must never carry ANSI: {:?}",
-                        rendered.raw
-                    );
-                }
+    fn color_policy_alone_decides_ansi_for_the_human_representation() {
+        for policy in [ColorPolicy::Auto, ColorPolicy::Always, ColorPolicy::Never] {
+            for capable in [true, false] {
+                let expect_ansi = match policy {
+                    ColorPolicy::Always => true,
+                    ColorPolicy::Never => false,
+                    ColorPolicy::Auto => capable,
+                };
+                let request = styled_inline_request(Representation::Human, policy, capable);
+                let rendered = render_request_split(&request).unwrap();
+                assert_eq!(
+                    rendered.formatted.contains("\x1b["),
+                    expect_ansi,
+                    "policy={policy:?} capable={capable} formatted={:?}",
+                    rendered.formatted
+                );
+                assert_eq!(rendered.raw, "hi", "policy={policy:?} capable={capable}");
+                assert!(
+                    !rendered.raw.contains("\x1b["),
+                    "raw must never carry ANSI: {:?}",
+                    rendered.raw
+                );
             }
         }
     }
 
     #[test]
     fn term_debug_keeps_bracket_tags_regardless_of_color_policy() {
-        let request = styled_inline_request(OutputMode::TermDebug, ColorPolicy::Never, true);
+        let request = styled_inline_request(Representation::TermDebug, ColorPolicy::Never, true);
         let rendered = render_request_split(&request).unwrap();
         assert_eq!(rendered.formatted, "[tone]hi[/tone]");
         assert_eq!(rendered.raw, "hi");
@@ -575,7 +554,7 @@ mod tests {
         let request = RenderRequest {
             data: json!({"msg": "hello"}),
             template: TemplateRef::Named("list".into()),
-            format: OutputMode::Text,
+            format: Representation::Human,
             registry: Some(Rc::new(registry)),
             engine: sample_engine(),
             ..sample_request()
@@ -591,7 +570,7 @@ mod tests {
         let request = RenderRequest {
             data: json!({"extra": "greeting"}),
             template: TemplateRef::Named("list".into()),
-            format: OutputMode::Text,
+            format: Representation::Human,
             registry: Some(Rc::new(registry)),
             engine: sample_engine(),
             ..sample_request()
@@ -665,7 +644,7 @@ mod tests {
         let request = RenderRequest {
             data: json!({"msg": "hello"}),
             template: TemplateRef::Named("list".into()),
-            format: OutputMode::Text,
+            format: Representation::Human,
             registry: Some(Rc::new(registry)),
             engine,
             ..sample_request()
@@ -685,7 +664,7 @@ mod tests {
         let request = RenderRequest {
             data: json!({"msg": "hello"}),
             template: TemplateRef::Inline("{% include 'partial' %}".into()),
-            format: OutputMode::Text,
+            format: Representation::Human,
             registry: Some(Rc::new(registry)),
             engine: sample_engine(),
             ..sample_request()
@@ -699,7 +678,7 @@ mod tests {
         registry.add_inline("list", "{% include 'optional' ignore missing %}ok");
         let request = RenderRequest {
             template: TemplateRef::Named("list".into()),
-            format: OutputMode::Text,
+            format: Representation::Human,
             registry: Some(Rc::new(registry)),
             engine: sample_engine(),
             ..sample_request()
@@ -714,7 +693,7 @@ mod tests {
         registry.add_inline("default", "fallback");
         let request = RenderRequest {
             template: TemplateRef::Named("list".into()),
-            format: OutputMode::Text,
+            format: Representation::Human,
             registry: Some(Rc::new(registry)),
             engine: sample_engine(),
             ..sample_request()
@@ -727,7 +706,7 @@ mod tests {
         let registry = TemplateRegistry::new();
         let request = RenderRequest {
             template: TemplateRef::Inline("{% include 'optional' ignore missing %}ok".into()),
-            format: OutputMode::Text,
+            format: Representation::Human,
             registry: Some(Rc::new(registry)),
             engine: sample_engine(),
             ..sample_request()
@@ -741,7 +720,7 @@ mod tests {
         registry.add_inline("default", "fallback");
         let request = RenderRequest {
             template: TemplateRef::Inline("{% include ['override', 'default'] %}".into()),
-            format: OutputMode::Text,
+            format: Representation::Human,
             registry: Some(Rc::new(registry)),
             engine: sample_engine(),
             ..sample_request()
@@ -757,7 +736,7 @@ mod tests {
             template: TemplateRef::Inline(
                 r#"{% raw %}{% "unclosed {% endraw %}{% include 'actual' %}"#.into(),
             ),
-            format: OutputMode::Text,
+            format: Representation::Human,
             registry: Some(Rc::new(registry)),
             engine: sample_engine(),
             ..sample_request()
@@ -820,8 +799,8 @@ mod tests {
             data: json!({"msg": "hi"}),
             template: TemplateRef::Inline("[tone]{{ msg }}[/tone]".into()),
             theme: Theme::new().add("tone", console::Style::new().red()),
-            format: OutputMode::Term,
-            color_policy: ColorPolicy::Auto,
+            format: Representation::Human,
+            color_policy: ColorPolicy::Always,
             target: TargetProperties {
                 stdout_color_capability: false,
                 ..sample_target()
@@ -857,8 +836,8 @@ mod tests {
                     "check",
                     IconDefinition::new("[ok]").with_nerdfont("\u{f00c}"),
                 ),
-            format: OutputMode::Term,
-            color_policy: ColorPolicy::Auto,
+            format: Representation::Human,
+            color_policy: ColorPolicy::Always,
             target: TargetProperties {
                 width: Some(40),
                 stdout_color_capability: true,
@@ -902,8 +881,8 @@ mod tests {
             data: json!({"name": "Tasks", "count": 42}),
             template: TemplateRef::Inline("[title]{{ name }}[/title]: {{ count }} items".into()),
             theme,
-            format: OutputMode::Text,
-            color_policy: ColorPolicy::Auto,
+            format: Representation::Human,
+            color_policy: ColorPolicy::Never,
             target: TargetProperties {
                 width: Some(80),
                 stdout_is_terminal: true,
@@ -937,14 +916,20 @@ mod tests {
     fn convenience_render_with_output_text_matches_render_request() {
         let theme = Theme::new();
         let data = json!({"msg": "hello"});
-        let via_wrapper =
-            crate::render_with_output("{{ msg }}", &data, &theme, OutputMode::Text).unwrap();
+        let via_wrapper = crate::render_with_output(
+            "{{ msg }}",
+            &data,
+            &theme,
+            Representation::Human,
+            ColorPolicy::Never,
+        )
+        .unwrap();
         let request = RenderRequest {
             data,
             template: TemplateRef::Inline("{{ msg }}".into()),
             theme,
-            format: OutputMode::Text,
-            color_policy: ColorPolicy::Auto,
+            format: Representation::Human,
+            color_policy: ColorPolicy::Never,
             target: TargetProperties::detect(),
             engine: sample_engine(),
             registry: None,

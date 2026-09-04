@@ -56,6 +56,9 @@ jobs:
 
   member:
     needs: subset
+    # An empty subset (every member out of the PR lane pending re-acceptance)
+    # skips the matrix instead of failing on an empty vector.
+    if: needs.subset.outputs.members != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -95,13 +98,17 @@ jobs:
   # uses: branch protection requires `corpus`, and a matrix job reports as
   # "Corpus / member (<name>)".
   corpus:
-    needs: member
-    if: always() && needs.member.result != 'cancelled'
+    needs: [subset, member]
+    if: always() && needs.subset.result != 'cancelled' && needs.member.result != 'cancelled'
     runs-on: ubuntu-latest
     steps:
       - name: Verdict
         env:
+          SUBSET: ${{ needs.subset.result }}
+          MEMBERS: ${{ needs.subset.outputs.members }}
           RESULT: ${{ needs.member.result }}
         run: |
-          echo "corpus subset: $RESULT"
-          test "$RESULT" = "success"
+          echo "corpus subset: roster=$SUBSET members=$MEMBERS matrix=$RESULT"
+          test "$SUBSET" = "success"
+          # A skipped matrix passes only when the roster was computed and empty.
+          if test "$RESULT" = "skipped"; then test "$MEMBERS" = "[]"; else test "$RESULT" = "success"; fi

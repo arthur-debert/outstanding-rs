@@ -4,14 +4,24 @@ Standout Feature List
 OUTPUT FORMATTING
 -----------------
 
-Output Modes:
-  - Auto: Auto-detect terminal capabilities
-  - Term: Force ANSI escape codes (terminal output)
-  - Text: Plain text (no ANSI codes)
-  - TermDebug: Debug mode with visible style tags [name]text[/name]
-  - Json: Structured JSON output (skips templating)
-  - Yaml: Structured YAML output
-  - Csv: Flat CSV output (flat records only; nested data needs a CsvProjection)
+Representation (what the run produces):
+  - Human: render the command's template; what a bare invocation produces
+  - TermDebug: render it, keeping style tags visible as [name]text[/name]
+  - Json: structured JSON output (skips templating)
+  - Yaml: structured YAML output
+  - Csv: flat CSV output (flat records only; nested data needs a CsvProjection)
+  - Ndjson: one JSON object per line, written as each value is produced
+
+Style Mode (whether the human text carries escapes):
+  - Ansi / Plain / Debug, resolved from the run's ColorPolicy and the
+    destination's reported color capability
+  - ColorPolicy: Auto / Always / Never, named by --color or an entry point
+
+Delivery (where the rendered bytes go):
+  - Stdout, a file named by --output-file-path, or an external pager
+  - Pager command: <APP>_PAGER then PAGER, run through `sh -c`; unset or empty
+    means no paging, and Windows never pages
+  - --no-pager declines paging for one run; a command opts in with `pageable`
 
 Color Mode:
   - Light/Dark mode adaptation
@@ -78,8 +88,8 @@ Template Registry & Management:
 
 Rendering Functions:
   - render(): simple ad-hoc rendering
-  - render_with_output(): explicit output mode
-  - render_with_mode(): full control over output and color modes
+  - render_with_output(): explicit representation and color policy
+  - render_with_mode(): the same, plus the light/dark color mode
   - render_auto(): smart dispatch between templating and structured output
   - render_auto_with_context(): auto-dispatch with context injection
   - render_auto_with_spec(): auto-dispatch with render specification
@@ -142,6 +152,15 @@ DISPATCH
 App Types:
   - App: single-threaded CLI application
   - AppBuilder: application builder
+  - .name(name): the application's own name; <NAME>_PAGER is read before PAGER
+
+Global Flags AppBuilder Installs:
+  - --output <MODE>: the structured encoding (json, yaml, csv, ndjson,
+    term-debug); output_flag(Some(name)) renames, no_output_flag() removes
+  - --color <WHEN>: auto/always/never; color_flag / no_color_flag
+  - --no-pager: turn paging off for the run; pager_flag / no_pager_flag
+  - --output-file-path <PATH>: output_file_flag / no_output_file_flag
+  - --set key=value: opt-in, config_override_flag(name)
 
 Command Handler Types:
   - Handler trait: handler interface (&mut self)
@@ -151,8 +170,17 @@ Command Handler Types:
 Handler Output:
   - Output::Render(data): data to render via template
   - Output::Silent: no output
-  - Output::Binary(bytes, filename): binary file output
+  - Output::Binary { data, filename }: raw bytes on stdout, or in the
+    --output-file-path file; filename is a suggestion for a capture caller
   - HandlerResult<T>: Result<Output<T>, Error>
+
+Incremental Results:
+  - Results<E>: the run's result channel, a third handler parameter
+  - Results::emit(event): one typed value, rendered or written before it returns
+  - NoEvents: the event type of a command that emits none
+  - EventsFnHandler::new(f): closure wrapper for an emitting handler
+  - Each event renders from `<template>.event`; the summary is the returned
+    Output, and json/yaml/csv build one document from both when the run ends
 
 Command Context:
   - CommandContext: runtime environment for handlers
@@ -186,8 +214,9 @@ Dispatch Derive Macro:
   - #[derive(Dispatch)]: generate dispatch from clap Subcommand enums
   - #[dispatch(handlers = path)]: module containing handlers
   - #[dispatch(handler = path::fn)]: custom handler override
-  - #[dispatch(template = "path")]: custom template override
+  - #[dispatch(template_name = "path")]: custom template override
   - #[dispatch(nested)]: treat as nested subcommand
+  - #[dispatch(pageable)]: the command's human output may reach a pager
   - #[dispatch(skip)]: skip variant
 
 Handler Attribute Macro:
@@ -257,8 +286,9 @@ Help Rendering:
     word (installed automatically for CLIs with subcommands and for flat
     CLIs with no positionals)
   - Same policy and rendering on both parse paths: dispatch_from/run/
-    run_to_string and get_matches_from/parse_from; `--page` is honored by
-    the printing entry points and typed back to the capturing ones
+    run_to_string and get_matches_from/parse_from; only a printing entry
+    point starts a pager, and CompletedRun::delivery() names the one a
+    captured run chose
   - render_help(): render styled help for clap command
   - render_help_with_topics(): help with "Learn More" section
   - HelpConfig: help rendering configuration
@@ -269,7 +299,6 @@ Help Topics:
   - TopicRegistry: collection of topics with lookup
   - TopicType: Text or Markdown (affects rendering)
   - render_topic() / render_topics_list(): topic rendering
-  - display_with_pager(): show long content through pager
   - Load from files: add_from_directory(), add_from_directory_if_exists()
 
 

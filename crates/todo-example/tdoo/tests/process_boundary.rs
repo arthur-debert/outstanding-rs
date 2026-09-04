@@ -21,7 +21,7 @@ fn the_child_reads_the_fixture_through_its_environment_and_cwd() {
 #[test]
 fn a_forced_output_mode_reaches_the_child_as_a_flag() {
     let result = common::tdoo()
-        .output_mode(standout::OutputMode::Json)
+        .output_mode(standout::Representation::Json)
         .run_process(env!("CARGO_BIN_EXE_tdoo"), ["list"]);
 
     result.assert_success();

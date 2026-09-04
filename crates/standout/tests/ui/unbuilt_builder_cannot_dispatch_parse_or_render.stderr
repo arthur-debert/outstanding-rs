@@ -1,7 +1,7 @@
 error[E0599]: no method named `dispatch` found for struct `AppBuilder` in the current scope
   --> tests/ui/unbuilt_builder_cannot_dispatch_parse_or_render.rs:12:34
    |
-12 |     let _result = App::builder().dispatch(matches(), OutputMode::Auto);
+12 |     let _result = App::builder().dispatch(matches(), Representation::Human);
    |                                  ^^^^^^^^ method not found in `AppBuilder`
 
 error[E0599]: no method named `run_with` found for struct `AppBuilder` in the current scope

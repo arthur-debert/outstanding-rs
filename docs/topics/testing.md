@@ -59,14 +59,20 @@ Argument parsing is clap's responsibility, and clap has an extensive test suite 
 - Env vars (real `std::env::set_var`, originals captured and restored on drop)
 - Working directory (real `std::env::set_current_dir`, original restored on drop)
 - Fixture files (written into a `tempfile::TempDir`)
-- Destination facts on `TargetProperties`: width, color capability, color-scheme, icon mode, ambiguous-width (injected, never detected)
+- Destination facts on `TargetProperties`: width, whether each stream is a terminal and reports color capability, color-scheme, icon mode, ambiguous-width (injected, never detected)
 - Stdin, clipboard, and prompt responder as an [`InputSources`](https://docs.rs/standout/latest/standout/struct.InputSources.html) value passed into `App::run_with` (not process-global overrides)
 - Interactive prompt responder on those sources, so wizard handlers that call `.prompt_from(ctx.input_sources())` are testable in process — see [Interactive Flows → Testing Wizards](../crates/input/topics/interactive-flows.md#testing-wizards)
-- Forced `OutputMode` (injected as `--output=<mode>` into argv)
+- The `Representation` (injected as `--output=<encoding>` into argv; the human representation names no flag) and the run's `ColorPolicy`, which are two separate settings
 - Framework warnings captured from the run boundary, including accepted answer-sheet parse warnings queued by questionnaire commands
 
 Its `TestResult` exposes `exit_status()`, `success_kind()`, and
-`error_kind()`, with assertions for typed status and failure origin. `NoMatch`
+`error_kind()`, with assertions for typed status and failure origin. It also
+separates what a run produced from how it was presented: `results()` is every
+result value the run recorded, in order, and `result()` the last of them —
+identical whatever representation ran, so a test asserts on the values once and
+on the rendered stdout separately. `delivery()` names where those rendered
+bytes went: stdout, the file the user asked for, or the pager the environment
+named, which an in-process run reports without starting one. `NoMatch`
 returns no framework status because the fallback dispatcher still owns the
 command. For an `AppFailure` or an `ExternalFailure`, `error_kind()` is
 `RunErrorKind::App` or `RunErrorKind::External`, `exit_status()` is the declared
@@ -97,7 +103,7 @@ The harness doesn't invent new mechanisms; it wires together seams that Standout
 
 ### `TargetProperties` (standout-render)
 
-Detection is [`TargetProperties::detect()`](https://docs.rs/standout-render/latest/standout_render/struct.TargetProperties.html#method.detect) at the crate edge. Convenience wrappers and `App::run` call it there, then pass the result into `render_request`. Tests do not call `detect()`; they construct `TargetProperties` or inject facts through `TestHarness` (`terminal_width`, `with_color` / `no_color`, `color_scheme`, `icon_mode`, `ambiguous_width`). Unset facts take fixed defaults — `width: None`, `ColorMode::Dark`, `IconMode::Classic`, `AmbiguousWidth::Narrow` — so `$COLUMNS`, `$NERD_FONT`, and the OS appearance setting cannot change an in-process run.
+Detection is [`TargetProperties::detect()`](https://docs.rs/standout-render/latest/standout_render/struct.TargetProperties.html#method.detect) at the crate edge. Convenience wrappers and `App::run` call it there, then pass the result into `render_request`. Tests do not call `detect()`; they construct `TargetProperties` or inject facts through `TestHarness` (`terminal_width`, the four per-stream terminal and color-capability setters or the `color_capable_terminal()` convenience, `color`, `color_scheme`, `icon_mode`, `ambiguous_width`). Unset facts take fixed defaults — `width: None`, `ColorMode::Dark`, `IconMode::Classic`, `AmbiguousWidth::Narrow` — so `$COLUMNS`, `$NERD_FONT`, and the OS appearance setting cannot change an in-process run.
 
 There is no TTY detector ([ADR-0022](../adr/0022-delete-the-in-process-tty-seam.md)): terminal-dependent behavior is tested against a real process via `TestHarness::run_process`.
 
@@ -192,6 +198,7 @@ Pin terminal state for determinism, run, snapshot the output:
 
 ```rust
 use insta::assert_snapshot;
+use standout::ColorPolicy;
 
 #[test]
 #[serial]
@@ -200,7 +207,7 @@ fn list_snapshot() {
         .fixture("todos.txt", "a\nb\nc\n")
         .terminal_width(80)
         .ambiguous_width(standout::AmbiguousWidth::Narrow)
-        .no_color()
+        .color(ColorPolicy::Never)
         .run(&app(), command(), ["todo", "list"]);
 
     assert_snapshot!(result.stdout());
@@ -214,11 +221,11 @@ configuration and is restored when the `TestResult` drops.
 
 ### Asserting JSON shape
 
-Force `OutputMode::Json` to bypass the template and serialize the handler's data directly:
+Select `Representation::Json` to bypass the template and serialize the handler's data directly:
 
 ```rust
 let result = TestHarness::new()
-    .output_mode(OutputMode::Json)
+    .output_mode(Representation::Json)
     .run(&app, cmd, ["myapp", "list"]);
 
 let v: serde_json::Value = serde_json::from_str(result.stdout()).unwrap();

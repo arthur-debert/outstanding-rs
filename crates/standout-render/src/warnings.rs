@@ -8,14 +8,14 @@
 //! Warnings are styled using stderr color capability from
 //! [`crate::TargetProperties`], independent of the primary render's stdout
 //! capability, so piped stdout does not strip a still-interactive stderr.
-//! `OutputMode::Text` opts out of styling entirely. There is no thread-local
-//! collector; the buffer is passed explicitly through the run.
+//! A [`crate::ColorPolicy`] of `Never` opts out of styling entirely. There is
+//! no thread-local collector; the buffer is passed explicitly through the run.
 
 use std::cell::RefCell;
 use std::io::Write;
 use std::rc::Rc;
 
-use crate::output::OutputMode;
+use crate::request::ColorPolicy;
 use crate::theme::Theme;
 use crate::TargetProperties;
 
@@ -79,11 +79,11 @@ const BANNER_TEXT: &str = " Standout :: Warnings ";
 
 pub fn render_block_for_target(
     theme: &Theme,
-    output_mode: OutputMode,
+    color_policy: ColorPolicy,
     target: TargetProperties,
     warnings: &[String],
 ) -> String {
-    let use_color = should_style_stderr(output_mode, target);
+    let use_color = should_style_stderr(color_policy, target);
     let styles = theme.resolve_styles(None);
     render_block(warnings, |style_name, text| {
         style_for_stderr(&styles, style_name, text, use_color)
@@ -113,11 +113,11 @@ pub fn render_block_plain(warnings: &[String]) -> String {
 
 pub fn flush_to_stderr(
     theme: &Theme,
-    output_mode: OutputMode,
+    color_policy: ColorPolicy,
     target: TargetProperties,
     warnings: &[String],
 ) {
-    let block = render_block_for_target(theme, output_mode, target, warnings);
+    let block = render_block_for_target(theme, color_policy, target, warnings);
     if block.is_empty() {
         return;
     }
@@ -148,11 +148,12 @@ fn style_for_stderr(
     }
 }
 
-fn should_style_stderr(output_mode: OutputMode, target: TargetProperties) -> bool {
-    if matches!(output_mode, OutputMode::Text) {
-        return false;
+fn should_style_stderr(color_policy: ColorPolicy, target: TargetProperties) -> bool {
+    match color_policy {
+        ColorPolicy::Never => false,
+        ColorPolicy::Always => true,
+        ColorPolicy::Auto => target.stderr_color_capability,
     }
-    target.stderr_color_capability
 }
 
 #[cfg(test)]
@@ -258,7 +259,7 @@ mod tests {
         let target = sample_target(false, true);
         let block = render_block_for_target(
             &theme,
-            OutputMode::Auto,
+            ColorPolicy::Auto,
             target,
             &["stylesheet fell back".to_string()],
         );
@@ -271,18 +272,18 @@ mod tests {
     }
 
     #[test]
-    fn text_output_opts_out_of_warning_color_on_capable_stderr() {
+    fn a_never_policy_opts_out_of_warning_color_on_capable_stderr() {
         let theme = Theme::default();
         let target = sample_target(false, true);
         let block = render_block_for_target(
             &theme,
-            OutputMode::Text,
+            ColorPolicy::Never,
             target,
             &["stylesheet fell back".to_string()],
         );
         assert!(
             !block.contains("\x1b["),
-            "--output=text must keep the warning block plain, got: {:?}",
+            "--color never must keep the warning block plain, got: {:?}",
             block
         );
         assert!(block.contains("stylesheet fell back"));
@@ -294,7 +295,7 @@ mod tests {
         let target = sample_target(true, false);
         let block = render_block_for_target(
             &theme,
-            OutputMode::Auto,
+            ColorPolicy::Auto,
             target,
             &["stylesheet fell back".to_string()],
         );
@@ -306,15 +307,15 @@ mod tests {
     }
 
     #[test]
-    fn text_mode_strips_warning_color_even_when_stderr_is_capable() {
+    fn an_always_policy_colors_a_capable_stderr_under_a_structured_representation() {
         let theme = Theme::default();
         let target = sample_target(false, true);
         let block = render_block_for_target(
             &theme,
-            OutputMode::Text,
+            ColorPolicy::Always,
             target,
             &["stylesheet fell back".to_string()],
         );
-        assert!(!block.contains("\x1b["));
+        assert!(block.contains("\x1b["));
     }
 }

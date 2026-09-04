@@ -19,7 +19,11 @@
 //! `[term]` is opt-in through `term_settings(accessor)`: clapfig has no reserved
 //! section and this module does not look for a field by name in someone else's
 //! struct. [`TermSettings`] holds the keys the framework reads for itself;
-//! `output` fills `extract_output_mode`'s fallback arm when `--output` was not typed.
+//! `output` names one of the four structured encodings and fills
+//! `resolve_run`'s fallback arm when `--output` was not typed. It has no
+//! spelling for the human representation, which is what a bare invocation
+//! renders, and none for `term-debug`. `color` is the same three values
+//! `--color` takes and fills the same arm of the color resolution.
 //!
 //! The `config` command is clapfig's `ConfigCommand` tree, installed beside the help
 //! word. clapfig executes the action; this module only projects the `ConfigResult`
@@ -47,7 +51,8 @@ use serde_json::json;
 use crate::cli::builder::TemplateRef;
 use crate::cli::handler::{Artifact, Diagnostic, Extensions, Output, RunError, RunErrorKind};
 use crate::setup::SetupError;
-use crate::OutputMode;
+use crate::Representation;
+use standout_render::ColorPolicy;
 
 pub(crate) const CONFIG_COMMAND: &str = "config";
 
@@ -125,7 +130,7 @@ const LINE_TEMPLATE: &str = "{{ line }}";
 
 pub(crate) fn config_result_output(
     result: ConfigResult,
-    output_mode: OutputMode,
+    output_mode: Representation,
 ) -> (Output<serde_json::Value>, TemplateRef) {
     let (line, structured) = match result {
         ConfigResult::Template(text) | ConfigResult::Schema(text) => {
@@ -199,32 +204,43 @@ fn escape_style_tags(text: &str) -> String {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, clapfig::Schema)]
 pub struct TermSettings {
     pub output: Option<TermOutput>,
+    pub color: Option<TermColor>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clapfig::Schema)]
 #[serde(rename_all = "kebab-case")]
 pub enum TermOutput {
-    Auto,
-    Term,
-    Text,
-    TermDebug,
     Json,
     Yaml,
     Csv,
     Ndjson,
 }
 
-impl From<TermOutput> for OutputMode {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clapfig::Schema)]
+#[serde(rename_all = "kebab-case")]
+pub enum TermColor {
+    Auto,
+    Always,
+    Never,
+}
+
+impl From<TermColor> for ColorPolicy {
+    fn from(color: TermColor) -> Self {
+        match color {
+            TermColor::Auto => ColorPolicy::Auto,
+            TermColor::Always => ColorPolicy::Always,
+            TermColor::Never => ColorPolicy::Never,
+        }
+    }
+}
+
+impl From<TermOutput> for Representation {
     fn from(output: TermOutput) -> Self {
         match output {
-            TermOutput::Auto => OutputMode::Auto,
-            TermOutput::Term => OutputMode::Term,
-            TermOutput::Text => OutputMode::Text,
-            TermOutput::TermDebug => OutputMode::TermDebug,
-            TermOutput::Json => OutputMode::Json,
-            TermOutput::Yaml => OutputMode::Yaml,
-            TermOutput::Csv => OutputMode::Csv,
-            TermOutput::Ndjson => OutputMode::Ndjson,
+            TermOutput::Json => Representation::Json,
+            TermOutput::Yaml => Representation::Yaml,
+            TermOutput::Csv => Representation::Csv,
+            TermOutput::Ndjson => Representation::Ndjson,
         }
     }
 }
@@ -412,15 +428,10 @@ pub(crate) fn parse_override_pair(raw: &str) -> Result<(String, String), String>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::builder::OUTPUT_MODE_FLAG_VALUES;
 
     #[test]
-    fn term_output_spellings_are_the_output_flag_values() {
+    fn term_output_spells_the_four_structured_encodings_and_nothing_else() {
         let variants = [
-            TermOutput::Auto,
-            TermOutput::Term,
-            TermOutput::Text,
-            TermOutput::TermDebug,
             TermOutput::Json,
             TermOutput::Yaml,
             TermOutput::Csv,
@@ -436,10 +447,16 @@ mod tests {
                     .to_string()
             })
             .collect();
-        assert_eq!(spelled, OUTPUT_MODE_FLAG_VALUES);
-        for (variant, spelling) in variants.iter().zip(OUTPUT_MODE_FLAG_VALUES) {
-            let parsed: TermOutput = serde_json::from_value(spelling.into()).unwrap();
+        assert_eq!(spelled, ["json", "yaml", "csv", "ndjson"]);
+        for (variant, spelling) in variants.iter().zip(spelled.iter()) {
+            let parsed: TermOutput = serde_json::from_value(spelling.as_str().into()).unwrap();
             assert_eq!(parsed, *variant);
+        }
+        for retired in ["auto", "term", "text", "term-debug"] {
+            assert!(
+                serde_json::from_value::<TermOutput>(retired.into()).is_err(),
+                "`{retired}` must not be a configured output value"
+            );
         }
     }
 
@@ -494,7 +511,7 @@ mod tests {
         let result = ConfigResult::TemplateWritten {
             path: std::path::PathBuf::from("generated.toml"),
         };
-        let (output, _) = config_result_output(result, OutputMode::Json);
+        let (output, _) = config_result_output(result, Representation::Json);
         let Output::Render(data) = output else {
             panic!("a confirmation renders");
         };

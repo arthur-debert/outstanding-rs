@@ -12,7 +12,7 @@ through a level. The two stderr channels are silenced by two different switches.
 The survey's original sketch for C11 is lost with the 2026-08-16 session record. This
 spec is reconstructed from the survey's capability matrix, where C11 `pnpmlike` is the
 roster's **reporter/quiet matrix** (the reporter is transient progress rendering and the
-level is operational verbosity, two concerns `docs/spec/typed-command-output.md`
+level is operational verbosity, two concerns `docs/spec/implemented/typed-command-output.md`
 separates from command results), and it is written to stress five interactions rather
 than to reproduce pnpm:
 

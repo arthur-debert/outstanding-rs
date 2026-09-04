@@ -6,7 +6,9 @@ use serde::Serialize;
 use standout::cli::FnHandler;
 use standout::cli::{App, Output};
 use standout::EmbeddedTemplates;
-use standout::{AmbiguousWidth, ColorMode, IconMode, InputSources, OutputMode, TargetProperties};
+use standout::{
+    AmbiguousWidth, ColorMode, IconMode, InputSources, Representation, TargetProperties,
+};
 
 const TEMPLATES: &[(&str, &str)] = &[("info", "unused")];
 
@@ -19,7 +21,7 @@ struct Instance {
     status: &'static str,
 }
 
-fn dispatch(mode: OutputMode) -> String {
+fn dispatch(mode: Representation) -> String {
     let app = App::builder()
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
@@ -40,9 +42,9 @@ fn dispatch(mode: OutputMode) -> String {
 
     let cmd = Command::new("app").subcommand(Command::new("info"));
     let flag = match mode {
-        OutputMode::Json => "--output=json",
-        OutputMode::Yaml => "--output=yaml",
-        OutputMode::Csv => "--output=csv",
+        Representation::Json => "--output=json",
+        Representation::Yaml => "--output=yaml",
+        Representation::Csv => "--output=csv",
         _ => unreachable!("test only dispatches structured modes"),
     };
     let target = TargetProperties {
@@ -81,7 +83,7 @@ fn assert_ascending(output: &str, needles: &[&str]) {
 
 #[test]
 fn json_struct_fields_keep_declaration_order() {
-    let json = dispatch(OutputMode::Json);
+    let json = dispatch(Representation::Json);
     assert_ascending(
         &json,
         &["\"name\"", "\"zone\"", "\"machine_type\"", "\"status\""],
@@ -90,13 +92,13 @@ fn json_struct_fields_keep_declaration_order() {
 
 #[test]
 fn yaml_struct_fields_keep_declaration_order() {
-    let yaml = dispatch(OutputMode::Yaml);
+    let yaml = dispatch(Representation::Yaml);
     assert_ascending(&yaml, &["name:", "zone:", "machine_type:", "status:"]);
 }
 
 #[test]
 fn csv_struct_fields_keep_declaration_order() {
-    let csv = dispatch(OutputMode::Csv);
+    let csv = dispatch(Representation::Csv);
     assert_eq!(
         csv,
         "name,zone,machine_type,status\nweb-1,us-east1-b,n2-standard-2,RUNNING\n"

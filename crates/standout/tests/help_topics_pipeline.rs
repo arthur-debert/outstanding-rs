@@ -2,6 +2,7 @@ use clap::Command;
 use serial_test::serial;
 use standout::assets::{HELP_TEMPLATE_NAME, TOPICS_LIST_TEMPLATE_NAME, TOPIC_TEMPLATE_NAME};
 use standout::cli::{App, HelpResult};
+use standout::ColorPolicy;
 use standout::MiniJinjaEngine;
 use standout_test::TestHarness;
 
@@ -41,7 +42,7 @@ fn app_override_of_named_help_template_is_used() {
         ["app", "--help"],
         &standout::InputSources::from_process(),
     ) {
-        HelpResult::Help(text) | HelpResult::PagedHelp(text) => {
+        HelpResult::Help(text) => {
             assert!(
                 text.contains("CUSTOM HELP PAGE"),
                 "named override must win:\n{text}"
@@ -72,9 +73,10 @@ fn help_path_uses_the_app_engine_from_build() {
         .build()
         .unwrap();
 
-    let result = TestHarness::new()
-        .text_output()
-        .run(&app, help_command(), ["app", "--help"]);
+    let result =
+        TestHarness::new()
+            .color(ColorPolicy::Never)
+            .run(&app, help_command(), ["app", "--help"]);
     result.assert_success();
     assert!(
         result.stdout().contains("CUSTOM"),
@@ -123,12 +125,12 @@ fn unreadable_named_help_override_surfaces_as_render_error() {
 #[test]
 fn standalone_render_help_still_works_without_an_app() {
     use standout::cli::{render_help, HelpConfig};
-    use standout::OutputMode;
+    use standout::Representation;
 
     let output = render_help(
         &help_command().about("Demo"),
         Some(HelpConfig {
-            output_mode: Some(OutputMode::Text),
+            output_mode: Some(Representation::Human),
             ..Default::default()
         }),
     )

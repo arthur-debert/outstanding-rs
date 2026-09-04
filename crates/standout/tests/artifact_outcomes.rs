@@ -7,6 +7,7 @@ use standout::cli::{
     OutputKind, RunErrorKind,
 };
 use standout::cli::{Artifact, RenderedOutput};
+use standout::ColorPolicy;
 use standout::EmbeddedTemplates;
 
 const BYTES: &[u8] = b"id,title\n1,buy milk\n";
@@ -557,14 +558,15 @@ fn run_command_hands_back_the_pending_artifact_without_writing() {
         .run_command(
             "export",
             &matches,
-            |_matches, _ctx| {
+            FnHandler::new(|_matches, _ctx| {
                 Ok(Output::Artifact(
                     Artifact::new(BYTES.to_vec())
                         .suggest_destination(&target)
                         .with_report(report()),
                 ))
-            },
+            }),
             standout::TemplateRef::Inline((TEMPLATE).to_string()),
+            ColorPolicy::Auto,
             standout::cli::StreamSink::new(Vec::new()),
         )
         .unwrap();
@@ -591,4 +593,79 @@ fn no_match_still_falls_through_for_manual_dispatch() {
         standout::InputSources::from_process(),
     );
     assert!(matches!(result.outcome(), DispatchResult::NoMatch(_)));
+}
+
+#[test]
+fn an_artifact_without_a_report_resolves_no_summary_template() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("export.csv");
+    let suggested = path.clone();
+
+    let result = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "export",
+            FnHandler::new(move |_matches, _ctx| -> HandlerResult<ExportReport> {
+                Ok(Output::Artifact(
+                    Artifact::new(BYTES.to_vec()).suggest_destination(&suggested),
+                ))
+            }),
+            |cfg| cfg.binary(),
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+        .run_with(
+            command(),
+            ["app", "export"],
+            standout::TargetProperties::detect(),
+            standout::InputSources::from_process(),
+        );
+
+    assert_eq!(std::fs::read(&path).unwrap(), BYTES);
+    let run = result.artifact().expect("artifact run");
+    assert_eq!(run.report(), None);
+}
+
+#[test]
+fn a_post_output_hook_can_add_a_report_to_an_artifact_that_returned_without_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("export.csv");
+    let target = path.clone();
+
+    let result = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "export",
+            FnHandler::new(move |_matches, _ctx| -> HandlerResult<ExportReport> {
+                Ok(Output::Artifact(
+                    Artifact::new(BYTES.to_vec()).suggest_destination(&target),
+                ))
+            }),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .hooks(
+            "export",
+            Hooks::new().post_output(|_matches, _ctx, mut output| {
+                let artifact = output.as_artifact_mut().expect("artifact output");
+                artifact.report = Some(json!({ "entries": 1, "warnings": [] }));
+                Ok(output)
+            }),
+        )
+        .build()
+        .unwrap()
+        .run_with(
+            command(),
+            ["app", "export"],
+            standout::TargetProperties::detect(),
+            standout::InputSources::from_process(),
+        );
+
+    assert_eq!(std::fs::read(&path).unwrap(), BYTES);
+    let run = result.artifact().expect("artifact run");
+    assert_eq!(
+        run.report(),
+        Some(format!("Wrote 1 entries to {}", path.display()).as_str())
+    );
 }

@@ -1,23 +1,24 @@
-# Corpus gap-spec acceptance suites (expected-fail)
+# Corpus gap-spec acceptance suites
 
 Executable definitions-of-done for the parity epics.
 The two gap archetypes (`corpus/archetypes/tflike/`, `corpus/archetypes/jjlike/`)
-describe capability standout does not have; their acceptance suites here are red on
-arrival, deliberately.
+were written ahead of the capability, so their suites here are authored red and turn
+green as the owning epic lands.
 
 The archetypes also sit in the roster proper: each carries the roster's three files
-(`spec.md`, `manifest.toml`, `acceptance.toml`, all `expected = "fail"` cases — see
-`corpus/README.md`) for the runner. The suites *here* are the byte-precise form
-of the same criteria — per-line NDJSON parseability, exact byte offsets, state-file
-rewrites — and the form that runs under plain `pixi run test`.
+(`spec.md`, `manifest.toml`, `acceptance.toml` — see `corpus/README.md`) for the
+runner, with each case `expected = "fail"` until its milestone group closes. The
+suites *here* are the byte-precise form of the same criteria — per-line NDJSON
+parseability, exact byte offsets, state-file rewrites — and the form that runs under
+plain `pixi run test`.
 
-**Gating note.** These suites gate the parity epics and must be green before those
-epics close; `gaps.toml` records each gate's owning epic and status:
+**Gating note.** An epic cannot close while its suite is red; `gaps.toml` records
+each gate's owning epic and status:
 
 - `tests/tflike_diagnostic.rs` — machine contract,
   `docs/spec/implemented/parity-machine-contract.md`.
 - `tests/tflike_progress.rs` — typed incremental results,
-  `docs/spec/typed-command-output.md`.
+  `docs/spec/implemented/typed-command-output.md` (closed by TERM01).
 - `tests/jjlike.rs` — runtime templates, whose epic code is human-assigned and not
   yet minted (see the ownership note in `corpus/archetypes/jjlike/spec.md`).
 
@@ -81,8 +82,7 @@ binary still works. Under a custom `CARGO_TARGET_DIR` export the variable yourse
 The harness library links nothing; the fixture is the one target in this package
 built on standout.
 
-The fixture carries only the capability the closed gates cover, so the assertions
-still wrapped keep failing against it: `apply` emits no lifecycle events and reports
-its steps as stderr prose in every mode. A promoted assertion resolves the binary with
+The fixture carries exactly the capability the two tflike gates cover, both
+closed. A promoted assertion resolves the binary with
 `corpus_gap_suites::required_binary`, which panics — a broken suite — rather than
 skipping when the variable names nothing.

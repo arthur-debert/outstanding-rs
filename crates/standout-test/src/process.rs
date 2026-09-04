@@ -1,6 +1,6 @@
 use crate::{output_mode_flag, StdinMode, TestHarness};
 use standout::cli::Diagnostic;
-use standout_render::OutputMode;
+use standout_render::Representation;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
@@ -101,8 +101,8 @@ impl TestHarness {
         }
         let cwd = self.resolve_cwd();
         let mut argv: Vec<OsString> = args.into_iter().map(|a| a.into()).collect();
-        if let Some(mode) = self.output_mode {
-            argv.push(format!("--{}={}", self.output_flag_name, output_mode_flag(mode)).into());
+        if let Some(spelling) = self.output_mode.and_then(output_mode_flag) {
+            argv.push(format!("--{}={}", self.output_flag_name, spelling).into());
         }
         let mut command = Command::new(program);
         command.args(&argv);
@@ -126,8 +126,15 @@ impl TestHarness {
         if self.ambiguous_width.is_some() {
             rejected.push("ambiguous_width()");
         }
-        if self.color_capable.is_some() {
-            rejected.push("with_color()/no_color()");
+        if self.color_policy != standout::ColorPolicy::Auto {
+            rejected.push("color()");
+        }
+        if self.stdout_is_terminal
+            || self.stderr_is_terminal
+            || self.stdout_color_capability
+            || self.stderr_color_capability
+        {
+            rejected.push("stdout_is_terminal()/stderr_is_terminal()/color_capability()");
         }
         if !matches!(self.stdin, StdinMode::Inherit) {
             rejected.push("piped_stdin()/interactive_stdin()");
@@ -193,7 +200,7 @@ impl ProcessResult {
         self._tempdir.as_ref().map(TempDir::path)
     }
     /// A process result carries no resolved mode, so the caller names the one it asked for.
-    pub fn diagnostic(&self, output_mode: OutputMode) -> Option<Diagnostic> {
+    pub fn diagnostic(&self, output_mode: Representation) -> Option<Diagnostic> {
         standout::cli::parse_diagnostic(output_mode, &self.stdout).ok()
     }
     #[track_caller]

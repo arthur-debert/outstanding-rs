@@ -17,7 +17,6 @@ Command help describes flags and arguments. Topics explain broader concepts:
 myapp help                  # Shows commands + available topics
 myapp help auth             # Shows the "auth" topic
 myapp help config-format    # Shows the "config-format" topic
-myapp help auth --page      # Shows topic in a pager
 ```
 
 ## The Topic Struct
@@ -138,20 +137,11 @@ LEARN MORE
 
 The "LEARN MORE" section lists all registered topics. Users run `myapp help <topic-name>` to view the full content.
 
-## Pager Support
+## Paging
 
-For long topics, the `--page` flag displays content through a pager:
-
-```bash
-myapp help getting-started --page
-```
-
-Standout tries pagers in order:
-
-1. `$PAGER` environment variable
-2. `less`
-3. `more`
-4. Falls back to printing directly if none available
+A topic page reaches the user through the same pager every help page does: on a
+terminal, when `<APP>_PAGER` or `PAGER` names one and the user did not pass
+`--no-pager`. [Paging](./output-modes.md#paging) states the whole rule.
 
 ## Rendering Topics
 
@@ -159,6 +149,7 @@ For custom topic rendering outside the help system:
 
 ```rust
 use standout::topics::{render_topic, render_topics_list, TopicRenderConfig};
+use standout::ColorPolicy;
 
 // Render single topic
 let output = render_topic(&topic, None)?;
@@ -169,7 +160,7 @@ let list = render_topics_list(&registry, "myapp help <topic>", None)?;
 // With custom config
 let config = TopicRenderConfig {
     theme: Some(my_theme),
-    output_mode: Some(OutputMode::Text),
+    color: ColorPolicy::Never,
     ..Default::default()
 };
 let output = render_topic(&topic, Some(config))?;

@@ -13,7 +13,7 @@ used = [
     "view-helpers.list-view",
     "tabular.column-formatting",
     "output-modes.auto-degradation",
-    "output-modes.term-text-flag",
+    "output-modes.color-flag",
     "styling.no-color",
     "help.pager-display",
 ]
@@ -32,17 +32,17 @@ cases = ["state-filter-recomputes-widths-and-count", "state-inactive-no-legend",
 
 [[interactions]]
 id = "three-way-color-precedence"
-stresses = ["tool-specific color variable", "NO_COLOR", "--output/--plain flags", "TTY capability autodetection"]
-description = "Four color signals with a strict precedence: explicit flag > SYSTEMDLIKE_COLORS > NO_COLOR > autodetect. Every pairwise override is asserted; the framework's color gating must be composable enough to express a tool variable that outranks NO_COLOR."
+stresses = ["tool-specific color variable", "NO_COLOR", "--plain flag", "TTY capability autodetection"]
+description = "Four color signals with a strict precedence: explicit flag > SYSTEMDLIKE_COLORS > NO_COLOR > autodetect. Every pairwise override is asserted; the framework's color gating must be composable enough to express a tool variable that outranks NO_COLOR. The two explicit-flag overrides are spelled `--color never` and `--color always`."
 cases = [
     "color-on-capable-tty",
     "no-color-var-suppresses-on-tty",
     "tool-var-beats-no-color",
     "tool-var-forces-color-when-piped",
     "tool-var-zero-beats-capable-tty",
+    "plain-beats-tool-var",
     "output-text-beats-tool-var",
     "output-term-beats-everything-when-piped",
-    "plain-beats-tool-var",
 ]
 
 [[interactions]]

@@ -2,7 +2,7 @@ use clap::Command;
 use standout::cli::{
     render_help, validate_command_groups, App, CommandGroup, HelpConfig, HelpResult,
 };
-use standout::OutputMode;
+use standout::Representation;
 
 #[test]
 fn test_grouped_help_renders_titles() {
@@ -14,7 +14,7 @@ fn test_grouped_help_renders_titles() {
         .subcommand(Command::new("config").about("Configuration"));
 
     let config = HelpConfig {
-        output_mode: Some(OutputMode::Text),
+        output_mode: Some(Representation::Human),
         command_groups: Some(vec![
             CommandGroup {
                 title: "Commands".into(),
@@ -57,7 +57,7 @@ fn test_separators_produce_blank_lines() {
         .subcommand(Command::new("unpin").about("Unpin pads"));
 
     let config = HelpConfig {
-        output_mode: Some(OutputMode::Text),
+        output_mode: Some(Representation::Human),
         command_groups: Some(vec![CommandGroup {
             title: "Per Pad".into(),
             help: None,
@@ -109,7 +109,7 @@ fn test_no_groups_backward_compat() {
         .subcommand(Command::new("bar").about("Bar cmd"));
 
     let config = HelpConfig {
-        output_mode: Some(OutputMode::Text),
+        output_mode: Some(Representation::Human),
         ..Default::default()
     };
 
@@ -129,7 +129,7 @@ fn test_all_grouped_no_other_section() {
         .subcommand(Command::new("b").about("B cmd"));
 
     let config = HelpConfig {
-        output_mode: Some(OutputMode::Text),
+        output_mode: Some(Representation::Human),
         command_groups: Some(vec![CommandGroup {
             title: "Everything".into(),
             help: None,
@@ -185,7 +185,7 @@ fn test_multiple_groups_preserve_order() {
         .subcommand(Command::new("m_middle").about("Middle"));
 
     let config = HelpConfig {
-        output_mode: Some(OutputMode::Text),
+        output_mode: Some(Representation::Human),
         command_groups: Some(vec![
             CommandGroup {
                 title: "Alpha".into(),
@@ -219,7 +219,7 @@ fn test_group_help_text_renders_below_title() {
         .subcommand(Command::new("edit").about("Edit pads"));
 
     let config = HelpConfig {
-        output_mode: Some(OutputMode::Text),
+        output_mode: Some(Representation::Human),
         command_groups: Some(vec![CommandGroup {
             title: "Per Pad".into(),
             help: Some(
@@ -271,7 +271,6 @@ fn test_cmd() -> Command {
 fn extract_help(result: HelpResult) -> String {
     match result {
         HelpResult::Help(h) => h,
-        HelpResult::PagedHelp(h) => h,
         other => panic!("Expected Help, got: {other:?}"),
     }
 }

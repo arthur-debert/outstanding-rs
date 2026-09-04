@@ -1,5 +1,5 @@
 use crate::setup::SetupError;
-use crate::{OutputMode, Theme};
+use crate::{ColorPolicy, Representation, Theme};
 use clap::Command;
 use console::Style;
 use std::collections::HashSet;
@@ -22,7 +22,9 @@ pub enum HelpLength {
 pub struct HelpConfig {
     pub template: Option<String>,
     pub theme: Option<Theme>,
-    pub output_mode: Option<OutputMode>,
+    pub output_mode: Option<Representation>,
+    /// Whether the rendered page carries escape sequences; independent of `output_mode`.
+    pub color: ColorPolicy,
     pub command_groups: Option<Vec<CommandGroup>>,
     pub length: HelpLength,
 }

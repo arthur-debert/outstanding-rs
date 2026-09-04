@@ -2,6 +2,7 @@ use clap::{ArgMatches, CommandFactory, Parser, Subcommand};
 use serde::Serialize;
 use standout::cli::FnHandler;
 use standout::cli::{App, CommandContext, Dispatch, HandlerResult, Output};
+use standout::ColorPolicy;
 use standout::{embed_styles, embed_templates};
 use standout_test::{serial, TestHarness};
 
@@ -52,9 +53,10 @@ fn readme_and_index_builder_order_builds_and_runs() -> Result<(), Box<dyn std::e
         .commands(Commands::dispatch_config())?
         .build()?;
 
-    let result = TestHarness::new()
-        .text_output()
-        .run(&app, Cli::command(), ["app", "list"]);
+    let result =
+        TestHarness::new()
+            .color(ColorPolicy::Never)
+            .run(&app, Cli::command(), ["app", "list"]);
 
     result.assert_success();
     assert_eq!(result.stdout(), "Hello Ada!");
@@ -77,9 +79,10 @@ fn app_configuration_complete_example_builds() -> Result<(), Box<dyn std::error:
         .help_handling(true)
         .build()?;
 
-    let result = TestHarness::new()
-        .text_output()
-        .run(&app, Cli::command(), ["app", "list"]);
+    let result =
+        TestHarness::new()
+            .color(ColorPolicy::Never)
+            .run(&app, Cli::command(), ["app", "list"]);
 
     result.assert_success();
     assert_eq!(result.stdout(), "Hello Ada!");

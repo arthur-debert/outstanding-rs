@@ -4,16 +4,21 @@ A plan/apply tool in the terraform mold: it reads a desired-state config, compar
 against recorded state, reports the difference as a *plan*, and *applies* it. Its machine
 surface is an NDJSON diagnostic-and-event stream plus detailed exit codes.
 
-**This is a gap specification.** It describes capability standout does not have (survey
-Part C, archetype C4; `docs/spec/implemented/robustness-corpus.md`). Its acceptance criteria exist
-in two forms — the roster's `acceptance.toml` beside this spec (every case
-`expected = "fail"`) and the byte-precise, runnable-today suite in `corpus/gap-suites/`
-— red on arrival, deliberately, and authored in two milestone groups because two
-different epics own them:
+**This is a gap specification.** It was written ahead of the capability, describing
+what standout could not yet do (survey Part C, archetype C4;
+`docs/spec/implemented/robustness-corpus.md`). Its acceptance criteria exist in two
+forms — the roster's `acceptance.toml` beside this spec and the byte-precise,
+runnable-today suite in `corpus/gap-suites/` — authored red, in two milestone groups
+because two different epics own them:
 
-- **Diagnostic milestone** — gates **PAR02** (`docs/spec/implemented/parity-machine-contract.md`).
-- **Progress milestone** — gates typed command output (`docs/spec/typed-command-output.md`),
-  whose epic code is not yet minted.
+- **Diagnostic milestone** — **PAR02**
+  (`docs/spec/implemented/parity-machine-contract.md`) closed it. The roster cases keep
+  `expected = "fail"`: the corpus runner has no produced tflike binary to run them
+  against, so `corpus/gap-suites/tests/tflike_diagnostic.rs` against the in-repo
+  fixture is the executable form.
+- **Progress milestone** — **TERM01** typed command output
+  (`docs/spec/implemented/typed-command-output.md`) closed it, and its roster cases
+  read `expected = "pass"`.
 
 Everything below is written from the CLI user's perspective and is asserted black-box
 against a produced binary: argv in, stdout/stderr/exit status out.

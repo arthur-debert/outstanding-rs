@@ -4,7 +4,7 @@ use serial_test::serial;
 use standout::cli::FnHandler;
 use standout::cli::{render_help, App, HelpConfig, HelpLength, Output};
 use standout::EmbeddedTemplates;
-use standout::OutputMode;
+use standout::Representation;
 use standout_fixtures::downstream;
 use standout_test::clap_parity::{
     assert_page_states_clap_facts, assert_page_states_clap_facts_with, assert_states_clap_facts,
@@ -34,9 +34,9 @@ fn every_matrix_cell_states_every_clap_fact() {
         for (entry, length) in ENTRY_POINTS {
             for styled in [false, true] {
                 let harness = if styled {
-                    TestHarness::new().with_color()
+                    TestHarness::new().color_capable_terminal()
                 } else {
-                    TestHarness::new().text_output()
+                    TestHarness::new().stdout_is_terminal(false)
                 };
                 let result = harness.run(fixture.app(), fixture.command(), ["lookma", entry]);
                 result.assert_success();
@@ -63,7 +63,7 @@ fn a_subcommand_page_states_the_subcommands_clap_facts() {
         if entry == "help" {
             continue;
         }
-        let result = TestHarness::new().text_output().run(
+        let result = TestHarness::new().stdout_is_terminal(false).run(
             fixture.app(),
             fixture.command(),
             ["lookma", "review", entry],
@@ -81,7 +81,7 @@ fn the_help_word_targeting_a_subcommand_states_its_facts() {
         .find_subcommand("review")
         .expect("the fixture's review subcommand")
         .clone();
-    let result = TestHarness::new().text_output().run(
+    let result = TestHarness::new().stdout_is_terminal(false).run(
         fixture.app(),
         fixture.command(),
         ["lookma", "help", "review"],
@@ -275,9 +275,10 @@ fn the_page_lists_the_help_flag_clap_generates() {
 #[serial]
 fn the_page_lists_the_version_flag_clap_generates() {
     let (app, cmd) = versioned();
-    let result = TestHarness::new()
-        .text_output()
-        .run(&app, cmd.clone(), ["notes", "--help"]);
+    let result =
+        TestHarness::new()
+            .stdout_is_terminal(false)
+            .run(&app, cmd.clone(), ["notes", "--help"]);
     result.assert_success();
     let page = result.stdout_plain();
     assert_page_states_clap_facts(&page, &cmd, HelpLength::Long);
@@ -335,9 +336,10 @@ fn an_already_built_command_states_the_same_facts() {
 #[serial]
 fn the_argument_and_subcommand_exemptions_are_load_bearing() {
     let (app, cmd) = decorated();
-    let result = TestHarness::new()
-        .text_output()
-        .run(&app, cmd.clone(), ["notes", "--help"]);
+    let result =
+        TestHarness::new()
+            .stdout_is_terminal(false)
+            .run(&app, cmd.clone(), ["notes", "--help"]);
     result.assert_success();
     let page = result.stdout_plain();
     assert_page_states_clap_facts_with(
@@ -386,9 +388,10 @@ fn every_exemption_states_a_reason() {
 #[serial]
 fn hidden_metadata_stays_off_the_page() {
     let (app, cmd) = concealing();
-    let result = TestHarness::new()
-        .text_output()
-        .run(&app, cmd.clone(), ["notes", "--help"]);
+    let result =
+        TestHarness::new()
+            .stdout_is_terminal(false)
+            .run(&app, cmd.clone(), ["notes", "--help"]);
     result.assert_success();
     let page = result.stdout_plain();
     assert_page_states_clap_facts(&page, &cmd, HelpLength::Long);
@@ -484,9 +487,10 @@ fn a_dropped_quoted_possible_value_fails() {
 #[serial]
 fn a_whitespace_value_on_standouts_page_is_one_value() {
     let (app, cmd) = whitespace_valued();
-    let result = TestHarness::new()
-        .text_output()
-        .run(&app, cmd.clone(), ["notes", "--help"]);
+    let result =
+        TestHarness::new()
+            .stdout_is_terminal(false)
+            .run(&app, cmd.clone(), ["notes", "--help"]);
     result.assert_success();
     let page = result.stdout_plain();
     assert!(
@@ -756,10 +760,11 @@ fn whitespace_valued() -> (App, Command) {
 }
 fn rendered(entry: &str) -> String {
     let fixture = downstream().build();
-    let result =
-        TestHarness::new()
-            .text_output()
-            .run(fixture.app(), fixture.command(), ["lookma", entry]);
+    let result = TestHarness::new().stdout_is_terminal(false).run(
+        fixture.app(),
+        fixture.command(),
+        ["lookma", entry],
+    );
     result.assert_success();
     result.stdout_plain()
 }
@@ -767,7 +772,7 @@ fn themed_page(cmd: &Command) -> String {
     render_help(
         cmd,
         Some(HelpConfig {
-            output_mode: Some(OutputMode::Text),
+            output_mode: Some(Representation::Human),
             length: HelpLength::Long,
             ..Default::default()
         }),

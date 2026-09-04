@@ -1243,13 +1243,9 @@ fn expected_primary_text(input: &CommandInput, value: &str) -> String {
     }
 }
 
+/// The human page is what a bare invocation renders, so it names no `--output`.
 fn sample_cli_args(spec: &ProjectSpec, primary_value: &str) -> Vec<String> {
-    let mut args = vec![
-        quote(&spec.executable_name),
-        quote(&spec.command_name),
-        quote("--output"),
-        quote("text"),
-    ];
+    let mut args = vec![quote(&spec.executable_name), quote(&spec.command_name)];
     args.extend(sample_command_args(spec, primary_value));
     args
 }
@@ -1276,58 +1272,51 @@ fn sample_command_args(spec: &ProjectSpec, primary_value: &str) -> Vec<String> {
     args
 }
 
-fn harness_for_samples(spec: &ProjectSpec, primary_value: &str) -> String {
-    let has_source_setup = spec
-        .inputs
-        .iter()
-        .any(|input| input.sources[0] != InputSource::Argument);
-    let mut harness = if has_source_setup {
-        "TestHarness::new()\n            .no_color()".to_string()
-    } else {
-        "TestHarness::new().no_color()".to_string()
-    };
+/// The chained `TestHarness` setup calls the samples need, in order, for the
+/// caller to join.
+fn harness_setup_calls(spec: &ProjectSpec, primary_value: &str) -> Vec<String> {
+    let mut calls = Vec::new();
     for (index, input) in spec.inputs.iter().enumerate() {
         let value = if index == 0 { primary_value } else { "sample" };
         match input.sources[0] {
-            InputSource::File => harness.push_str(&format!(
-                "\n            .fixture({}, {})",
+            InputSource::File => calls.push(format!(
+                ".fixture({}, {})",
                 quote(&input.sample_file_name()),
                 quote(value)
             )),
             InputSource::Stdin => {
-                harness.push_str(&format!(
-                    "\n            .piped_stdin({})",
-                    quote(&format!("{value}\n"))
-                ));
+                calls.push(format!(".piped_stdin({})", quote(&format!("{value}\n"))))
             }
             InputSource::Argument => {}
         }
     }
-    harness
+    calls
 }
 
-fn generated_harness_run(spec: &ProjectSpec, primary_value: &str, args: &[String]) -> String {
-    let harness = harness_for_samples(spec, primary_value);
-    if harness.contains('\n') {
-        let args = rust_array(args, 20, 63);
-        format!(
-            r#"        let result = {harness}
-            .run(
-                &app,
-                cli::command(),
-                {args},
-            );"#
-        )
-    } else {
-        let args = rust_array(args, 16, 63);
-        format!(
-            r#"        let result = {harness}.run(
-            &app,
-            cli::command(),
-            {args},
-        );"#
-        )
+fn harness_expression(calls: &[String]) -> String {
+    match calls.len() {
+        0 | 1 => format!("TestHarness::new(){}", calls.join("")),
+        _ => format!(
+            "TestHarness::new()\n            {}",
+            calls.join("\n            ")
+        ),
     }
+}
+
+/// The harness binding and the `run` call, as two statements: a one-call chain
+/// is what rustfmt formats predictably.
+fn generated_harness_run(spec: &ProjectSpec, primary_value: &str, args: &[String]) -> String {
+    let harness = harness_expression(&harness_setup_calls(spec, primary_value));
+    let inline_args = format!("&app, cli::command(), [{}]", args.join(", "));
+    let run = if inline_args.len() <= FN_CALL_WIDTH {
+        format!("        let result = harness.run({inline_args});")
+    } else {
+        format!(
+            "        let result = harness.run(\n            &app,\n            cli::command(),\n            {},\n        );",
+            rust_array(args, 16, 63)
+        )
+    };
+    format!("        let harness = {harness};\n{run}")
 }
 
 fn generated_json_pipeline_test(spec: &ProjectSpec) -> String {
@@ -1362,11 +1351,9 @@ fn generated_config_test(spec: &ProjectSpec) -> String {
     let (field, expected) = expected_first_field(spec, primary_value);
     let executable = quote(&spec.executable_name);
     let file = quote(&format!("{}.toml", spec.executable_name));
-    let mut harness = harness_for_samples(spec, primary_value);
-    if !harness.contains('\n') {
-        harness = harness.replace("::new().no_color()", "::new()\n            .no_color()");
-    }
-    harness.push_str(&format!("\n            .fixture({file}, CONFIG_FILE)"));
+    let mut calls = harness_setup_calls(spec, primary_value);
+    calls.push(format!(".fixture({file}, CONFIG_FILE)"));
+    let harness = harness_expression(&calls);
     let mut args = vec![executable.clone(), quote(&spec.command_name)];
     args.extend(sample_command_args(spec, primary_value));
     let inline_args = format!("&app, cli::command(), [{}]", args.join(", "));
@@ -1387,12 +1374,11 @@ fn generated_config_test(spec: &ProjectSpec) -> String {
 {run}
 
         result.assert_success();
-        assert_eq!(result.output_mode(), OutputMode::Json);
+        assert_eq!(result.output_mode(), Representation::Json);
         let value: Value = serde_json::from_str(result.stdout()).unwrap();
         assert_eq!(value["{field}"], {expected});
 
         let shown = TestHarness::new()
-            .no_color()
             .fixture({file}, CONFIG_FILE)
             .run(
                 &app,
@@ -2227,6 +2213,7 @@ fn main() -> Result<()> {
 
 fn build_app(user_scope: clapfig::SearchPath) -> Result<standout::cli::App> {
     Ok(standout::cli::App::builder()
+        .name(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
         .templates(embed_templates!("src/templates"))
         .styles(embed_styles!("src/styles"))
@@ -2242,7 +2229,7 @@ mod tests {
     use super::*;
     use serde_json::Value;
     use serial_test::serial;
-    use standout::OutputMode;
+    use standout::Representation;
     use standout_test::TestHarness;
     use tempfile::TempDir;
 

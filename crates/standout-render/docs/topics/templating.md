@@ -212,52 +212,57 @@ bracket syntax.
 
 ---
 
-## Processing Modes
+## Style Modes
 
-Pass 2 (BBParser) processes style tags differently based on the output mode:
+Pass 2 (BBParser) processes style tags differently according to the `StyleMode`
+the run resolves to:
 
-| Mode | Behavior | Use Case |
+| Style mode | Behavior | Use Case |
 | ------ | ---------- | ---------- |
-| `Term` | Replace tags with ANSI escape codes | Rich terminal output |
-| `Text` | Strip tags completely | Plain text, pipes, files |
-| `TermDebug` | Keep tags as literal text | Debugging, testing |
+| `Ansi` | Replace tags with ANSI escape codes | Rich terminal output |
+| `Plain` | Strip tags completely | Plain text, pipes, files |
+| `Debug` | Keep tags as literal text | Debugging, testing |
 
-### Processing Modes Example
+`Ansi` and `Plain` are the two ways `Representation::Human` can render, chosen
+by the run's `ColorPolicy` against the destination's color capability. `Debug`
+is what `Representation::TermDebug` renders as.
+
+### Style Modes Example
 
 Template: `[title]Hello[/title]`
 
-- **Term**: `\x1b[1;36mHello\x1b[0m` (rendered as cyan bold)
-- **Text**: `Hello`
-- **TermDebug**: `[title]Hello[/title]`
+- **Ansi**: `\x1b[1;36mHello\x1b[0m` (rendered as cyan bold)
+- **Plain**: `Hello`
+- **Debug**: `[title]Hello[/title]`
 
 The "strip tags completely" behavior applies to tags the active theme defines.
 An *unknown* tag degrades differently, and an unbalanced unknown tag survives
-verbatim even under `Text` — see [Unknown Style
+verbatim even under a plain style mode — see [Unknown Style
 Tags](styling-system.md#unknown-style-tags).
 
-### Setting the Mode
+### Setting the Representation and the Color Policy
 
 ```rust
-use standout_render::{render_with_output, OutputMode};
+use standout_render::{render_with_output, ColorPolicy, Representation};
 
 // Rich terminal
-let output = render_with_output(template, &data, &theme, OutputMode::Term)?;
+let output = render_with_output(template, &data, &theme, Representation::Human, ColorPolicy::Always)?;
 
 // Plain text
-let output = render_with_output(template, &data, &theme, OutputMode::Text)?;
+let output = render_with_output(template, &data, &theme, Representation::Human, ColorPolicy::Never)?;
 
 // Debug (tags visible)
-let output = render_with_output(template, &data, &theme, OutputMode::TermDebug)?;
+let output = render_with_output(template, &data, &theme, Representation::TermDebug, ColorPolicy::Auto)?;
 
-// Auto-detect based on TTY
-let output = render_with_output(template, &data, &theme, OutputMode::Auto)?;
+// Decide from the destination's color capability
+let output = render_with_output(template, &data, &theme, Representation::Human, ColorPolicy::Auto)?;
 ```
 
-### Auto Mode
+### The style decision
 
-`OutputMode::Auto` resolves to `Term` or `Text` from the destination's color
-capability; the rule is in
-[Output Modes](../../../topics/output-modes.md#auto-mode).
+`Representation::Human` renders with or without escape sequences according to
+the run's `ColorPolicy` and the destination's color capability; the rule is in
+[Output Modes](../../../topics/output-modes.md#the-style-decision).
 
 ---
 
@@ -388,7 +393,7 @@ This enables reusable components across your application.
 Beyond your data, you can inject additional context into templates:
 
 ```rust
-use standout_render::{render_with_vars, OutputMode};
+use standout_render::{render_with_vars, ColorPolicy, Representation};
 use std::collections::HashMap;
 
 let mut vars = HashMap::new();
@@ -399,7 +404,8 @@ let output = render_with_vars(
     "{{ app_name }} v{{ version }}: {{ message }}",
     &data,
     &theme,
-    OutputMode::Term,
+    Representation::Human,
+    ColorPolicy::Always,
     vars,
 )?;
 ```
@@ -413,11 +419,11 @@ When handler data and context variables have the same key, **handler data wins**
 For machine-readable output (JSON, YAML, CSV, NDJSON), templates are bypassed entirely:
 
 ```rust
-use standout_render::{render_auto, OutputMode};
+use standout_render::{render_auto, ColorPolicy, Representation};
 
-// Template is used for Term/Text modes
+// The template is used for the human representation
 // Data is serialized directly for Json/Yaml/Csv; Ndjson wraps it in a result entry
-let output = render_auto(template, &data, &theme, OutputMode::Json)?;
+let output = render_auto(template, &data, &theme, Representation::Json, ColorPolicy::Auto)?;
 ```
 
 | Mode | Behavior |
@@ -454,9 +460,10 @@ The error lists every unknown or unbalanced tag.
 
 ```rust
 use standout_render::{
+    ColorPolicy, Representation,
     render,                  // Basic: template + data + theme
     render_with_output,      // With explicit output mode
-    render_with_mode,        // With output mode + color mode
+    render_with_mode,        // With representation + color policy + color mode
     render_with_vars,        // With extra context variables
     render_auto,             // Auto-dispatch template vs serialize
     render_auto_with_context,
@@ -465,25 +472,33 @@ use standout_render::{
 // Basic
 let output = render(template, &data, &theme)?;
 
-// With output mode
-let output = render_with_output(template, &data, &theme, OutputMode::Term)?;
+// With a representation and a color policy
+let output = render_with_output(template, &data, &theme, Representation::Human, ColorPolicy::Always)?;
 
 // With color mode override (for testing)
-let output = render_with_mode(template, &data, &theme, OutputMode::Term, ColorMode::Dark)?;
+let output = render_with_mode(
+    template,
+    &data,
+    &theme,
+    Representation::Human,
+    ColorPolicy::Always,
+    ColorMode::Dark,
+)?;
 
-// Auto (template for text modes, serialize for structured)
-let output = render_auto(template, &data, &theme, OutputMode::Json)?;
+// Auto (template for the human representation, serialize for structured)
+let output = render_auto(template, &data, &theme, Representation::Json, ColorPolicy::Auto)?;
 ```
 
 ### Renderer Struct
 
 ```rust
-use standout_render::Renderer;
+use standout_render::{ColorPolicy, Renderer};
 
 let mut renderer = Renderer::new(theme)?;
 renderer.add_template("name", "content")?;
 renderer.add_template_dir("./templates")?;
 
 let output = renderer.render("name", &data)?;
-let output = renderer.render_with_mode("name", &data, OutputMode::Text)?;
+renderer.set_color_policy(ColorPolicy::Never);
+let output = renderer.render("name", &data)?;
 ```

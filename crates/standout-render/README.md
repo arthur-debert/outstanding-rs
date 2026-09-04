@@ -85,20 +85,18 @@ accent:
 
 The `cube(r%, g%, b%)` syntax resolves to actual RGB via trilinear interpolation in CIE LAB space using the theme's 8 base ANSI colors as cube corners. The same coordinate produces earthy tones in Gruvbox, pastels in Catppuccin, and muted variants in Solarized — designer intent is preserved across all themes.
 
-### Multiple Output Modes
-
-One template, many formats:
+### One Template, Many Representations
 
 ```rust
 // Rich terminal output
-render_with_output(template, &data, &theme, OutputMode::Term)?;
+render_with_output(template, &data, &theme, Representation::Human, ColorPolicy::Always)?;
 
 // Plain text (pipes, redirects)
-render_with_output(template, &data, &theme, OutputMode::Text)?;
+render_with_output(template, &data, &theme, Representation::Human, ColorPolicy::Never)?;
 
 // Structured data (skip template entirely)
-render_auto(template, &data, &theme, OutputMode::Json)?;
-render_auto(template, &data, &theme, OutputMode::Yaml)?;
+render_auto(template, &data, &theme, Representation::Json, ColorPolicy::Auto)?;
+render_auto(template, &data, &theme, Representation::Yaml, ColorPolicy::Auto)?;
 ```
 
 ### Tabular Layout
