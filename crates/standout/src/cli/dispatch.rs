@@ -27,7 +27,9 @@ pub enum DispatchOutput {
     Binary(Vec<u8>, String),
     Artifact {
         output: ArtifactOutput,
-        request: Box<RenderRequest>,
+        /// The request the artifact's report renders through, present only
+        /// when the artifact carries one.
+        request: Option<Box<RenderRequest>>,
     },
     Silent {
         status: ExitStatus,
@@ -176,9 +178,8 @@ fn render_time_template(
 
 #[allow(clippy::too_many_arguments)]
 fn build_render_request(
-    command_path: &str,
     json_data: serde_json::Value,
-    template: &TemplateRef,
+    template: standout_render::TemplateRef,
     theme: &Theme,
     context_registry: &ContextRegistry,
     template_engine: &SharedTemplateEngine,
@@ -188,9 +189,8 @@ fn build_render_request(
     structured_output_projection: Option<&StructuredOutputProjection>,
     target: TargetProperties,
     warnings: Option<standout_render::warnings::WarningBuffer>,
-) -> Result<RenderRequest, RunError> {
-    let template = render_time_template(command_path, template, template_registry, output_mode)?;
-    Ok(RenderRequest {
+) -> RenderRequest {
+    RenderRequest {
         data: json_data,
         template,
         theme: theme.clone(),
@@ -204,7 +204,7 @@ fn build_render_request(
             .map(|projection| projection.csv_projection().clone()),
         extras: HashMap::new(),
         warnings,
-    })
+    }
 }
 
 fn render_via_request(request: &RenderRequest) -> Result<(String, String), RunError> {
@@ -279,11 +279,10 @@ pub(crate) fn render_handler_output<T: Serialize>(
         .extensions
         .get::<standout_render::warnings::WarningBuffer>()
         .cloned();
-    let request_for = |json_data: serde_json::Value| {
+    let request_with = |json_data: serde_json::Value, resolved: standout_render::TemplateRef| {
         build_render_request(
-            &command_path,
             json_data,
-            template,
+            resolved,
             theme,
             context_registry,
             template_engine,
@@ -295,17 +294,27 @@ pub(crate) fn render_handler_output<T: Serialize>(
             warnings.clone(),
         )
     };
+    let request_for = |json_data: serde_json::Value| -> Result<RenderRequest, RunError> {
+        let resolved =
+            render_time_template(&command_path, template, template_registry, output_mode)?;
+        Ok(request_with(json_data, resolved))
+    };
 
     // The document an incremental run ends in. `json` and `yaml` take the
     // array of records, the summary's among them, and are assembled once the
     // post-output hooks have run. CSV takes the events as its rows, through
     // the command's `CsvProjection` when it declares one, and leaves the
-    // summary out: a `result` record is not a row shape.
+    // summary out: a `result` record is not a row shape. Those rows come from
+    // the projection, never a template, so the summary's template stays
+    // unresolved and a command declared silent or binary still has them.
     let event_document = |events: Vec<serde_json::Value>,
                           summary: Option<serde_json::Value>|
      -> Result<DispatchOutput, RunError> {
         if output_mode == crate::Representation::Csv {
-            let request = request_for(serde_json::Value::Array(events))?;
+            let request = request_with(
+                serde_json::Value::Array(events),
+                standout_render::TemplateRef::Absent,
+            );
             let (formatted, raw) = render_via_request(&request)?;
             return Ok(DispatchOutput::Text {
                 formatted,
@@ -350,9 +359,14 @@ pub(crate) fn render_handler_output<T: Serialize>(
                 None => None,
             };
 
-            let request = request_for(serde_json::Value::Null)?;
+            // Only a report renders, so a report-less artifact needs no template.
+            let request = if report.is_some() {
+                Some(Box::new(request_for(serde_json::Value::Null)?))
+            } else {
+                None
+            };
             Ok(DispatchOutput::Artifact {
-                request: Box::new(request),
+                request,
                 output: ArtifactOutput {
                     bytes,
                     suggested_destination,

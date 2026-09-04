@@ -313,6 +313,7 @@ impl App {
             sub_matches,
             &ctx,
             output_mode,
+            self.emits_events_for(&path_str),
             override_path,
             &sink,
             &warnings,
@@ -397,6 +398,7 @@ impl App {
             sub_matches,
             &ctx,
             output_mode,
+            false,
             override_path,
             sink,
             warnings,
@@ -459,6 +461,7 @@ impl App {
         sub_matches: &ArgMatches,
         ctx: &CommandContext,
         output_mode: Representation,
+        emits_events: bool,
         override_path: Option<PathBuf>,
         sink: &StreamSink,
         warnings: &WarningBuffer,
@@ -482,7 +485,7 @@ impl App {
             }
             DispatchOutput::Artifact { output, request } => (
                 RenderedOutput::Artifact(output),
-                Some(request),
+                request,
                 ExitStatus::SUCCESS,
             ),
             DispatchOutput::Silent { status } => (RenderedOutput::Silent, None, status),
@@ -553,6 +556,15 @@ impl App {
         // the run's rendered text was pointed at.
         if !matches!(final_output, RenderedOutput::Text(_)) {
             sink.cancel_pending_redirect();
+        }
+
+        // On the hooks' final result: a hook can turn the document into a payload.
+        if let Err(error) = super::super::dispatch::reject_payload_from_an_emitting_command(
+            emits_events,
+            final_output.is_binary(),
+            final_output.is_artifact(),
+        ) {
+            return DispatchResult::Error(error);
         }
 
         if let Err(error) = super::super::dispatch::reject_payload_under_stream(

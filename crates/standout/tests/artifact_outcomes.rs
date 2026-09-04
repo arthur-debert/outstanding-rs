@@ -594,3 +594,35 @@ fn no_match_still_falls_through_for_manual_dispatch() {
     );
     assert!(matches!(result.outcome(), DispatchResult::NoMatch(_)));
 }
+
+#[test]
+fn an_artifact_without_a_report_resolves_no_summary_template() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("export.csv");
+    let suggested = path.clone();
+
+    let result = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "export",
+            FnHandler::new(move |_matches, _ctx| -> HandlerResult<ExportReport> {
+                Ok(Output::Artifact(
+                    Artifact::new(BYTES.to_vec()).suggest_destination(&suggested),
+                ))
+            }),
+            |cfg| cfg.binary(),
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+        .run_with(
+            command(),
+            ["app", "export"],
+            standout::TargetProperties::detect(),
+            standout::InputSources::from_process(),
+        );
+
+    assert_eq!(std::fs::read(&path).unwrap(), BYTES);
+    let run = result.artifact().expect("artifact run");
+    assert_eq!(run.report(), None);
+}

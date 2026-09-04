@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use super::builder::{SharedTemplateEngine, TemplateAbsence, TemplateRef};
-use super::dispatch::{render_handler_output, DispatchFn, DispatchOutput};
+use super::dispatch::{render_handler_output, DispatchFn};
 use super::events::{event_template, EventContext, EventDestination};
 use crate::cli::handler::{
     emits_events, CommandContext, FnHandler, Handler, HandlerResult, Results, RunRecorder,
@@ -120,7 +120,7 @@ where
             if let Some(failure) = destination.take_failure() {
                 return Err(failure);
             }
-            let output = render_handler_output(
+            render_handler_output(
                 result,
                 matches,
                 ctx,
@@ -138,13 +138,7 @@ where
                 emits_events::<H::Event>()
                     .then(|| destination.take_document_records())
                     .flatten(),
-            )?;
-            super::dispatch::reject_payload_from_an_emitting_command(
-                emits_events::<H::Event>(),
-                matches!(output, DispatchOutput::Binary(_, _)),
-                matches!(output, DispatchOutput::Artifact { .. }),
-            )?;
-            Ok(output)
+            )
         },
     ))
 }

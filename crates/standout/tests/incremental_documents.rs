@@ -5,8 +5,8 @@ use clap::{ArgMatches, Command};
 use serde_json::{json, Value};
 use standout::cli::hooks::TextOutput;
 use standout::cli::{
-    App, CommandContext, CommandContextInput, EventsFnHandler, ExitStatus, HandlerResult, Output,
-    RenderedOutput, Results, RunErrorKind,
+    App, ArtifactOutput, CommandContext, CommandContextInput, EventsFnHandler, ExitStatus,
+    HandlerResult, Output, RenderedOutput, Results, RunErrorKind,
 };
 use standout::tabular::{Column, Width};
 use standout::{
@@ -27,6 +27,8 @@ const HOOK_WARNING: &str = "a warning the post-output hook raised";
 
 const REPLACEMENT: &str = "the hook's own document";
 
+const PAYLOAD: &[u8] = b"the hook's own bytes";
+
 #[derive(Clone, Copy, PartialEq)]
 enum Ending {
     Summary,
@@ -42,6 +44,8 @@ enum PostOutput {
     Warns,
     Unchanged,
     ChangesRawOnly,
+    ReturnsBinary,
+    ReturnsArtifact,
 }
 
 fn events(results: &mut Results<Value>) -> Result<(), anyhow::Error> {
@@ -97,6 +101,17 @@ fn app(ending: Ending, hook: PostOutput) -> App {
                         )),
                         output => output,
                     })
+                }),
+                PostOutput::ReturnsBinary => cfg.post_output(|_, _, _| {
+                    Ok(RenderedOutput::Binary(PAYLOAD.to_vec(), "run.bin".into()))
+                }),
+                PostOutput::ReturnsArtifact => cfg.post_output(|_, _, _| {
+                    Ok(RenderedOutput::Artifact(ArtifactOutput {
+                        bytes: PAYLOAD.to_vec(),
+                        suggested_destination: None,
+                        stdout_allowed: false,
+                        report: None,
+                    }))
                 }),
             },
         )
@@ -620,4 +635,95 @@ fn result_reports_the_same_events_and_summary_under_csv() {
     let csv = run(Ending::Summary, Representation::Csv);
     assert_eq!(csv.results(), human.results());
     assert_eq!(csv.result(), Some(&json!({ "add": 2 })));
+}
+
+/// A summary template an emitting command has no use for: CSV takes its rows
+/// from the events, so the run has them however the summary is configured.
+#[derive(Clone, Copy)]
+enum NoSummaryTemplate {
+    Silent,
+    Binary,
+}
+
+fn summaryless_app(absence: NoSummaryTemplate, renders_summary: bool) -> App {
+    App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "apply",
+            EventsFnHandler::new(
+                move |_: &ArgMatches,
+                      _: &CommandContext,
+                      results: &mut Results<Value>|
+                      -> HandlerResult<Value> {
+                    events(results)?;
+                    if renders_summary {
+                        Ok(Output::Render(json!({ "add": RESOURCES.len() })))
+                    } else {
+                        Ok(Output::Silent)
+                    }
+                },
+            ),
+            move |cfg| match absence {
+                NoSummaryTemplate::Silent => cfg.silent(),
+                NoSummaryTemplate::Binary => cfg.binary(),
+            },
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+#[test]
+fn a_command_with_no_summary_template_still_has_its_csv_rows() {
+    for absence in [NoSummaryTemplate::Silent, NoSummaryTemplate::Binary] {
+        for renders_summary in [false, true] {
+            let result = TestHarness::new()
+                .color(ColorPolicy::Never)
+                .output_mode(Representation::Csv)
+                .run(
+                    &summaryless_app(absence, renders_summary),
+                    command(),
+                    ["app", "apply"],
+                );
+
+            result.assert_success();
+            assert_eq!(
+                result.stdout(),
+                EVENT_ROWS,
+                "renders_summary={renders_summary}"
+            );
+        }
+    }
+}
+
+const PAYLOAD_ENCODINGS: [Representation; 3] = [
+    Representation::Csv,
+    Representation::Json,
+    Representation::Yaml,
+];
+
+#[test]
+fn a_post_output_hook_cannot_turn_an_emitting_run_into_a_payload() {
+    for (hook, payload) in [
+        (PostOutput::ReturnsBinary, "binary"),
+        (PostOutput::ReturnsArtifact, "artifact"),
+    ] {
+        for representation in PAYLOAD_ENCODINGS {
+            let result = run_hooked(Ending::Summary, hook, representation);
+
+            assert_eq!(
+                result.error_kind(),
+                Some(RunErrorKind::Render),
+                "{payload} {representation:?}: {}",
+                result.stdout()
+            );
+            let summary = result.expect_diagnostic().summary;
+            assert!(
+                summary.contains(&format!(
+                    "{payload} output was produced by a command that emits events"
+                )),
+                "{payload} {representation:?}: {summary}"
+            );
+        }
+    }
 }

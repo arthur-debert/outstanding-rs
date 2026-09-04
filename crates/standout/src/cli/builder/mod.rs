@@ -842,6 +842,13 @@ impl App {
         &self.registry
     }
 
+    fn emits_events_for(&self, path: &str) -> bool {
+        self.pending_commands
+            .borrow()
+            .get(path)
+            .is_some_and(|pending| pending.recipe.emits_events())
+    }
+
     fn csv_projection_for(&self, path: &str) -> Option<crate::CsvProjection> {
         self.pending_commands
             .borrow()
@@ -1590,7 +1597,6 @@ impl App {
             .map_err(|e| HookError::post_output("Render error").with_source(e))
         };
         reject_status_without_a_carrier(output.is_binary(), output.is_artifact())?;
-        reject_payload_from_an_emitting_command(output.is_binary(), output.is_artifact())?;
 
         let render_value = |data: serde_json::Value| -> Result<RenderedOutput, HookError> {
             let request = RenderRequest {
