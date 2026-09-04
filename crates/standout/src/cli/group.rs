@@ -93,11 +93,6 @@ where
               theme: &crate::Theme,
               target: crate::TargetProperties| {
             let command_path = ctx.command_path.join(".");
-            super::dispatch::reject_events_under_a_document_encoding(
-                emits_events::<H::Event>(),
-                &command_path,
-                output_mode,
-            )?;
             let destination = Rc::new(EventDestination::new(
                 sink.clone(),
                 EventContext {

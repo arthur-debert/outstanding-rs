@@ -23,7 +23,7 @@ fn command_with_output_flag() -> Command {
         Arg::new("_output_mode")
             .long("output")
             .global(true)
-            .value_parser(["auto", "json", "ndjson"])
+            .value_parser(["auto", "json", "ndjson", "csv"])
             .default_value("auto"),
     )
 }
@@ -155,6 +155,27 @@ fn run_command_writes_the_events_to_the_sink_it_is_given() {
             {"type": "apply_complete", "resource": "web"},
             {"type": "result", "data": {"applied": 1}},
         ])
+    );
+
+    let matches = command_with_output_flag()
+        .try_get_matches_from(["app", "--output=csv", "stream"])
+        .unwrap();
+    let sub = matches.subcommand_matches("stream").unwrap();
+    let capture = StreamCapture::default();
+    let output = app()
+        .run_command(
+            "stream",
+            sub,
+            EventsFnHandler::new(stream_handler),
+            TemplateRef::Named("stream".to_string()),
+            ColorPolicy::Auto,
+            StreamSink::new(capture.clone()),
+        )
+        .unwrap();
+    assert!(capture.take().is_empty());
+    assert_eq!(
+        output.as_text(),
+        Some("type,resource\napply_start,web\napply_complete,web\n")
     );
 }
 

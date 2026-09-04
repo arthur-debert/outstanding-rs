@@ -364,7 +364,7 @@ fn strict_mode_fails_an_event_with_an_unresolved_style_tag_before_it_is_written(
 }
 
 #[test]
-fn csv_refuses_an_incremental_command_before_the_handler_runs() {
+fn csv_takes_the_events_as_its_rows_once_the_command_ends() {
     let destination = Shared::default();
     let ran = Rc::new(RefCell::new(false));
     let handler_ran = ran.clone();
@@ -396,12 +396,12 @@ fn csv_refuses_an_incremental_command_before_the_handler_runs() {
         )
         .into_outcome();
 
-    assert!(render_error(&outcome).contains("standout does not build one yet"));
+    assert!(*ran.borrow());
+    assert_eq!(outcome.output(), Some("type,resource\napply_start,web\n"));
     assert!(
-        !*ran.borrow(),
-        "a command that cannot be carried never runs"
+        destination.0.borrow().is_empty(),
+        "the rows are the run's one document, not bytes the handler streamed"
     );
-    assert!(destination.0.borrow().is_empty());
 }
 
 #[test]
@@ -486,7 +486,7 @@ fn hand_written_run(args: &[&str], handler: HandWritten, destination: Shared) ->
 }
 
 #[test]
-fn a_hand_written_emitter_is_refused_before_it_runs_by_csv() {
+fn a_hand_written_emitter_writes_its_events_as_csv_rows() {
     let destination = Shared::default();
     let ran = Rc::new(RefCell::new(false));
     let outcome = hand_written_run(
@@ -499,11 +499,8 @@ fn a_hand_written_emitter_is_refused_before_it_runs_by_csv() {
         destination.clone(),
     );
 
-    assert!(render_error(&outcome).contains("standout does not build one yet"));
-    assert!(
-        !*ran.borrow(),
-        "a command that cannot be carried never runs"
-    );
+    assert!(*ran.borrow());
+    assert_eq!(outcome.output(), Some("type,resource\napply_start,web\n"));
     assert!(destination.0.borrow().is_empty());
 }
 

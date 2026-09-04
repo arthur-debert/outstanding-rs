@@ -8,7 +8,10 @@ use standout::cli::{
     App, CommandContext, CommandContextInput, EventsFnHandler, ExitStatus, HandlerResult, Output,
     RenderedOutput, Results, RunErrorKind,
 };
-use standout::{ColorPolicy, EmbeddedTemplates, Representation};
+use standout::tabular::{Column, Width};
+use standout::{
+    ColorPolicy, CsvProjection, EmbeddedTemplates, Representation, StructuredOutputProjection,
+};
 use standout_test::{TestHarness, TestResult};
 
 const TEMPLATES: &[(&str, &str)] = &[
@@ -278,7 +281,11 @@ impl std::io::Write for Watched {
 
 #[test]
 fn nothing_is_written_before_the_command_completes() {
-    for representation in DOCUMENT_ENCODINGS {
+    for representation in [
+        Representation::Json,
+        Representation::Yaml,
+        Representation::Csv,
+    ] {
         let destination = Watched::default();
         let written = destination.0.clone();
         let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
@@ -460,4 +467,157 @@ fn result_reports_the_same_events_and_summary_under_every_representation() {
             "{representation:?}"
         );
     }
+}
+
+/// The rows the run's events become under CSV: the flat-record header of the
+/// event keys, one row per event, no summary and no warning.
+const EVENT_ROWS: &str = "type,resource\n\
+                          apply_start,web\n\
+                          apply_complete,web\n\
+                          apply_start,db\n\
+                          apply_complete,db\n";
+
+#[test]
+fn csv_writes_the_events_as_rows_and_does_not_encode_the_summary() {
+    let result = run(Ending::Summary, Representation::Csv);
+    result.assert_success();
+    assert_eq!(result.stdout(), EVENT_ROWS);
+    assert_eq!(result.result(), Some(&json!({ "add": 2 })));
+}
+
+#[test]
+fn a_silent_summary_leaves_the_csv_rows_unchanged() {
+    let result = run(Ending::Silent, Representation::Csv);
+    result.assert_success();
+    assert_eq!(result.stdout(), EVENT_ROWS);
+}
+
+#[test]
+fn a_warning_under_csv_is_prose_on_stderr_and_not_a_row() {
+    let result = run(Ending::SummaryAndWarning, Representation::Csv);
+    result.assert_success();
+    assert_eq!(result.stdout(), EVENT_ROWS);
+    assert!(result.stderr().contains(WARNING), "{}", result.stderr());
+}
+
+#[test]
+fn a_failure_after_events_delivers_the_diagnostic_in_place_of_the_rows() {
+    let result = run(Ending::Failure, Representation::Csv);
+    assert_eq!(result.expect_diagnostic().summary, "db: refused");
+    assert_eq!(result.error_kind(), Some(RunErrorKind::Handler));
+    assert!(
+        !result.stdout().contains("apply_start"),
+        "nothing partial goes out: {}",
+        result.stdout()
+    );
+}
+
+#[test]
+fn the_output_file_receives_the_csv_document_and_stdout_stays_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("run.csv");
+    let result = run_with(
+        Ending::Summary,
+        Representation::Csv,
+        &["--output-file-path", path.to_str().unwrap()],
+    );
+
+    result.assert_success();
+    assert_eq!(result.stdout(), "");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), EVENT_ROWS);
+    assert_eq!(result.delivery().path(), Some(path.as_path()));
+}
+
+/// The events an application gives CSV can be nested; the run then fails the
+/// way a nested batch value does, with the document never written.
+fn nested_event_app() -> App {
+    App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "apply",
+            EventsFnHandler::new(
+                |_: &ArgMatches,
+                 _: &CommandContext,
+                 results: &mut Results<Value>|
+                 -> HandlerResult<Value> {
+                    results.emit(json!({ "type": "apply_start", "at": { "line": 2 } }))?;
+                    Ok(Output::Render(json!({ "add": 1 })))
+                },
+            ),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+#[test]
+fn a_nested_event_under_csv_is_the_render_error_a_nested_value_is() {
+    let result = TestHarness::new()
+        .color(ColorPolicy::Never)
+        .output_mode(Representation::Csv)
+        .run(&nested_event_app(), command(), ["app", "apply"]);
+
+    assert_eq!(result.error_kind(), Some(RunErrorKind::Render));
+    let summary = result.expect_diagnostic().summary;
+    assert!(summary.contains("CsvProjection"), "{summary}");
+    assert!(
+        !result.stdout().contains("apply_start"),
+        "{}",
+        result.stdout()
+    );
+}
+
+#[test]
+fn a_csv_projection_declared_on_the_command_takes_the_events_as_its_rows() {
+    let projection = StructuredOutputProjection::csv(
+        CsvProjection::builder(".")
+            .column(
+                Column::new(Width::default())
+                    .key("resource")
+                    .header("RESOURCE"),
+            )
+            .derived_column(
+                Column::new(Width::default()).key("phase").header("PHASE"),
+                |row, _root| json!(row["type"].as_str().unwrap_or("").replace("apply_", "")),
+            )
+            .build(),
+    );
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "apply",
+            EventsFnHandler::new(
+                |_: &ArgMatches,
+                 _: &CommandContext,
+                 results: &mut Results<Value>|
+                 -> HandlerResult<Value> {
+                    events(results)?;
+                    Ok(Output::Render(json!({ "add": 2 })))
+                },
+            ),
+            move |cfg| cfg.structured_output_projection(projection.clone()),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let result = TestHarness::new()
+        .color(ColorPolicy::Never)
+        .output_mode(Representation::Csv)
+        .run(&app, command(), ["app", "apply"]);
+
+    result.assert_success();
+    assert_eq!(
+        result.stdout(),
+        "RESOURCE,PHASE\nweb,start\nweb,complete\ndb,start\ndb,complete\n"
+    );
+}
+
+#[test]
+fn result_reports_the_same_events_and_summary_under_csv() {
+    let human = run(Ending::Summary, Representation::Human);
+    let csv = run(Ending::Summary, Representation::Csv);
+    assert_eq!(csv.results(), human.results());
+    assert_eq!(csv.result(), Some(&json!({ "add": 2 })));
 }

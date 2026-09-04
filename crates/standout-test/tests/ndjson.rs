@@ -257,20 +257,16 @@ fn the_human_representation_renders_each_event_then_the_summary() {
 }
 
 #[test]
-fn csv_carries_no_events_yet_and_writes_nothing() {
+fn csv_carries_the_events_as_rows_and_leaves_the_summary_out() {
     let result = TestHarness::new().output_mode(Representation::Csv).run(
         &app(),
         command(),
         ["app", "stream"],
     );
-    result.assert_error_kind(RunErrorKind::Render);
-    assert!(
-        result
-            .expect_diagnostic()
-            .summary
-            .contains("standout does not build one yet"),
-        "{}",
-        result.stdout()
+    result.assert_success();
+    assert_eq!(
+        result.stdout(),
+        "type,format_version,resource\nversion,1,\napply_start,,web\napply_complete,,web\n"
     );
 }
 
