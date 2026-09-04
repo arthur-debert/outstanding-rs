@@ -4257,14 +4257,15 @@ header:
             .map(|pager| pager.command().to_string())
         };
 
-        std::env::set_var("MYAPP_PAGER", "sed -n 1p");
-        std::env::remove_var("PAGER");
+        let env = standout_test::ScopedEnv::new()
+            .set("MYAPP_PAGER", "sed -n 1p")
+            .remove("PAGER");
 
         assert_eq!(resolve(&["myapp", "list"]), Some("sed -n 1p".to_string()));
         assert_eq!(resolve(&["myapp", "list", "--no-pager"]), None);
         assert_eq!(resolve(&["myapp", "add"]), None);
 
-        std::env::remove_var("MYAPP_PAGER");
+        let _env = env.remove("MYAPP_PAGER");
         assert_eq!(resolve(&["myapp", "list"]), None);
     }
 }

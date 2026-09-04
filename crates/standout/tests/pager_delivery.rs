@@ -14,7 +14,7 @@ use standout::cli::{
     RenderedOutput, Results,
 };
 use standout::{ColorPolicy, EmbeddedTemplates, InputSources, Representation, TargetProperties};
-use standout_test::{TestHarness, TestResult};
+use standout_test::{ScopedEnv, TestHarness, TestResult};
 
 const TEMPLATES: &[(&str, &str)] = &[
     ("log", "{{ entries }} entries"),
@@ -295,9 +295,7 @@ fn a_help_page_the_strict_style_check_rejects_pages_nothing() {
 #[test]
 #[serial]
 fn dispatch_reports_the_decision_the_argv_path_reports() {
-    let restore = (std::env::var_os("MYAPP_PAGER"), std::env::var_os("PAGER"));
-    std::env::set_var("MYAPP_PAGER", PAGER);
-    std::env::remove_var("PAGER");
+    let _env = ScopedEnv::new().set("MYAPP_PAGER", PAGER).remove("PAGER");
 
     let app = app();
     let target = TargetProperties::detect();
@@ -320,12 +318,4 @@ fn dispatch_reports_the_decision_the_argv_path_reports() {
     };
     assert_eq!(dispatched.delivery(), &expected);
     assert_eq!(from_argv.delivery(), &expected);
-
-    match restore.0 {
-        Some(value) => std::env::set_var("MYAPP_PAGER", value),
-        None => std::env::remove_var("MYAPP_PAGER"),
-    }
-    if let Some(value) = restore.1 {
-        std::env::set_var("PAGER", value);
-    }
 }

@@ -184,10 +184,10 @@ mod tests {
     /// `None` whatever the environment names.
     #[cfg(windows)]
     #[test]
+    #[serial_test::serial]
     fn windows_pages_nothing_the_environment_names() {
-        std::env::set_var("PAGER", "more");
+        let _env = standout_test::ScopedEnv::new().set("PAGER", "more");
         assert_eq!(Pager::resolve(Some("myapp")), None);
-        std::env::remove_var("PAGER");
     }
 
     #[cfg(unix)]

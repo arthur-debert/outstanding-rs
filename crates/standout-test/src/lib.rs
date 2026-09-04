@@ -261,18 +261,10 @@ impl TestHarness {
         let _ = console::true_colors_enabled();
         let _ = console::true_colors_enabled_stderr();
         for (k, v) in &self.env_set {
-            restore
-                .env_originals
-                .entry(k.clone())
-                .or_insert_with(|| std::env::var(k).ok());
-            std::env::set_var(k, v);
+            restore.env.set_var(k.clone(), v);
         }
         for k in &self.env_remove {
-            restore
-                .env_originals
-                .entry(k.clone())
-                .or_insert_with(|| std::env::var(k).ok());
-            std::env::remove_var(k);
+            restore.env.remove_var(k.clone());
         }
         let mut sources = InputSources::from_process();
         match std::mem::replace(&mut self.stdin, StdinMode::Inherit) {
@@ -474,19 +466,76 @@ fn output_mode_flag(representation: Representation) -> Option<&'static str> {
 }
 #[derive(Default)]
 struct RestoreState {
-    env_originals: HashMap<String, Option<String>>,
+    env: ScopedEnv,
     original_cwd: Option<PathBuf>,
 }
 impl Drop for RestoreState {
     fn drop(&mut self) {
-        for (k, original) in self.env_originals.drain() {
-            match original {
-                Some(v) => std::env::set_var(&k, v),
-                None => std::env::remove_var(&k),
-            }
-        }
         if let Some(cwd) = self.original_cwd.take() {
             let _ = std::env::set_current_dir(cwd);
+        }
+    }
+}
+
+/// Environment variables set or removed for as long as the guard lives, with
+/// whatever stood there restored when it drops — on a panic as much as on a
+/// pass. A test that reaches the process environment directly, rather than
+/// through [`TestHarness::env`], holds one of these instead of restoring by
+/// hand. The environment is process-wide, so the `#[serial]` rule applies the
+/// same way it does to the harness.
+///
+/// ```no_run
+/// # use standout_test::ScopedEnv;
+/// let _env = ScopedEnv::new().set("MYAPP_PAGER", "sed -n 1p").remove("PAGER");
+/// ```
+#[derive(Default)]
+pub struct ScopedEnv {
+    originals: HashMap<String, Option<String>>,
+}
+
+impl ScopedEnv {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set(mut self, key: impl Into<String>, value: impl AsRef<str>) -> Self {
+        self.set_var(key, value.as_ref());
+        self
+    }
+
+    pub fn remove(mut self, key: impl Into<String>) -> Self {
+        self.remove_var(key);
+        self
+    }
+
+    fn set_var(&mut self, key: impl Into<String>, value: impl AsRef<str>) {
+        let key = self.remember(key);
+        std::env::set_var(key, value.as_ref());
+    }
+
+    fn remove_var(&mut self, key: impl Into<String>) {
+        let key = self.remember(key);
+        std::env::remove_var(key);
+    }
+
+    /// The value standing before this guard touched the variable, kept from
+    /// the first touch so a later one never records what the guard itself set.
+    fn remember(&mut self, key: impl Into<String>) -> String {
+        let key = key.into();
+        self.originals
+            .entry(key.clone())
+            .or_insert_with(|| std::env::var(&key).ok());
+        key
+    }
+}
+
+impl Drop for ScopedEnv {
+    fn drop(&mut self) {
+        for (key, original) in self.originals.drain() {
+            match original {
+                Some(value) => std::env::set_var(&key, value),
+                None => std::env::remove_var(&key),
+            }
         }
     }
 }
