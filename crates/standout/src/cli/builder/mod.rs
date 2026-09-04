@@ -913,21 +913,28 @@ impl App {
                 )
             }
             Err(ParseFailure::Clap(e)) => {
+                let color_policy = self.resolve_color_policy(
+                    self.typed_color_from_unparsed(&args),
+                    ColorPolicy::Auto,
+                    None,
+                );
                 return match self.intercept_display_help(
                     &mut cmd,
                     &args,
                     &e,
                     None,
-                    ColorPolicy::Auto,
+                    color_policy,
                     None,
                 ) {
                     Some(display) => display.into(),
                     None => HelpResult::Error(e),
-                }
+                };
             }
         };
 
-        match self.intercept_help_word(&mut cmd, &matches, None, ColorPolicy::Auto, None) {
+        let color_policy =
+            self.resolve_color_policy(self.typed_color_policy(&matches), ColorPolicy::Auto, None);
+        match self.intercept_help_word(&mut cmd, &matches, None, color_policy, None) {
             Some(display) => display.into(),
             None => HelpResult::Matches(matches),
         }

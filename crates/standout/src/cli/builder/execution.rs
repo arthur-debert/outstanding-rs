@@ -152,22 +152,26 @@ impl App {
         let capture = StreamCapture::default();
         let recorder = RunRecorder::new();
         let run = self.collect_run_warnings(&recorder, |warnings| {
-            let config = match self.resolve_config_for(&matches) {
-                Ok(config) => config,
-                Err(error) => {
-                    return (DispatchResult::Error(error), output_mode, ColorPolicy::Auto)
-                }
-            };
-            let term = config.as_ref().and_then(|config| config.term.as_ref());
+            // Resolved before the config outcome is unwrapped, so a run that
+            // fails to load one still reports the policy its flags asked for.
+            let config = self.resolve_config_for(&matches);
             let resolved = self.resolve_run(
                 &matches,
-                term,
+                config
+                    .as_ref()
+                    .ok()
+                    .and_then(|config| config.as_ref())
+                    .and_then(|config| config.term.as_ref()),
                 None,
                 ColorPolicy::Auto,
                 output_mode,
                 self.process_edge_target(),
             );
             let (output_mode, color_policy) = (resolved.representation, resolved.color_policy);
+            let config = match config {
+                Ok(config) => config,
+                Err(error) => return (DispatchResult::Error(error), output_mode, color_policy),
+            };
             (
                 self.dispatch_with_target(
                     matches,

@@ -4,8 +4,8 @@ use console::Style;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use standout::cli::{
-    App, AppBuilder, EventsFnHandler, FnHandler, HandlerResult, HelpResult, Output, Results,
-    RunErrorKind, StreamSink, TermSettings,
+    App, AppBuilder, DispatchResult, EventsFnHandler, FnHandler, HandlerResult, HelpResult, Output,
+    Results, RunErrorKind, StreamSink, TermSettings,
 };
 use standout::{ColorPolicy, EmbeddedTemplates, InputSources, Representation, TemplateRef, Theme};
 use standout_test::{serial, TestHarness};
@@ -455,6 +455,32 @@ fn run_command_lets_the_typed_flag_outrank_the_policy_the_caller_named() {
         ColorPolicy::Always,
     );
     assert_eq!(refused, "milk");
+}
+
+#[test]
+#[serial]
+fn a_run_that_cannot_load_its_config_still_reports_the_typed_policy() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("colorapp.toml"), "bogus_key = 1\n").unwrap();
+    let _cwd = Cwd::enter(dir.path());
+
+    let app = configured_app();
+    let matches = match app.get_matches_from(
+        cmd(),
+        ["colorapp", "list", "--color", "never"],
+        &InputSources::from_process(),
+    ) {
+        HelpResult::Matches(matches) => matches,
+        other => panic!("{other:?}"),
+    };
+    let run = app.dispatch(matches, Representation::Human);
+
+    assert!(
+        matches!(run.outcome(), DispatchResult::Error(_)),
+        "the bad file should have failed the run: {:?}",
+        run.outcome()
+    );
+    assert_eq!(run.color_policy(), ColorPolicy::Never);
 }
 
 #[test]
