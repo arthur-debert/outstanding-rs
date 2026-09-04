@@ -1,6 +1,6 @@
 [package]
 name = "standout-input"
-version = "11.0.0"
+version = "12.0.0"
 edition = "2021"
 description = "Declarative input collection for CLI applications"
 license = "MIT"
