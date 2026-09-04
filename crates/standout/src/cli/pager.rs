@@ -16,8 +16,11 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-/// What `sh` exits with when it cannot execute the command it was given.
-const SHELL_CANNOT_EXEC: i32 = 127;
+/// What `sh` exits with when it cannot execute the command it was given: 126
+/// when the command exists but is not an executable file, 127 when no such
+/// command was found.
+const SHELL_NOT_EXECUTABLE: i32 = 126;
+const SHELL_NOT_FOUND: i32 = 127;
 
 /// Set for the child only when the parent has not: `less` quits on one screen,
 /// keeps ANSI colors and leaves the page on the terminal; `lv` keeps its colors.
@@ -84,7 +87,9 @@ impl Pager {
             None => false,
         };
         match child.wait() {
-            Ok(status) if status.code() == Some(SHELL_CANNOT_EXEC) => PagerOutcome::CouldNotStart,
+            Ok(status) if matches!(status.code(), Some(SHELL_NOT_EXECUTABLE | SHELL_NOT_FOUND)) => {
+                PagerOutcome::CouldNotStart
+            }
             _ if unread => PagerOutcome::ReaderLeft,
             _ => PagerOutcome::Paged,
         }
@@ -223,6 +228,22 @@ mod tests {
     fn a_pager_that_cannot_start_says_so() {
         assert_eq!(
             pager("/nonexistent/pager 2>/dev/null").page_with("page", &[]),
+            PagerOutcome::CouldNotStart
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_pager_that_is_not_executable_cannot_start_either() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pager");
+        std::fs::write(&path, "#!/bin/sh\ncat\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert_eq!(
+            pager(&format!("{} 2>/dev/null", path.display())).page_with("page", &[]),
             PagerOutcome::CouldNotStart
         );
     }

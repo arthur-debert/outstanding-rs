@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::cli::builder::{SharedTemplateEngine, TemplateRef};
-use crate::cli::handler::{EmitError, EventSink, RunError, RunErrorKind, StreamSink};
+use crate::cli::handler::{EmitError, EventSink, OutputKind, RunError, RunErrorKind, StreamSink};
 use crate::context::ContextRegistry;
 use crate::{ColorPolicy, RenderRequest, Representation, TargetProperties, Theme};
 
@@ -177,6 +177,17 @@ impl EventDestination {
     }
 }
 
+/// The phase an emit failure belongs to. An event that never became bytes
+/// failed while rendering; one the destination refused failed the same write
+/// that carries a whole run's text, and reaches machine consumers under the
+/// `final-write` kind rather than `render`.
+fn failure_kind(error: &EmitError) -> RunErrorKind {
+    match error {
+        EmitError::Serialize(_) | EmitError::Render(_) => RunErrorKind::Render,
+        EmitError::Write(_) => RunErrorKind::FinalWrite(OutputKind::Text),
+    }
+}
+
 impl EventSink for EventDestination {
     fn deliver(&self, event: &serde_json::Value) -> Result<(), EmitError> {
         let Err(error) = self.write(event) else {
@@ -184,12 +195,41 @@ impl EventSink for EventDestination {
         };
         let mut failure = self.failure.borrow_mut();
         if failure.is_none() {
-            *failure = Some(RunError::new(error.to_string(), RunErrorKind::Render));
+            *failure = Some(RunError::new(error.to_string(), failure_kind(&error)));
         }
         Err(error)
     }
 
     fn is_open(&self) -> bool {
         self.retained.is_some() || self.sink.is_open()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::handler::DiagnosticKind;
+
+    #[test]
+    fn every_emit_failure_keeps_the_phase_it_failed_in() {
+        let serialize = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
+        let cases = [
+            (EmitError::Serialize(serialize), DiagnosticKind::Render),
+            (
+                EmitError::Render("no template".into()),
+                DiagnosticKind::Render,
+            ),
+            (
+                EmitError::Write(std::io::Error::other("no room")),
+                DiagnosticKind::FinalWrite,
+            ),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(
+                DiagnosticKind::from(failure_kind(&error)),
+                expected,
+                "{error}"
+            );
+        }
     }
 }

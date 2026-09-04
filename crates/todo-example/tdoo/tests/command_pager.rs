@@ -105,6 +105,26 @@ fn a_pager_that_cannot_start_writes_the_bytes_it_would_have_paged() {
 
 #[cfg(unix)]
 #[test]
+fn a_pager_that_is_not_executable_writes_the_bytes_it_would_have_paged() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let pager = dir.path().join("pager");
+    std::fs::write(&pager, "#!/bin/sh\ncat\n").unwrap();
+    std::fs::set_permissions(&pager, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    let fell_back = listing(&[("TDOO_PAGER", pager.to_str().unwrap())])
+        .run_pty(env!("CARGO_BIN_EXE_tdoo"), ["list"]);
+    let unpaged = listing(&[("TDOO_PAGER", MARKING)])
+        .run_pty(env!("CARGO_BIN_EXE_tdoo"), ["list", "--no-pager"]);
+
+    fell_back.assert_success();
+    assert_eq!(fell_back.status().code(), Some(0));
+    assert_eq!(fell_back.stdout_bytes(), unpaged.stdout_bytes());
+}
+
+#[cfg(unix)]
+#[test]
 fn a_pager_that_stops_reading_keeps_the_run_successful() {
     let result =
         listing(&[("TDOO_PAGER", "head -1")]).run_pty(env!("CARGO_BIN_EXE_tdoo"), ["list"]);
