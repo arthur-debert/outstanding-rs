@@ -75,7 +75,7 @@ flowchart TB
 
     subgraph Result["Render Result"]
         RR["RenderResult<br/>{formatted: String, raw: String}"]
-        DO["DispatchOutput<br/>Text{formatted, raw} | Binary | Silent"]
+        DO["DispatchOutput<br/>Text{formatted, raw} | Records | Binary | Artifact | Silent"]
         RR --> DO
     end
 
@@ -84,7 +84,7 @@ flowchart TB
     end
 
     subgraph Final["Final Output"]
-        RUN["DispatchResult<br/>Handled(String) | Binary | Silent"]
+        RUN["DispatchResult<br/>Handled(RunOutput) | Binary | Artifact | Silent | Error | NoMatch"]
         PRINT["stdout, the named output file, or the pager"]
         RUN --> PRINT
     end
