@@ -59,18 +59,21 @@ pub enum EmitError {
     Write(#[from] std::io::Error),
 }
 
-/// Where the run's rendered bytes went.
+/// Where the run's rendered bytes went. `Pager` carries the shell word list
+/// the environment named, decided without starting anything, so a test reads
+/// the decision back off a run that never had a terminal.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Delivery {
     #[default]
     Stdout,
     File(PathBuf),
+    Pager(String),
 }
 
 impl Delivery {
     pub fn path(&self) -> Option<&Path> {
         match self {
-            Delivery::Stdout => None,
+            Delivery::Stdout | Delivery::Pager(_) => None,
             Delivery::File(path) => Some(path),
         }
     }

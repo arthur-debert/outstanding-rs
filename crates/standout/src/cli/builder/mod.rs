@@ -360,6 +360,7 @@ fn strict_style_tags_from_env(value: Option<std::ffi::OsString>) -> bool {
 }
 
 pub struct App {
+    pub(crate) name: Option<String>,
     pub(crate) registry: TopicRegistry,
     pub(crate) output_flag: Option<String>,
     pub(crate) output_mode_fallback: Representation,
@@ -397,6 +398,7 @@ impl App {
 }
 
 pub struct AppBuilder {
+    pub(crate) name: Option<String>,
     pub(crate) registry: TopicRegistry,
     pub(crate) output_flag: Option<String>,
     pub(crate) output_mode_fallback: Representation,
@@ -448,6 +450,7 @@ pub struct AppBuilder {
 impl AppBuilder {
     pub(crate) fn new() -> Self {
         Self {
+            name: None,
             registry: TopicRegistry::new(),
             output_flag: Some("output".to_string()),
             output_mode_fallback: Representation::Human,
@@ -657,6 +660,7 @@ impl AppBuilder {
         }
 
         let app = App {
+            name: self.name,
             registry: self.registry,
             output_flag: self.output_flag,
             output_mode_fallback: self.output_mode_fallback,
@@ -855,6 +859,13 @@ impl App {
             .is_some_and(|pending| pending.recipe.emits_events())
     }
 
+    pub(crate) fn pageable_for(&self, path: &str) -> bool {
+        self.pending_commands
+            .borrow()
+            .get(path)
+            .is_some_and(|pending| pending.recipe.pageable())
+    }
+
     fn csv_projection_for(&self, path: &str) -> Option<crate::CsvProjection> {
         self.pending_commands
             .borrow()
@@ -1041,17 +1052,9 @@ impl App {
         )
     }
 
-    fn help_display(
-        &self,
-        cmd: &Command,
-        rendered: Result<String, RenderError>,
-        use_pager: bool,
-    ) -> HelpDisplay {
+    fn help_display(&self, cmd: &Command, rendered: Result<String, RenderError>) -> HelpDisplay {
         match rendered {
-            Ok(text) => HelpDisplay::Rendered {
-                text,
-                paged: use_pager,
-            },
+            Ok(text) => HelpDisplay::Rendered { text },
             Err(e) => Self::render_failure(cmd, e),
         }
     }
@@ -1073,15 +1076,12 @@ impl App {
             length: HelpLength::Long,
             ..Default::default()
         };
-        let use_pager = sub_matches.get_flag("page");
-
         if let Some(topic_args) = sub_matches.get_many::<String>("topic") {
             let keywords: Vec<_> = topic_args.map(|s| s.as_str()).collect();
             if !keywords.is_empty() {
                 return self.handle_help_request(
                     cmd,
                     &keywords,
-                    use_pager,
                     config,
                     format,
                     target,
@@ -1091,15 +1091,7 @@ impl App {
             }
         }
 
-        self.render_root_help(
-            cmd,
-            config,
-            format,
-            target,
-            color_policy,
-            warnings,
-            use_pager,
-        )
+        self.render_root_help(cmd, config, format, target, color_policy, warnings)
     }
 
     fn render_failure(cmd: &Command, error: impl std::fmt::Display) -> HelpDisplay {
@@ -1118,7 +1110,6 @@ impl App {
         target: crate::TargetProperties,
         color_policy: ColorPolicy,
         warnings: Option<standout_render::warnings::WarningBuffer>,
-        use_pager: bool,
     ) -> HelpDisplay {
         if help_is_a_document(format) {
             return self.help_document(cmd, &[], config.length, format);
@@ -1150,11 +1141,10 @@ impl App {
                 color_policy,
                 warnings,
             ),
-            use_pager,
         )
     }
 
-    /// Never paged; `csv` has no help projection and is a render error.
+    /// `csv` has no help projection and is a render error.
     fn help_document(
         &self,
         cmd: &Command,
@@ -1163,7 +1153,7 @@ impl App {
         format: Representation,
     ) -> HelpDisplay {
         match render_help_document(cmd, path, length, format) {
-            Ok(Some(text)) => HelpDisplay::Rendered { text, paged: false },
+            Ok(Some(text)) => HelpDisplay::Rendered { text },
             Ok(None) => HelpDisplay::Clap(cmd.clone().error(
                 clap::error::ErrorKind::InvalidSubcommand,
                 format!("The subcommand '{}' wasn't recognized", path.join(" ")),
@@ -1190,22 +1180,13 @@ impl App {
         };
 
         if request.target.is_empty() {
-            return self.render_root_help(
-                cmd,
-                config,
-                format,
-                target,
-                color_policy,
-                warnings,
-                false,
-            );
+            return self.render_root_help(cmd, config, format, target, color_policy, warnings);
         }
 
         let keywords: Vec<&str> = request.target.iter().map(|s| s.as_str()).collect();
         self.handle_help_request(
             cmd,
             &keywords,
-            false,
             config,
             format,
             target,
@@ -1271,7 +1252,6 @@ impl App {
         &self,
         cmd: &mut Command,
         keywords: &[&str],
-        use_pager: bool,
         config: HelpConfig,
         format: Representation,
         target: crate::TargetProperties,
@@ -1302,7 +1282,6 @@ impl App {
                     color_policy,
                     warnings,
                 ),
-                use_pager,
             );
         }
 
@@ -1335,7 +1314,6 @@ impl App {
                         color_policy,
                         warnings,
                     ),
-                    use_pager,
                 );
             }
         }
@@ -1359,7 +1337,6 @@ impl App {
                     color_policy,
                     warnings,
                 ),
-                use_pager,
             );
         }
 
@@ -1499,9 +1476,9 @@ impl App {
             .and_then(parse_color_flag)
     }
 
-    /// The pre-parse read the help path uses, where no `ArgMatches` exists yet.
-    /// A named file is the run's destination whatever else the invocation asks
-    /// for, so help lands there rather than in a pager.
+    /// The pre-parse read the paging decision uses, taken for help before any
+    /// `ArgMatches` exists. A named file is the run's destination whatever
+    /// else the invocation asks for, so the page lands there, never in a pager.
     pub(crate) fn output_file_from_unparsed(
         &self,
         args: &[std::ffi::OsString],
@@ -1512,8 +1489,8 @@ impl App {
             .map(std::path::PathBuf::from)
     }
 
-    /// Read from the raw arguments: paging is decided at the process edge,
-    /// where `--help` short-circuits clap and leaves no `ArgMatches` behind.
+    /// Read from the raw arguments, because `--help` short-circuits clap and
+    /// leaves no `ArgMatches` for the paging decision to consult.
     pub(crate) fn paging_is_suppressed(&self, args: &[std::ffi::OsString]) -> bool {
         self.pager_flag
             .as_deref()
@@ -1888,20 +1865,12 @@ fn help_word_command(has_subcommands: bool) -> Command {
         ("Print this message", "The topic to print help for")
     };
 
-    Command::new("help")
-        .about(about)
-        .arg(
-            Arg::new("topic")
-                .action(ArgAction::Set)
-                .num_args(1..)
-                .help(topic_help),
-        )
-        .arg(
-            Arg::new("page")
-                .long("page")
-                .action(ArgAction::SetTrue)
-                .help("Display help through a pager"),
-        )
+    Command::new("help").about(about).arg(
+        Arg::new("topic")
+            .action(ArgAction::Set)
+            .num_args(1..)
+            .help(topic_help),
+    )
 }
 
 #[cfg(test)]

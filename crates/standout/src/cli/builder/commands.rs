@@ -105,6 +105,9 @@ impl AppBuilder {
         if let Some(projection) = config.structured_output_projection {
             recipe = recipe.with_structured_output_projection(projection);
         }
+        if config.pageable {
+            recipe = recipe.pageable();
+        }
 
         if self.pending_commands.borrow().contains_key(path) {
             return Err(SetupError::DuplicateCommand(path.to_string()));

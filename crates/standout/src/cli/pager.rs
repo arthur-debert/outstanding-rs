@@ -3,6 +3,8 @@
 //!
 //! The command comes from the environment only — `<APP>_PAGER`, then `PAGER`
 //! — so no configuration file can name a program the framework will execute.
+//! `<APP>` is the name the application gave the builder, so an application
+//! that never named itself is paged by `PAGER` alone.
 //! An unset variable and an empty winning value both mean "do not page":
 //! there is no built-in `less` or `more` to fall back to. The value is a
 //! shell word list, not a program name, so it runs through `sh -c`; Windows
@@ -36,7 +38,18 @@ pub(crate) enum PagerOutcome {
 }
 
 impl Pager {
-    pub(crate) fn resolve(app_name: &str) -> Option<Self> {
+    /// The pager a run already decided on, named by its own delivery record.
+    pub(crate) fn named(command: impl Into<String>) -> Self {
+        Self {
+            command: command.into(),
+        }
+    }
+
+    pub(crate) fn command(&self) -> &str {
+        &self.command
+    }
+
+    pub(crate) fn resolve(app_name: Option<&str>) -> Option<Self> {
         if cfg!(windows) {
             return None;
         }
@@ -45,8 +58,10 @@ impl Pager {
         })
     }
 
-    fn resolve_from(app_name: &str, var: impl Fn(&str) -> Option<String>) -> Option<Self> {
-        let value = var(&app_pager_var(app_name)).or_else(|| var("PAGER"))?;
+    fn resolve_from(app_name: Option<&str>, var: impl Fn(&str) -> Option<String>) -> Option<Self> {
+        let value = app_name
+            .and_then(|app_name| var(&app_pager_var(app_name)))
+            .or_else(|| var("PAGER"))?;
         let command = value.trim();
         (!command.is_empty()).then(|| Self {
             command: command.to_string(),
@@ -115,32 +130,39 @@ mod tests {
             .collect()
     }
 
-    fn resolve(app_name: &str, vars: &HashMap<String, String>) -> Option<Pager> {
+    fn resolve(app_name: Option<&str>, vars: &HashMap<String, String>) -> Option<Pager> {
         Pager::resolve_from(app_name, |name| vars.get(name).cloned())
     }
 
     #[test]
     fn the_application_variable_outranks_pager() {
         let vars = env(&[("MYAPP_PAGER", "sed -n 1p"), ("PAGER", "less")]);
-        assert_eq!(resolve("myapp", &vars).unwrap().command, "sed -n 1p");
+        assert_eq!(resolve(Some("myapp"), &vars).unwrap().command, "sed -n 1p");
     }
 
     #[test]
     fn pager_answers_when_the_application_variable_is_unset() {
         let vars = env(&[("PAGER", "less -FRX")]);
-        assert_eq!(resolve("myapp", &vars).unwrap().command, "less -FRX");
+        assert_eq!(resolve(Some("myapp"), &vars).unwrap().command, "less -FRX");
     }
 
     #[test]
     fn an_empty_winning_value_pages_nothing() {
         let vars = env(&[("MYAPP_PAGER", ""), ("PAGER", "less")]);
-        assert_eq!(resolve("myapp", &vars), None);
-        assert_eq!(resolve("myapp", &env(&[("PAGER", "   ")])), None);
+        assert_eq!(resolve(Some("myapp"), &vars), None);
+        assert_eq!(resolve(Some("myapp"), &env(&[("PAGER", "   ")])), None);
     }
 
     #[test]
     fn neither_variable_set_pages_nothing() {
-        assert_eq!(resolve("myapp", &env(&[])), None);
+        assert_eq!(resolve(Some("myapp"), &env(&[])), None);
+    }
+
+    #[test]
+    fn an_application_that_never_named_itself_reads_pager_alone() {
+        let vars = env(&[("MYAPP_PAGER", "sed -n 1p"), ("PAGER", "less")]);
+        assert_eq!(resolve(None, &vars).unwrap().command, "less");
+        assert_eq!(resolve(None, &env(&[("MYAPP_PAGER", "less")])), None);
     }
 
     #[test]
@@ -162,17 +184,15 @@ mod tests {
     /// `None` whatever the environment names.
     #[cfg(windows)]
     #[test]
+    #[serial_test::serial]
     fn windows_pages_nothing_the_environment_names() {
-        std::env::set_var("PAGER", "more");
-        assert_eq!(Pager::resolve("myapp"), None);
-        std::env::remove_var("PAGER");
+        let _env = standout_test::ScopedEnv::new().set("PAGER", "more");
+        assert_eq!(Pager::resolve(Some("myapp")), None);
     }
 
     #[cfg(unix)]
     fn pager(command: &str) -> Pager {
-        Pager {
-            command: command.to_string(),
-        }
+        Pager::named(command)
     }
 
     #[cfg(unix)]

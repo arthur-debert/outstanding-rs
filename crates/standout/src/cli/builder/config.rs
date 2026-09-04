@@ -13,6 +13,15 @@ impl AppBuilder {
         self
     }
 
+    /// The application's own name, which every entry point reads the same way
+    /// — the argv path, `dispatch` and `run_command` alike. An application
+    /// that names itself is paged by `<NAME>_PAGER` before `PAGER`; one that
+    /// does not is paged by `PAGER` alone.
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
     pub fn version(mut self, version: impl Into<String>) -> Self {
         self.version = Some(version.into());
         self

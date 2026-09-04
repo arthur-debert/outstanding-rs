@@ -22,7 +22,7 @@ pub(crate) enum Commands {
         title: Option<String>,
     },
     /// List todos. By default only pending ones; pass --all for everything.
-    #[dispatch(pure)]
+    #[dispatch(pure, pageable)]
     List {
         #[arg(short, long)]
         all: bool,

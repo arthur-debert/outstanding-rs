@@ -301,7 +301,6 @@ pub enum SuccessKind {
     Command,
     ClapHelp,
     ClapVersion,
-    PagedHelp,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -336,9 +335,6 @@ impl RunOutput {
     }
     pub fn clap_help(text: impl Into<String>) -> Self {
         Self::new(text, SuccessKind::ClapHelp)
-    }
-    pub fn paged_help(text: impl Into<String>) -> Self {
-        Self::new(text, SuccessKind::PagedHelp)
     }
     pub fn clap_version(text: impl Into<String>) -> Self {
         Self::new(text, SuccessKind::ClapVersion)

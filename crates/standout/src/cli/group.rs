@@ -51,6 +51,12 @@ pub(crate) trait CommandRecipe {
         false
     }
 
+    /// True when the application marked the command's complete human output
+    /// as one the user may read through a pager.
+    fn pageable(&self) -> bool {
+        false
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn create_dispatch(
         &self,
@@ -176,6 +182,7 @@ where
     hooks: Option<Hooks>,
     questionnaire: Option<QuestionnaireCommand>,
     structured_output_projection: Option<StructuredOutputProjection>,
+    pageable: bool,
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -190,6 +197,7 @@ where
             hooks: None,
             questionnaire: None,
             structured_output_projection: None,
+            pageable: false,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -206,6 +214,11 @@ where
         projection: StructuredOutputProjection,
     ) -> Self {
         self.structured_output_projection = Some(projection);
+        self
+    }
+
+    pub fn pageable(mut self) -> Self {
+        self.pageable = true;
         self
     }
 }
@@ -229,6 +242,10 @@ where
 
     fn emits_events(&self) -> bool {
         emits_events::<H::Event>()
+    }
+
+    fn pageable(&self) -> bool {
+        self.pageable
     }
 
     fn create_dispatch(
@@ -264,6 +281,7 @@ pub(crate) struct ErasedConfigRecipe {
     template_name: Option<String>,
     template_absence: Option<TemplateAbsence>,
     emits_events: bool,
+    pageable: bool,
     #[allow(dead_code)]
     hooks: RefCell<Option<Hooks>>,
     structured_output_projection: Option<StructuredOutputProjection>,
@@ -274,6 +292,7 @@ impl ErasedConfigRecipe {
         let template_name = handler.template_name().map(String::from);
         let template_absence = handler.template_absence();
         let emits_events = handler.emits_events();
+        let pageable = handler.pageable();
         let hooks = handler.take_hooks();
         let structured_output_projection = handler.structured_output_projection().cloned();
         Self {
@@ -281,6 +300,7 @@ impl ErasedConfigRecipe {
             template_name,
             template_absence,
             emits_events,
+            pageable,
             hooks: RefCell::new(hooks),
             structured_output_projection,
         }
@@ -310,6 +330,10 @@ impl CommandRecipe for ErasedConfigRecipe {
 
     fn emits_events(&self) -> bool {
         self.emits_events
+    }
+
+    fn pageable(&self) -> bool {
+        self.pageable
     }
 
     fn create_dispatch(
@@ -406,6 +430,7 @@ pub struct CommandConfig<H> {
     pub(crate) questionnaire: Option<QuestionnaireCommand>,
     pub(crate) questionnaire_settings: Rc<RefCell<QuestionnaireSettings>>,
     pub(crate) structured_output_projection: Option<StructuredOutputProjection>,
+    pub(crate) pageable: bool,
 }
 
 impl<H> CommandConfig<H> {
@@ -418,6 +443,7 @@ impl<H> CommandConfig<H> {
             questionnaire: None,
             questionnaire_settings: Rc::new(RefCell::new(QuestionnaireSettings::default())),
             structured_output_projection: None,
+            pageable: false,
         }
     }
 
@@ -506,6 +532,14 @@ impl<H> CommandConfig<H> {
 
     pub fn structured_output_projection(mut self, projection: StructuredOutputProjection) -> Self {
         self.structured_output_projection = Some(projection);
+        self
+    }
+
+    /// Marks the command's complete human output as pageable. Eligibility
+    /// only: the framework still pages nothing unless the run is batch human
+    /// output on a terminal that the environment names a pager for.
+    pub fn pageable(mut self) -> Self {
+        self.pageable = true;
         self
     }
 
@@ -689,6 +723,10 @@ pub(crate) trait ErasedCommandConfig {
     fn emits_events(&self) -> bool {
         false
     }
+    /// True when the application marked the command's human output pageable.
+    fn pageable(&self) -> bool {
+        false
+    }
     #[allow(clippy::too_many_arguments)]
     fn register(
         self: Box<Self>,
@@ -752,6 +790,7 @@ impl GroupBuilder {
                     hooks: config.hooks,
                     questionnaire: config.questionnaire,
                     structured_output_projection: config.structured_output_projection,
+                    pageable: config.pageable,
                 }),
             },
         );
@@ -806,6 +845,7 @@ where
     hooks: Option<Hooks>,
     questionnaire: Option<QuestionnaireCommand>,
     structured_output_projection: Option<StructuredOutputProjection>,
+    pageable: bool,
 }
 
 impl<F, T> ErasedCommandConfig for ClosureCommandConfig<F, T>
@@ -831,6 +871,10 @@ where
 
     fn take_questionnaire(&mut self) -> Option<QuestionnaireCommand> {
         self.questionnaire.take()
+    }
+
+    fn pageable(&self) -> bool {
+        self.pageable
     }
 
     fn register(

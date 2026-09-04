@@ -48,6 +48,34 @@ pub(crate) struct RunResolution {
     pub(crate) representation: Representation,
     pub(crate) color_policy: ColorPolicy,
     pub(crate) target: TargetProperties,
+    pub(crate) pager: Option<Pager>,
+}
+
+/// What an entry point hands back to [`App::collect_run_warnings`]: the run as
+/// its own path left it, plus the pager its page goes to if the outcome that
+/// stands at the end of the window is still one with a page.
+struct RunOutcome {
+    outcome: DispatchResult,
+    output_mode: Representation,
+    color_policy: ColorPolicy,
+    pager: Option<Pager>,
+}
+
+impl RunOutcome {
+    /// A path with nothing a pager would ever take: an error, a usage message,
+    /// or clap's own help and version text.
+    fn to_stdout(
+        outcome: DispatchResult,
+        output_mode: Representation,
+        color_policy: ColorPolicy,
+    ) -> Self {
+        Self {
+            outcome,
+            output_mode,
+            color_policy,
+            pager: None,
+        }
+    }
 }
 
 /// The strict-mode failure for whatever the render window has left unresolved
@@ -172,10 +200,17 @@ impl App {
             let (output_mode, color_policy) = (resolved.representation, resolved.color_policy);
             let config = match config {
                 Ok(config) => config,
-                Err(error) => return (DispatchResult::Error(error), output_mode, color_policy),
+                Err(error) => {
+                    return RunOutcome {
+                        outcome: DispatchResult::Error(error),
+                        output_mode,
+                        color_policy,
+                        pager: None,
+                    }
+                }
             };
-            (
-                self.dispatch_with_target(
+            RunOutcome {
+                outcome: self.dispatch_with_target(
                     matches,
                     output_mode,
                     color_policy,
@@ -190,7 +225,8 @@ impl App {
                 ),
                 output_mode,
                 color_policy,
-            )
+                pager: resolved.pager,
+            }
         });
         run.with_entries(String::from_utf8_lossy(&capture.take()).into_owned())
     }
@@ -201,9 +237,10 @@ impl App {
         target
     }
 
-    /// The one place a run's presentation is decided, so a rule added here
-    /// reaches every entry point: `dispatch`, the argv path, and the
-    /// partial-adoption `run_command`.
+    /// The one place a run's presentation and its destination are decided, so
+    /// a rule added here reaches every entry point: `dispatch`, the argv path,
+    /// and the partial-adoption `run_command`. Help is the one page decided
+    /// elsewhere, because it short-circuits clap and leaves no `ArgMatches`.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn resolve_run(
         &self,
@@ -214,17 +251,26 @@ impl App {
         representation_fallback: Representation,
         target: TargetProperties,
     ) -> RunResolution {
+        let representation = self.typed_output_mode(matches).unwrap_or_else(|| {
+            term.and_then(|term| term.output)
+                .map_or(representation_fallback, Representation::from)
+        });
+        let target = file_destination(target, self.output_file_override(matches).is_some());
         RunResolution {
-            representation: self.typed_output_mode(matches).unwrap_or_else(|| {
-                term.and_then(|term| term.output)
-                    .map_or(representation_fallback, Representation::from)
-            }),
+            representation,
             color_policy: self.resolve_color_policy(
                 self.typed_color_policy(matches).or(typed_color),
                 named_color,
                 term,
             ),
-            target: file_destination(target, self.output_file_override(matches).is_some()),
+            target,
+            pager: self
+                .pager_for_run(
+                    target,
+                    representation,
+                    self.paging_is_suppressed_in(matches),
+                )
+                .filter(|_| self.pages_its_output(&extract_command_path(matches).join("."))),
         }
     }
 
@@ -283,6 +329,7 @@ impl App {
 
         let hooks = self.command_hooks.get(&path_str);
         let sub_matches = get_deepest_matches(&matches);
+        let emits_events = self.emits_events_for(&path_str);
 
         if let Some(hooks) = hooks {
             if let Err(e) = hooks.run_pre_dispatch(sub_matches, &mut ctx) {
@@ -315,7 +362,7 @@ impl App {
             sub_matches,
             &ctx,
             output_mode,
-            self.emits_events_for(&path_str),
+            emits_events,
             override_path,
             &sink,
             &warnings,
@@ -667,7 +714,7 @@ impl App {
         sink: StreamSink,
         recorder: RunRecorder,
         warnings: WarningBuffer,
-    ) -> (DispatchResult, Representation, ColorPolicy)
+    ) -> RunOutcome
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
@@ -685,7 +732,7 @@ impl App {
             .and_then(|()| self.framework_flag_collision(&cmd))
             .and_then(|()| self.config_command_collision(&cmd))
         {
-            return (
+            return RunOutcome::to_stdout(
                 DispatchResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
                 self.extract_output_mode_from_unparsed(&args),
                 color_policy,
@@ -695,7 +742,7 @@ impl App {
         let mut augmented_cmd = self.augment_command_with_help(cmd);
 
         if let Some(error) = self.help_word_collision(&augmented_cmd) {
-            return (
+            return RunOutcome::to_stdout(
                 DispatchResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
                 self.extract_output_mode_from_unparsed(&args),
                 color_policy,
@@ -706,7 +753,7 @@ impl App {
         {
             Ok(matches) => matches,
             Err(ParseFailure::UnknownDefault(e)) => {
-                return (
+                return RunOutcome::to_stdout(
                     DispatchResult::Error(RunError::new(
                         e.to_string(),
                         RunErrorKind::DefaultCommand,
@@ -725,10 +772,16 @@ impl App {
                     color_policy,
                     Some(warnings.clone()),
                 ) {
-                    return (display.into(), output_mode, color_policy);
+                    let pager = self.pager_for_rendered_help(&display, &args, target, output_mode);
+                    return RunOutcome {
+                        outcome: display.into(),
+                        output_mode,
+                        color_policy,
+                        pager,
+                    };
                 }
                 if e.use_stderr() {
-                    return (
+                    return RunOutcome::to_stdout(
                         DispatchResult::Error(RunError::new(
                             e.to_string(),
                             RunErrorKind::ClapUsage,
@@ -743,7 +796,11 @@ impl App {
                     }
                     _ => RunOutput::clap_help(e.to_string()),
                 };
-                return (DispatchResult::Handled(output), output_mode, color_policy);
+                return RunOutcome::to_stdout(
+                    DispatchResult::Handled(output),
+                    output_mode,
+                    color_policy,
+                );
             }
         };
 
@@ -758,7 +815,13 @@ impl App {
             color_policy,
             Some(warnings.clone()),
         ) {
-            return (display.into(), output_mode, color_policy);
+            let pager = self.pager_for_rendered_help(&display, &args, target, output_mode);
+            return RunOutcome {
+                outcome: display.into(),
+                output_mode,
+                color_policy,
+                pager,
+            };
         }
 
         if let Some((path, questionnaire)) = self.questionnaire_questions_invocation(&matches) {
@@ -774,7 +837,7 @@ impl App {
                     .unwrap_or(None)
                     == Some(&true);
                 if has_answers || has_yes {
-                    return (
+                    return RunOutcome::to_stdout(
                         DispatchResult::Error(RunError::new(
                             "`questions` renders the blank answer sheet and cannot be combined with --answers or --yes",
                             RunErrorKind::ClapUsage,
@@ -784,7 +847,7 @@ impl App {
                     );
                 }
             }
-            return (
+            return RunOutcome::to_stdout(
                 render_questions_result(questionnaire, &matches),
                 output_mode,
                 color_policy,
@@ -793,7 +856,13 @@ impl App {
 
         let config = match self.resolve_config_for(&matches) {
             Ok(config) => config,
-            Err(error) => return (DispatchResult::Error(error), output_mode, color_policy),
+            Err(error) => {
+                return RunOutcome::to_stdout(
+                    DispatchResult::Error(error),
+                    output_mode,
+                    color_policy,
+                )
+            }
         };
         let term = config.as_ref().and_then(|config| config.term.as_ref());
         let resolved = self.resolve_run(
@@ -806,8 +875,8 @@ impl App {
         );
         let (output_mode, color_policy) = (resolved.representation, resolved.color_policy);
 
-        (
-            self.dispatch_with_target(
+        RunOutcome {
+            outcome: self.dispatch_with_target(
                 matches,
                 output_mode,
                 color_policy,
@@ -819,7 +888,8 @@ impl App {
             ),
             output_mode,
             color_policy,
-        )
+            pager: resolved.pager,
+        }
     }
 
     fn resolve_config_for(&self, matches: &ArgMatches) -> Result<Option<ResolvedConfig>, RunError> {
@@ -939,32 +1009,73 @@ impl App {
         outcome.handled
     }
 
-    /// Help delivery: a rendered help page goes to the pager the environment
-    /// names when stdout is a terminal, the encoding is human and the
-    /// invocation did not suppress paging. `true` means the pager took the
-    /// bytes and the caller owes the user nothing on stdout; a pager that
-    /// could not start leaves the page unpaged with the run's own status. A
-    /// named output file takes the page before this is reached.
-    fn page_help(
+    /// The pager a run's complete human output goes to, or `None` for every
+    /// case that delivers to stdout instead: a stdout that is not a terminal
+    /// (a named output file among them, which `file_destination` has already
+    /// taken off the terminal), a structured encoding, `--no-pager`, and an
+    /// environment naming no pager. Reading the environment starts nothing,
+    /// so the answer is a decision a test reads back without a terminal.
+    fn pager_for_run(
         &self,
-        app_name: &str,
-        args: &[std::ffi::OsString],
-        target: &TargetProperties,
+        target: TargetProperties,
         output_mode: Representation,
-        outcome: &crate::cli::DispatchResult,
-    ) -> bool {
-        let Some(page) = help_page(outcome) else {
+        suppressed: bool,
+    ) -> Option<Pager> {
+        if !target.stdout_is_terminal || output_mode != Representation::Human || suppressed {
+            return None;
+        }
+        Pager::resolve(self.name.as_deref())
+    }
+
+    /// A help page standout rendered itself pages by the same rule a command's
+    /// output does, and reads the two facts that rule needs from the raw
+    /// arguments: `--help` short-circuits clap and leaves no `ArgMatches`.
+    fn pager_for_rendered_help(
+        &self,
+        display: &super::HelpDisplay,
+        args: &[std::ffi::OsString],
+        target: TargetProperties,
+        output_mode: Representation,
+    ) -> Option<Pager> {
+        if !matches!(display, super::HelpDisplay::Rendered { .. }) {
+            return None;
+        }
+        self.pager_for_run(
+            file_destination(target, self.output_file_from_unparsed(args).is_some()),
+            output_mode,
+            self.paging_is_suppressed(args),
+        )
+    }
+
+    fn paging_is_suppressed_in(&self, matches: &ArgMatches) -> bool {
+        matches
+            .try_get_one::<bool>(NO_PAGER_ARG)
+            .unwrap_or(None)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// True for a command whose complete human output is the run's one page:
+    /// the application marked it pageable, and it writes no events of its own.
+    fn pages_its_output(&self, path: &str) -> bool {
+        self.pageable_for(path) && !self.emits_events_for(path)
+    }
+
+    /// Carries out the run's own delivery decision: the pager takes the bytes
+    /// stdout would have received, terminating newline included. `true` means
+    /// the caller owes the user nothing on stdout; a pager that could not
+    /// start leaves them unwritten here, so the caller writes them unpaged
+    /// with the run's own status, and one that stopped reading ends delivery.
+    fn page_delivery(&self, run: &crate::cli::CompletedRun) -> bool {
+        let Delivery::Pager(command) = run.delivery() else {
             return false;
         };
-        if !target.stdout_is_terminal
-            || output_mode != Representation::Human
-            || self.paging_is_suppressed(args)
-        {
+        let DispatchResult::Handled(output) = run.outcome() else {
             return false;
-        }
-        match Pager::resolve(app_name).map(|pager| pager.page(page)) {
-            Some(PagerOutcome::Paged | PagerOutcome::ReaderLeft) => true,
-            Some(PagerOutcome::CouldNotStart) | None => false,
+        };
+        match Pager::named(command.clone()).page(&format!("{}\n", output)) {
+            PagerOutcome::Paged | PagerOutcome::ReaderLeft => true,
+            PagerOutcome::CouldNotStart => false,
         }
     }
 
@@ -978,7 +1089,6 @@ impl App {
         target.ambiguous_width = self.ambiguous_width;
         let sources = InputSources::from_process();
         let sink = StreamSink::process_stdout();
-        let app_name = cmd.get_name().to_string();
         let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
         // Help short-circuits before an `ArgMatches` exists, so the file the
         // invocation names is read from argv here — early enough that the page
@@ -1012,8 +1122,7 @@ impl App {
                         )
                     })
             });
-        let paged = help_to_file.is_none()
-            && self.page_help(&app_name, &args, &target, output_mode, result.outcome());
+        let paged = help_to_file.is_none() && self.page_delivery(&result);
 
         let stderr = std::io::stderr();
         let mut stderr = stderr.lock();
@@ -1077,18 +1186,32 @@ impl App {
 
     /// The capture window every entry point shares; help and answer-sheet outcomes, which
     /// return before the pre-commit strict check, are checked here instead.
+    ///
+    /// The last step that can replace the outcome is the strict check above,
+    /// so this is also where the run's delivery is recorded: an outcome that
+    /// no longer has a page to hand anyone reports stdout.
     fn collect_run_warnings(
         &self,
         recorder: &RunRecorder,
-        inner: impl FnOnce(WarningBuffer) -> (DispatchResult, Representation, ColorPolicy),
+        inner: impl FnOnce(WarningBuffer) -> RunOutcome,
     ) -> crate::cli::CompletedRun {
         let warnings = WarningBuffer::new();
         self.seed_startup_warnings(&warnings);
         let _capture = standout_render::diagnostics::begin_capture();
-        let (mut outcome, output_mode, color_policy) = inner(warnings.clone());
+        let RunOutcome {
+            mut outcome,
+            output_mode,
+            color_policy,
+            pager,
+        } = inner(warnings.clone());
         if outcome.success_kind().is_some() {
             if let Some(error) = self.strict_style_tags_error(&warnings) {
                 outcome = DispatchResult::Error(error);
+            }
+        }
+        if let (Some(pager), DispatchResult::Handled(output)) = (&pager, &outcome) {
+            if !output.as_str().is_empty() {
+                recorder.set_delivery(Delivery::Pager(pager.command().to_string()));
             }
         }
         crate::cli::CompletedRun::from_dispatch(
@@ -1555,11 +1678,7 @@ fn help_page(outcome: &crate::cli::DispatchResult) -> Option<&str> {
     let crate::cli::DispatchResult::Handled(output) = outcome else {
         return None;
     };
-    matches!(
-        output.kind(),
-        SuccessKind::ClapHelp | SuccessKind::PagedHelp
-    )
-    .then(|| output.as_str())
+    matches!(output.kind(), SuccessKind::ClapHelp).then(|| output.as_str())
 }
 
 /// A named output file is never a terminal, so `auto` resolves to plain text
@@ -4091,5 +4210,62 @@ header:
         let written = String::from_utf8(capture.take()).unwrap();
         assert_eq!(written.lines().count(), 64, "{written}");
         assert_eq!(run.results(), [serde_json::json!({"done": 64})]);
+    }
+
+    /// The one place the paging decision is taken, reached with a terminal
+    /// target no test process can be counted on to own. `dispatch` and
+    /// `run_command` read the same field the argv path does, so a decision
+    /// taken here is the decision every entry point reports.
+    #[test]
+    #[serial_test::serial]
+    fn resolve_run_decides_paging_for_every_entry_point() {
+        let app = App::builder()
+            .name("myapp")
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
+                "list",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(serde_json::json!({})))),
+                |cfg| cfg.pageable(),
+            )
+            .unwrap()
+            .command_with(
+                "add",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(serde_json::json!({})))),
+                |cfg| cfg,
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+        let cmd = app.augment_framework_surface(
+            Command::new("myapp")
+                .subcommand(Command::new("list"))
+                .subcommand(Command::new("add")),
+        );
+        let mut target = TargetProperties::detect();
+        target.stdout_is_terminal = true;
+        let resolve = |args: &[&str]| {
+            let matches = cmd.clone().get_matches_from(args);
+            app.resolve_run(
+                &matches,
+                None,
+                None,
+                ColorPolicy::Auto,
+                Representation::Human,
+                target,
+            )
+            .pager
+            .map(|pager| pager.command().to_string())
+        };
+
+        let env = standout_test::ScopedEnv::new()
+            .set("MYAPP_PAGER", "sed -n 1p")
+            .remove("PAGER");
+
+        assert_eq!(resolve(&["myapp", "list"]), Some("sed -n 1p".to_string()));
+        assert_eq!(resolve(&["myapp", "list", "--no-pager"]), None);
+        assert_eq!(resolve(&["myapp", "add"]), None);
+
+        let _env = env.remove("MYAPP_PAGER");
+        assert_eq!(resolve(&["myapp", "list"]), None);
     }
 }
