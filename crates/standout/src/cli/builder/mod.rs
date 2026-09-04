@@ -1497,9 +1497,11 @@ impl App {
             .unwrap_or(self.output_mode_fallback)
     }
 
-    /// One handler, hooks and render included. A typed `--color` and
-    /// `[term] color` outrank `color_policy`; `sink` takes the handler's events
-    /// as it emits them.
+    /// One handler, hooks and render included. A typed `--color` outranks
+    /// `color_policy`, which decides the run unless it is `Auto`; an `Auto`
+    /// policy falls to `[term] color` (`NO_COLOR` turning a configured `always`
+    /// down) and last to the destination. `sink` takes the handler's events as
+    /// it emits them.
     #[allow(clippy::too_many_arguments)]
     pub fn run_command<H>(
         &self,

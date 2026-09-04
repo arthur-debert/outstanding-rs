@@ -134,8 +134,7 @@ impl AppBuilder {
         self
     }
 
-    /// Removes the flag that suppresses paging, leaving no way to turn a
-    /// resolved pager off for one invocation.
+    /// Removes the flag that suppresses paging.
     pub fn no_pager_flag(mut self) -> Self {
         self.pager_flag = None;
         self

@@ -984,8 +984,8 @@ impl App {
         outcome.handled
     }
 
-    /// The pager the run's human output goes to, or `None` for delivery to
-    /// stdout. Resolving names a pager without starting one.
+    /// The pager the run's human output goes to, or `None` when paging does
+    /// not apply. Resolving names a pager without starting one.
     fn pager_for_run(
         &self,
         target: TargetProperties,
