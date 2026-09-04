@@ -1,7 +1,8 @@
 //! The in-repo `tflike` archetype (`corpus/archetypes/tflike/spec.md`) the
-//! suites run against. It carries exactly the capability the framework has,
-//! so the assertions still wrapped in `expect_gap` keep failing against it;
-//! the README beside this package says which.
+//! suites run against; the README beside this package says which gates it
+//! answers. Nothing here writes to stderr and nothing here draws progress:
+//! `apply` reports each resource as a typed event, and how that reaches the
+//! user is the representation's decision, not the handler's.
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use serde::Serialize;
@@ -28,6 +29,8 @@ const TEMPLATES: &[(&str, &str)] = &[
         concat!(
             r#"{% if event.type == "version" %}tflike format {{ event.format_version }}"#,
             r#"{% elif event.type == "planned_change" %}{{ event.action }} {{ event.resource }}"#,
+            r#"{% elif event.type == "apply_start" %}applying {{ event.resource }}"#,
+            r#"{% elif event.type == "apply_complete" %}applied {{ event.resource }}"#,
             r#"{% elif event.type == "change_summary" %}Apply complete: {{ event.add }} added, {{ event.remove }} removed.{% endif %}"#,
         ),
     ),
@@ -58,6 +61,8 @@ fn command() -> Command {
 enum Entry {
     Version { format_version: u32 },
     PlannedChange { resource: String, action: Action },
+    ApplyStart { resource: String },
+    ApplyComplete { resource: String },
     ChangeSummary { add: usize, remove: usize },
 }
 
@@ -211,6 +216,9 @@ fn apply(
         state_path,
     } = load(matches)?;
     for change in &plan.changes {
+        results.emit(Entry::ApplyStart {
+            resource: change.resource.clone(),
+        })?;
         let verb = match change.action {
             Action::Create => "creation",
             Action::Delete => "deletion",
@@ -226,7 +234,9 @@ fn apply(
             Action::Create => state.insert(change.resource.clone()),
             Action::Delete => state.remove(&change.resource),
         };
-        eprintln!("{}: {verb} complete", change.resource);
+        results.emit(Entry::ApplyComplete {
+            resource: change.resource.clone(),
+        })?;
     }
     let mut recorded = state.into_iter().collect::<Vec<_>>().join("\n");
     if !recorded.is_empty() {

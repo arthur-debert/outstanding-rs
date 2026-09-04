@@ -17,7 +17,7 @@ epics close; `gaps.toml` records each gate's owning epic and status:
 - `tests/tflike_diagnostic.rs` — machine contract,
   `docs/spec/implemented/parity-machine-contract.md`.
 - `tests/tflike_progress.rs` — typed incremental results,
-  `docs/spec/typed-command-output.md`.
+  `docs/spec/typed-command-output.md` (closed by TERM01).
 - `tests/jjlike.rs` — runtime templates, whose epic code is human-assigned and not
   yet minted (see the ownership note in `corpus/archetypes/jjlike/spec.md`).
 
@@ -81,8 +81,7 @@ binary still works. Under a custom `CARGO_TARGET_DIR` export the variable yourse
 The harness library links nothing; the fixture is the one target in this package
 built on standout.
 
-The fixture carries only the capability the closed gates cover, so the assertions
-still wrapped keep failing against it: `apply` emits no lifecycle events and reports
-its steps as stderr prose in every mode. A promoted assertion resolves the binary with
+The fixture carries exactly the capability the tflike gates cover, both of them
+now closed. A promoted assertion resolves the binary with
 `corpus_gap_suites::required_binary`, which panics — a broken suite — rather than
 skipping when the variable names nothing.
