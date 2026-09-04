@@ -3,10 +3,9 @@
 //! [`TestHarness`] is a fluent builder over the injection seams a test
 //! needs: env vars, cwd, stdin, clipboard, the representation, the color
 //! policy and whether stdout is a terminal, theme facts on
-//! `TargetProperties`, and tempdir fixtures. The color policy and
-//! stdout-is-terminal are two settings, never one. `run` applies every
-//! override, calls into the app in-process, and a `Drop` impl restores
-//! everything on success or panic. [`TestResult`] then exposes the run's
+//! `TargetProperties`, and tempdir fixtures. `run` applies every override,
+//! calls into the app in-process, and a `Drop` impl restores everything on
+//! success or panic. [`TestResult`] then exposes the run's
 //! result values as data ([`TestResult::result`]), the rendered bytes
 //! ([`TestResult::stdout`]) and the delivery decision
 //! ([`TestResult::delivery`]) separately, plus structured facts like style-tag
@@ -127,18 +126,15 @@ impl TestHarness {
         self.color_policy = policy;
         self
     }
-    /// Whether stdout reports being a terminal; sets nothing else.
     pub fn stdout_is_terminal(mut self, is_terminal: bool) -> Self {
         self.stdout_is_terminal = is_terminal;
         self
     }
-    /// Whether stderr reports being a terminal; sets nothing else.
     pub fn stderr_is_terminal(mut self, is_terminal: bool) -> Self {
         self.stderr_is_terminal = is_terminal;
         self
     }
-    /// The stdout destination fact an `auto` color policy reads; independent of
-    /// whether stdout is a terminal, and of the policy.
+    /// The stdout destination fact an `auto` color policy reads.
     pub fn stdout_color_capability(mut self, capable: bool) -> Self {
         self.stdout_color_capability = capable;
         self
@@ -150,8 +146,7 @@ impl TestHarness {
         self
     }
     /// The ordinary color-capable TTY: both streams terminals, both reporting
-    /// color capability. Set the four facts individually to model a destination
-    /// that crosses them.
+    /// color capability.
     pub fn color_capable_terminal(self) -> Self {
         self.stdout_is_terminal(true)
             .stderr_is_terminal(true)
@@ -412,8 +407,6 @@ mod target_properties_defaults {
         assert!(!stdout_only.stdout_color_capability);
         assert!(!stdout_only.stderr_color_capability);
 
-        // A terminal whose color capability is suppressed: unreachable while
-        // one setter drove all four facts.
         let colorless_terminal = TestHarness::new()
             .stdout_is_terminal(true)
             .stderr_is_terminal(true)
@@ -478,10 +471,8 @@ impl Drop for RestoreState {
 }
 
 /// Environment variables set or removed for as long as the guard lives, with
-/// whatever stood there restored when it drops — on a panic as much as on a
-/// pass. A test that reaches the process environment directly, rather than
-/// through [`TestHarness::env`], holds one of these instead of restoring by
-/// hand. The environment is process-wide, so the `#[serial]` rule applies the
+/// whatever stood there restored when it drops, on a panic as much as on a
+/// pass. The environment is process-wide, so the `#[serial]` rule applies the
 /// same way it does to the harness.
 ///
 /// ```no_run
@@ -518,8 +509,8 @@ impl ScopedEnv {
         std::env::remove_var(key);
     }
 
-    /// The value standing before this guard touched the variable, kept from
-    /// the first touch so a later one never records what the guard itself set.
+    /// Kept from the first touch, so a later one never records what the guard
+    /// itself set.
     fn remember(&mut self, key: impl Into<String>) -> String {
         let key = key.into();
         self.originals
@@ -590,9 +581,8 @@ impl TestResult {
     pub fn output_mode(&self) -> Representation {
         self.output_mode
     }
-    /// The run's result values as data, whatever representation it selected:
-    /// the batch value alone today, the ordered events and the summary once a
-    /// command emits them. `None` when the run produced no result value.
+    /// The run's last result value as data, whatever representation it
+    /// selected. `None` when the run produced no result value.
     pub fn result(&self) -> Option<&serde_json::Value> {
         self.results.last()
     }

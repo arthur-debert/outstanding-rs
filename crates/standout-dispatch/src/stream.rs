@@ -5,10 +5,9 @@
 //! then the warning entries. The process edge writes through it to stdout; a
 //! capture entry point hands it a [`StreamCapture`] and reads the bytes back;
 //! an output file override retargets it before the handler runs, so the file
-//! receives the whole run and stdout nothing —
-//! [`StreamSink::redirect`] straight away, or
-//! [`StreamSink::redirect_on_first_write`] when the run may end up writing
-//! nothing and the file should then not be created at all.
+//! receives the whole run and stdout nothing — [`StreamSink::redirect`] straight
+//! away, or [`StreamSink::redirect_on_first_write`] when a run that writes
+//! nothing should leave the file uncreated.
 //!
 //! The sink classifies a `BrokenPipe` from its writer rather than reporting
 //! it: a reader that left closes the sink, every later write is discarded and
@@ -26,10 +25,8 @@ struct Destination {
     writer: Box<dyn Write>,
     pending: Option<OpenWriter>,
     /// A deferred destination that could not be opened. The redirect replaced
-    /// the writer the run would otherwise have used, so once opening fails the
-    /// run has nowhere to write: every later write reports the same reason
-    /// rather than sending its bytes to the writer the redirect was meant to
-    /// take the place of.
+    /// the writer the run would otherwise have used, so every later write
+    /// reports the same reason rather than falling back to that writer.
     unopened: Option<(ErrorKind, String)>,
     open: bool,
 }
@@ -117,8 +114,8 @@ impl StreamSink {
     }
 
     /// Replace the destination when there is a first byte to write, so a run
-    /// that writes none leaves the writer unopened; the failure to open it is
-    /// that write's failure, and every later write's.
+    /// that writes none leaves the writer unopened. Failing to open it fails
+    /// that write and every later one.
     pub fn redirect_on_first_write<W: Write + 'static>(
         &self,
         open: impl FnOnce() -> std::io::Result<W> + 'static,

@@ -170,7 +170,6 @@ fn the_policy_reads_the_shape_the_framework_leaves_behind() {
     let app = App::builder()
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .help_handling(true)
-        // This app runs the downstream command, which spells `--color` itself.
         .no_color_flag()
         .command_with(
             "",

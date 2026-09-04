@@ -28,7 +28,7 @@ pub enum DispatchOutput {
     Artifact {
         output: ArtifactOutput,
         /// What the artifact's report renders through, if the run ends with
-        /// one. The post-output hooks can still add a report or take it away,
+        /// one. The post-output hooks can still add a report or take one away,
         /// so nothing here is resolved until they have returned.
         render: Box<PendingRender>,
     },
@@ -36,10 +36,9 @@ pub enum DispatchOutput {
         status: ExitStatus,
     },
     /// An incremental command under `json` or `yaml`: its retained event
-    /// records, then the summary's `result` record. The framework encodes the
-    /// array where a batch document is written, and appends the run's warning
-    /// records only after the post-output hooks return the document unchanged.
-    /// CSV, whose rows are the events alone, arrives as `Text` instead.
+    /// records, then the summary's `result` record. The framework appends the
+    /// run's warning records only if the post-output hooks return the document
+    /// unchanged. CSV, whose rows are the events alone, arrives as `Text`.
     Records {
         records: Vec<serde_json::Value>,
         status: ExitStatus,
@@ -90,9 +89,8 @@ pub(crate) fn payload_without_a_stream(output: &str) -> RunError {
 /// A command that produces its result while it runs writes it to the
 /// destination as it goes, so a payload cannot follow: it would be a second
 /// document sharing one file or one stdout. `emits_events` comes from the
-/// command's `Handler::Event` type, so the refusal is the same on an
-/// invocation that emitted nothing and a caller finds it in its first test
-/// rather than on the run that finally emits.
+/// command's `Handler::Event` type, so an invocation that emitted nothing is
+/// refused the same way.
 pub(crate) fn reject_payload_from_an_emitting_command(
     emits_events: bool,
     is_binary: bool,
@@ -160,8 +158,8 @@ fn render_time_template(
                     absent_template_render_error(command_path, *reason, output_mode),
                 ),
                 // A structured-only command has no template, so its human
-                // representation is the JSON its bare invocation serializes;
-                // only the style-tag diagnostic view has nothing to show.
+                // representation is the JSON a bare invocation serializes; only
+                // the style-tag diagnostic view has nothing to show.
                 TemplateAbsence::StructuredOnly => {
                     if output_mode.is_debug() {
                         return Err(absent_template_render_error(
@@ -177,11 +175,9 @@ fn render_time_template(
     }
 }
 
-/// Everything a render needs but its data and its resolved template. An
-/// artifact's report is rendered after the post-output hooks, which are free to
-/// add a report to an artifact that returned without one, so the configuration
-/// travels to presentation unresolved and only a run that ends with a report
-/// resolves a template.
+/// Everything a render needs but its data and its resolved template: a
+/// post-output hook can add a report to an artifact that returned without one,
+/// so only a run that ends with a report resolves a template.
 pub(crate) struct PendingRender {
     command_path: String,
     template: TemplateRef,
@@ -218,7 +214,6 @@ impl PendingRender {
         }
     }
 
-    /// The request the command's own template renders through.
     pub(crate) fn resolved(&self, data: serde_json::Value) -> Result<RenderRequest, RunError> {
         let template = render_time_template(
             &self.command_path,
@@ -229,7 +224,6 @@ impl PendingRender {
         Ok(self.request(data, template))
     }
 
-    /// The request a render that consults no template goes through.
     fn untemplated(&self, data: serde_json::Value) -> RenderRequest {
         self.request(data, standout_render::TemplateRef::Absent)
     }
@@ -322,13 +316,6 @@ pub(crate) fn render_handler_output<T: Serialize>(
         warnings,
     };
 
-    // The document an incremental run ends in. `json` and `yaml` take the
-    // array of records, the summary's among them, and are assembled once the
-    // post-output hooks have run. CSV takes the events as its rows, through
-    // the command's `CsvProjection` when it declares one, and leaves the
-    // summary out: a `result` record is not a row shape. Those rows come from
-    // the projection, never a template, so the summary's template stays
-    // unresolved and a command declared silent or binary still has them.
     let event_document = |events: Vec<serde_json::Value>,
                           summary: Option<serde_json::Value>|
      -> Result<DispatchOutput, RunError> {
@@ -473,8 +460,8 @@ pub(crate) fn hook_run_error(mut error: HookError, phase: crate::cli::HookPhase)
 }
 
 /// The recorder and the sink are parameters rather than `CommandContext`
-/// members: they are the framework's, and a handler that could reach them could
-/// record or write values the typed `Results` channel never saw.
+/// members: a handler that could reach them could record or write values the
+/// typed `Results` channel never saw.
 pub type DispatchFn = Rc<
     RefCell<
         dyn FnMut(

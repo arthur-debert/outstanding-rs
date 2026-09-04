@@ -1,11 +1,6 @@
-//! [`Representation`] is what a run puts on stdout: the human template, its
-//! style-tag diagnostic view, or one of the structured encodings, which skip
-//! template rendering entirely. `Ndjson` is the one representation whose
-//! stdout is a sequence of one-line JSON entries rather than a single
-//! document. [`StyleMode`] is the separate decision of whether rendered human
-//! text carries escape sequences; [`crate::request`] resolves it from the
-//! representation, the [`crate::ColorPolicy`] and stdout capability on
-//! [`crate::TargetProperties`], and this module never probes the process
+//! [`Representation`] is what a run puts on stdout; [`StyleMode`] is the
+//! separate decision of whether rendered human text carries escape sequences,
+//! which [`crate::request`] resolves. This module never probes the process
 //! itself while applying styles.
 
 use std::io::Write;

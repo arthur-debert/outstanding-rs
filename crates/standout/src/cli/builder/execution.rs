@@ -1,3 +1,12 @@
+//! The run's presentation and destination: the framework flags the builder
+//! installs, the entry points that dispatch a command, and the write of what
+//! the run produced.
+//!
+//! The payload and delivery decisions read the post-output hooks' final
+//! result, and the pager delivery is recorded on the final outcome, because a
+//! hook can still turn a document into a payload or add a report to an
+//! artifact whose handler returned none.
+
 use crate::{
     open_output_file, write_binary_output, write_output, ColorPolicy, InputSources,
     OutputDestination, Representation, TargetProperties,
@@ -38,8 +47,6 @@ use std::io::Write;
 
 const CONFIG_OVERRIDE_ARG: &str = "_config_override";
 
-/// True for the representations whose bytes accrue while the command runs, so
-/// the sink is the one destination the whole run writes through.
 fn writes_through_the_sink(output_mode: Representation) -> bool {
     output_mode.is_stream() || output_mode.is_human()
 }
@@ -51,9 +58,6 @@ pub(crate) struct RunResolution {
     pub(crate) pager: Option<Pager>,
 }
 
-/// What an entry point hands back to [`App::collect_run_warnings`]: the run as
-/// its own path left it, plus the pager its page goes to if the outcome that
-/// stands at the end of the window is still one with a page.
 struct RunOutcome {
     outcome: DispatchResult,
     output_mode: Representation,
@@ -62,8 +66,6 @@ struct RunOutcome {
 }
 
 impl RunOutcome {
-    /// A path with nothing a pager would ever take: an error, a usage message,
-    /// or clap's own help and version text.
     fn to_stdout(
         outcome: DispatchResult,
         output_mode: Representation,
@@ -78,10 +80,9 @@ impl RunOutcome {
     }
 }
 
-/// The strict-mode failure for whatever the render window has left unresolved
-/// so far, or `None` when it has left nothing. Callers apply it before writing
-/// the bytes it describes; `warnings` drops the superseded degrade warning.
-/// Every caller has already decided that strict mode is on.
+/// The strict-mode failure for the style tags the render window has left
+/// unresolved, or `None` when there are none. Callers have already decided
+/// that strict mode is on; `warnings` loses the superseded degrade warning.
 pub(crate) fn unresolved_style_tags_error(warnings: Option<&WarningBuffer>) -> Option<RunError> {
     let unresolved = standout_render::diagnostics::unresolved_in_current_window();
     if unresolved.is_empty() {
@@ -182,8 +183,6 @@ impl App {
         let capture = StreamCapture::default();
         let recorder = RunRecorder::new();
         let run = self.collect_run_warnings(&recorder, |warnings| {
-            // Resolved before the config outcome is unwrapped, so a run that
-            // fails to load one still reports the policy its flags asked for.
             let config = self.resolve_config_for(&matches);
             let resolved = self.resolve_run(
                 &matches,
@@ -237,10 +236,9 @@ impl App {
         target
     }
 
-    /// The one place a run's presentation and its destination are decided, so
-    /// a rule added here reaches every entry point: `dispatch`, the argv path,
-    /// and the partial-adoption `run_command`. Help is the one page decided
-    /// elsewhere, because it short-circuits clap and leaves no `ArgMatches`.
+    /// Decides a run's presentation and destination for every entry point.
+    /// Help is decided elsewhere: it short-circuits clap and leaves no
+    /// `ArgMatches`.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn resolve_run(
         &self,
@@ -477,12 +475,6 @@ impl App {
             Some(path) => Delivery::File(path.to_path_buf()),
             None => Delivery::Stdout,
         });
-        // The file override takes the events too, so the sink is retargeted
-        // before the handler runs and the summary follows them into it. Line
-        // framing creates the file up front, the way it did before events
-        // existed; the human representation waits for a first byte, so a run
-        // that ends without one — an artifact, a binary payload — leaves the
-        // file uncreated and reports its own failure.
         if let Some(path) = override_path.filter(|_| writes_through_the_sink(output_mode)) {
             if output_mode.is_stream() {
                 let file = open_output_file(path).map_err(|e| {
@@ -515,9 +507,6 @@ impl App {
         sink: &StreamSink,
         warnings: &WarningBuffer,
     ) -> DispatchResult {
-        // The document a records outcome hands the post-output hooks carries no
-        // warnings; its tail is assembled after they return, from the snapshot
-        // standing then.
         let mut pending_records: Option<(Vec<serde_json::Value>, String)> = None;
         let (output, render, status) = match dispatch_output {
             DispatchOutput::Text {
@@ -572,10 +561,6 @@ impl App {
             output
         };
 
-        // Byte equality of both texts with the document the hooks were given,
-        // not the return variant: only then does the framework still own the
-        // document and append the warnings standing now. Anything else is the
-        // hook's, and every warning goes to the stderr block instead.
         let mut warnings_included = false;
         if let Some((mut records, unhooked)) = pending_records {
             if matches!(&final_output, RenderedOutput::Text(t) if t.formatted == unhooked && t.raw == unhooked)
@@ -600,14 +585,11 @@ impl App {
             }
         }
 
-        // A binary payload and an artifact own the file the user named, and a
-        // silent outcome writes nothing, so none of them takes the destination
-        // the run's rendered text was pointed at.
+        // A payload and an artifact own the named file themselves.
         if !matches!(final_output, RenderedOutput::Text(_)) {
             sink.cancel_pending_redirect();
         }
 
-        // On the hooks' final result: a hook can turn the document into a payload.
         if let Err(error) = super::super::dispatch::reject_payload_from_an_emitting_command(
             emits_events,
             final_output.is_binary(),
@@ -642,9 +624,6 @@ impl App {
             let dest = OutputDestination::File(path);
 
             match &final_output {
-                // The events are already in the file, so the summary joins them
-                // there: newline-terminated under line framing, and as the
-                // unterminated document a batch run writes otherwise.
                 RenderedOutput::Text(t) if writes_through_the_sink(output_mode) => {
                     let written = sink.with_writer(|file| {
                         if output_mode.is_stream() {
@@ -946,11 +925,9 @@ impl App {
         Ok(())
     }
 
-    /// The framework's own global flags against every command in the
-    /// application's tree. clap rejects a duplicate long name with a debug
-    /// assertion, which a release build never runs: the duplicate would reach
-    /// users as a flag that answers to whichever definition clap reached
-    /// first, so standout refuses the pair itself.
+    /// Rejects a framework flag whose long name a command in the tree already
+    /// declares. clap only catches the duplicate with a debug assertion, so a
+    /// release build would ship a flag answering to one of the two definitions.
     pub(crate) fn framework_flag_collision(&self, cmd: &Command) -> Result<(), SetupError> {
         let installed = [
             (
@@ -966,9 +943,8 @@ impl App {
             ("color_flag", "no_color_flag()", self.color_flag.as_deref()),
             ("pager_flag", "no_pager_flag()", self.pager_flag.as_deref()),
         ];
-        // Generated `--help`/`--version` only exist per command once clap
-        // builds the tree, and building is also what honors a command that
-        // turns one of them off.
+        // Generated `--help`/`--version` only exist per command once clap builds
+        // the tree, which is also what honors a command that turns one off.
         let built = installed
             .iter()
             .any(|(_, _, flag)| matches!(*flag, Some("help" | "version")))
@@ -1009,12 +985,8 @@ impl App {
         outcome.handled
     }
 
-    /// The pager a run's complete human output goes to, or `None` for every
-    /// case that delivers to stdout instead: a stdout that is not a terminal
-    /// (a named output file among them, which `file_destination` has already
-    /// taken off the terminal), a structured encoding, `--no-pager`, and an
-    /// environment naming no pager. Reading the environment starts nothing,
-    /// so the answer is a decision a test reads back without a terminal.
+    /// The pager the run's human output goes to, or `None` when paging does
+    /// not apply. Resolving names a pager without starting one.
     fn pager_for_run(
         &self,
         target: TargetProperties,
@@ -1027,9 +999,8 @@ impl App {
         Pager::resolve(self.name.as_deref())
     }
 
-    /// A help page standout rendered itself pages by the same rule a command's
-    /// output does, and reads the two facts that rule needs from the raw
-    /// arguments: `--help` short-circuits clap and leaves no `ArgMatches`.
+    /// `--help` short-circuits clap, so the paging rule reads the output file
+    /// and `--no-pager` from argv instead of from `ArgMatches`.
     fn pager_for_rendered_help(
         &self,
         display: &super::HelpDisplay,
@@ -1055,17 +1026,13 @@ impl App {
             .unwrap_or(false)
     }
 
-    /// True for a command whose complete human output is the run's one page:
-    /// the application marked it pageable, and it writes no events of its own.
     fn pages_its_output(&self, path: &str) -> bool {
         self.pageable_for(path) && !self.emits_events_for(path)
     }
 
-    /// Carries out the run's own delivery decision: the pager takes the bytes
-    /// stdout would have received, terminating newline included. `true` means
-    /// the caller owes the user nothing on stdout; a pager that could not
-    /// start leaves them unwritten here, so the caller writes them unpaged
-    /// with the run's own status, and one that stopped reading ends delivery.
+    /// `true` when the pager took the bytes stdout would have received,
+    /// terminating newline included, or when its reader left. A pager that
+    /// could not start returns `false` and leaves them for the caller to write.
     fn page_delivery(&self, run: &crate::cli::CompletedRun) -> bool {
         let Delivery::Pager(command) = run.delivery() else {
             return false;
@@ -1090,12 +1057,7 @@ impl App {
         let sources = InputSources::from_process();
         let sink = StreamSink::process_stdout();
         let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
-        // Help short-circuits before an `ArgMatches` exists, so the file the
-        // invocation names is read from argv here — early enough that the page
-        // is rendered for a file rather than for the terminal.
         let output_file = self.output_file_from_unparsed(&args);
-        // Nothing reads this run's values back, so its events are written and
-        // dropped rather than retained for the length of the command.
         let result = self.run_recording(
             cmd,
             &args,
@@ -1109,7 +1071,6 @@ impl App {
         let warnings = result.warnings().to_vec();
         let output_mode = result.output_mode();
 
-        // A named output file wins over the pager, and over stdout.
         let help_to_file = output_file
             .zip(help_page(result.outcome()))
             .map(|(path, page)| {
@@ -1184,12 +1145,9 @@ impl App {
         }
     }
 
-    /// The capture window every entry point shares; help and answer-sheet outcomes, which
-    /// return before the pre-commit strict check, are checked here instead.
-    ///
-    /// The last step that can replace the outcome is the strict check above,
-    /// so this is also where the run's delivery is recorded: an outcome that
-    /// no longer has a page to hand anyone reports stdout.
+    /// The capture window every entry point shares. Help and answer-sheet
+    /// outcomes return before the pre-commit strict check, so they are checked
+    /// here instead, and the run's surviving delivery is recorded here too.
     fn collect_run_warnings(
         &self,
         recorder: &RunRecorder,
@@ -1272,9 +1230,8 @@ impl App {
         run.with_entries(String::from_utf8_lossy(&capture.take()).into_owned())
     }
 
-    /// `run_with` with the run's color policy and the destination the whole
-    /// run writes through: a handler's events as it emits them, then whatever
-    /// the caller writes after it.
+    /// `run_with` with the run's color policy and the sink the whole run writes
+    /// through: the handler's events, then whatever the caller writes after.
     #[allow(clippy::too_many_arguments)]
     pub fn run_with_sink<I, T>(
         &self,
@@ -1300,8 +1257,7 @@ impl App {
         )
     }
 
-    /// `run_with_sink` with the run's recorder named, so an entry point that
-    /// never reads the values back can install one that keeps no events.
+    /// `run_with_sink` with the run's recorder named.
     #[allow(clippy::too_many_arguments)]
     fn run_recording<I, T>(
         &self,
@@ -1345,8 +1301,6 @@ impl App {
                 .global(true)
                 .value_parser(OUTPUT_MODE_FLAG_VALUES)
                 .help("Structured output encoding");
-            // The human representation has no spelling, so an application that
-            // falls back to it leaves the flag with no default at all.
             if let Some(spelling) = output_mode_flag_spelling(self.output_mode_fallback) {
                 arg = arg.default_value(spelling);
             }
@@ -1615,9 +1569,6 @@ impl App {
 
         let receipt = ArtifactReceipt::new(destination.clone(), artifact.bytes.len());
 
-        // The template is resolved here and not before: a run that ends without
-        // a report never needed one, and a post-output hook can add a report to
-        // an artifact whose handler returned none.
         let report = match artifact.report {
             None => None,
             Some(report) => {
@@ -1671,9 +1622,8 @@ impl App {
     }
 }
 
-/// The rendered help page a run ended in, whichever path rendered it: clap's
-/// own `--help`, or the grouped page standout renders for `--help` and the
-/// `help` word.
+/// The help page a run ended in, from clap's own `--help` or from the grouped
+/// page standout renders for `--help` and the `help` word.
 fn help_page(outcome: &crate::cli::DispatchResult) -> Option<&str> {
     let crate::cli::DispatchResult::Handled(output) = outcome else {
         return None;
@@ -1691,8 +1641,6 @@ fn file_destination(mut target: TargetProperties, writes_to_a_file: bool) -> Tar
     target
 }
 
-/// The framework's own arguments, so a command already carrying them does not
-/// read as colliding with itself.
 const FRAMEWORK_ARG_IDS: [&str; 5] = [
     OUTPUT_MODE_ARG,
     OUTPUT_FILE_ARG,
@@ -1702,8 +1650,7 @@ const FRAMEWORK_ARG_IDS: [&str; 5] = [
 ];
 
 /// The path of the first command in the tree declaring `flag`, as its own long
-/// invocation name or as one of its arguments' long names or aliases; `path`
-/// names the ancestors reached so far.
+/// invocation name or as one of its arguments' long names or aliases.
 fn command_declaring_long(cmd: &Command, flag: &str, path: &[&str]) -> Option<String> {
     let mut here: Vec<&str> = path.to_vec();
     here.push(cmd.get_name());
@@ -3255,9 +3202,6 @@ mod tests {
         assert!(!result.is_handled());
     }
 
-    /// clap's duplicate-long assertion only runs in debug builds, so standout
-    /// names the seam itself rather than letting a release build take the
-    /// duplicate.
     #[test]
     fn an_application_flag_colliding_with_a_framework_flag_is_a_setup_error() {
         use serde_json::json;
@@ -3300,8 +3244,6 @@ mod tests {
             .contains("pager_flag installs `--no-pager`")));
     }
 
-    /// clap grows `--help` and `--version` per command only while building, so
-    /// the search runs against a built clone for those two spellings.
     #[test]
     fn a_framework_flag_spelled_like_a_generated_one_is_a_setup_error() {
         let generated = |builder: AppBuilder| {
@@ -3331,7 +3273,6 @@ mod tests {
         );
     }
 
-    /// The command to rename is the one declaring the name, not its parent.
     #[test]
     fn a_colliding_subcommand_invocation_name_reports_the_subcommand() {
         let app = AppBuilder::new()
@@ -4165,8 +4106,6 @@ header:
         assert_eq!(result.output(), Some("https://api.example.com"));
     }
 
-    /// The process edge installs the summary-only recorder, so a long run's
-    /// events are written and dropped rather than held until it ends.
     #[test]
     fn a_summary_only_recorder_writes_every_event_and_returns_only_the_summary() {
         #[derive(serde::Serialize)]
@@ -4212,10 +4151,6 @@ header:
         assert_eq!(run.results(), [serde_json::json!({"done": 64})]);
     }
 
-    /// The one place the paging decision is taken, reached with a terminal
-    /// target no test process can be counted on to own. `dispatch` and
-    /// `run_command` read the same field the argv path does, so a decision
-    /// taken here is the decision every entry point reports.
     #[test]
     #[serial_test::serial]
     fn resolve_run_decides_paging_for_every_entry_point() {

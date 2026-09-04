@@ -190,8 +190,7 @@ fn term_debug_is_not_a_color_selection_alias() {
     }
 }
 
-/// A run that names an output file writes its events into it as they happen,
-/// so the file's bytes are where the destination's answer shows.
+/// A run that names an output file writes its events into it as they happen.
 fn emitting_app() -> App {
     App::builder()
         .templates(EmbeddedTemplates::new(
@@ -418,8 +417,7 @@ impl Drop for NoColorAbsent {
     }
 }
 
-/// The partial-adoption entry point, which resolves the same run facts the
-/// argv path does.
+/// The partial-adoption entry point.
 fn run_command_list(app: &App, args: &[&str], named: ColorPolicy) -> String {
     let matches = match app.get_matches_from(cmd(), args, &InputSources::from_process()) {
         HelpResult::Matches(matches) => matches,
@@ -515,7 +513,6 @@ fn the_harness_names_the_policy_and_the_destination_separately() {
         refused.stdout()
     );
 
-    // The values are the same either way: only the presentation moved.
     assert_eq!(console::strip_ansi_codes(forced.stdout()), refused.stdout());
     assert_eq!(forced.result(), refused.result());
 }

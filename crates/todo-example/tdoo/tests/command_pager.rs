@@ -5,12 +5,10 @@ mod common;
 
 use standout_test::{ProcessResult, TestHarness};
 
-/// A pager that marks every line it delivered, so a paged run and an unpaged
-/// one are told apart by their bytes.
+/// Marks every line it delivered, so a paged run shows in the bytes.
 const MARKING: &str = "sed -e 's/^/PAGED /'";
 
-/// The harness applies every removal after every set, so a variable this test
-/// names is never also removed.
+/// The harness applies every removal after every set.
 fn listing(vars: &[(&str, &str)]) -> TestHarness {
     let mut harness = common::tdoo();
     for key in ["PAGER", "TDOO_PAGER"] {
@@ -45,8 +43,6 @@ fn a_pageable_command_on_a_terminal_goes_through_the_pager() {
     result.assert_stdout_contains("PAGED ");
 }
 
-/// `sed -n 1p` keeps the first line and drops the rest, which no unpaged run
-/// could produce.
 #[cfg(unix)]
 #[test]
 fn the_pager_the_environment_names_filters_the_page() {
