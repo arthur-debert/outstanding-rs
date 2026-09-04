@@ -140,6 +140,9 @@ where
                 color_policy,
                 structured_output_projection.as_ref(),
                 target,
+                emits_events::<H::Event>()
+                    .then(|| destination.take_document_records())
+                    .flatten(),
             )?;
             super::dispatch::reject_payload_from_an_emitting_command(
                 emits_events::<H::Event>(),

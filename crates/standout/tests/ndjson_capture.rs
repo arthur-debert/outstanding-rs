@@ -1,8 +1,7 @@
 use clap::{Arg, Command};
 use serde_json::json;
 use standout::cli::{
-    App, DispatchResult, EventsFnHandler, FnHandler, HandlerResult, Output, Results, StreamCapture,
-    StreamSink,
+    App, EventsFnHandler, FnHandler, HandlerResult, Output, Results, StreamCapture, StreamSink,
 };
 use standout::ColorPolicy;
 use standout::{
@@ -84,10 +83,18 @@ fn run_with_captures_the_entries_beside_the_result() {
         target(),
         InputSources::from_process(),
     );
-    assert_eq!(json.entries(), "");
-    assert!(
-        matches!(json.outcome(), DispatchResult::Error(_)),
-        "an encoding that buffers a command's events carries none yet"
+    assert_eq!(
+        json.entries(),
+        "",
+        "an encoding that carries the run as one document writes nothing as it goes"
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(json.output().unwrap()).unwrap(),
+        json!([
+            {"type": "apply_start", "resource": "web"},
+            {"type": "apply_complete", "resource": "web"},
+            {"type": "result", "data": {"applied": 1}},
+        ])
     );
 }
 
@@ -130,7 +137,7 @@ fn run_command_writes_the_events_to_the_sink_it_is_given() {
         .unwrap();
     let sub = matches.subcommand_matches("stream").unwrap();
     let capture = StreamCapture::default();
-    let error = app()
+    let output = app()
         .run_command(
             "stream",
             sub,
@@ -139,8 +146,16 @@ fn run_command_writes_the_events_to_the_sink_it_is_given() {
             ColorPolicy::Auto,
             StreamSink::new(capture.clone()),
         )
-        .unwrap_err();
-    assert!(capture.take().is_empty(), "{error}");
+        .unwrap();
+    assert!(capture.take().is_empty());
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(output.as_text().unwrap()).unwrap(),
+        json!([
+            {"type": "apply_start", "resource": "web"},
+            {"type": "apply_complete", "resource": "web"},
+            {"type": "result", "data": {"applied": 1}},
+        ])
+    );
 }
 
 #[test]

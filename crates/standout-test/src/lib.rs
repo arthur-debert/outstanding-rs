@@ -322,7 +322,7 @@ impl TestHarness {
             stdout.pop();
         }
         let mut stderr = String::from_utf8_lossy(&stderr).into_owned();
-        if !standout::cli::carries_warning_entries(&outcome, output_mode) {
+        if !standout::cli::warnings_delivered_on_stdout(&outcome, output_mode) {
             stderr.push_str(&standout_render::warnings::render_block_for_target(
                 theme,
                 color_policy,

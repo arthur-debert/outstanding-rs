@@ -386,6 +386,7 @@ impl App {
             color_policy,
             None,
             target,
+            None,
         ) {
             Ok(output) => output,
             Err(error) => return DispatchResult::Error(error),
@@ -462,6 +463,10 @@ impl App {
         sink: &StreamSink,
         warnings: &WarningBuffer,
     ) -> DispatchResult {
+        // The document a records outcome hands the post-output hooks carries no
+        // warnings; its tail is assembled after they return, from the snapshot
+        // standing then.
+        let mut pending_records: Option<(Vec<serde_json::Value>, String)> = None;
         let (output, request, status) = match dispatch_output {
             DispatchOutput::Text {
                 formatted,
@@ -481,6 +486,24 @@ impl App {
                 ExitStatus::SUCCESS,
             ),
             DispatchOutput::Silent { status } => (RenderedOutput::Silent, None, status),
+            DispatchOutput::Records { records, status } => {
+                let document =
+                    match standout_render::serialize_record_array(records.clone(), output_mode) {
+                        Ok(document) => document,
+                        Err(error) => {
+                            return DispatchResult::Error(RunError::new(
+                                error.to_string(),
+                                RunErrorKind::Render,
+                            ))
+                        }
+                    };
+                pending_records = Some((records, document.clone()));
+                (
+                    RenderedOutput::Text(TextOutput::new(document.clone(), document)),
+                    None,
+                    status,
+                )
+            }
         };
 
         let mut final_output = if let Some(hooks) = hooks {
@@ -496,6 +519,34 @@ impl App {
         } else {
             output
         };
+
+        // Byte equality of both texts with the document the hooks were given,
+        // not the return variant: only then does the framework still own the
+        // document and append the warnings standing now. Anything else is the
+        // hook's, and every warning goes to the stderr block instead.
+        let mut warnings_included = false;
+        if let Some((mut records, unhooked)) = pending_records {
+            if matches!(&final_output, RenderedOutput::Text(t) if t.formatted == unhooked && t.raw == unhooked)
+            {
+                let snapshot = warnings.snapshot();
+                if !snapshot.is_empty() {
+                    records.extend(crate::cli::warning_records(&snapshot));
+                    let document =
+                        match standout_render::serialize_record_array(records, output_mode) {
+                            Ok(document) => document,
+                            Err(error) => {
+                                return DispatchResult::Error(RunError::new(
+                                    error.to_string(),
+                                    RunErrorKind::Render,
+                                ))
+                            }
+                        };
+                    final_output =
+                        RenderedOutput::Text(TextOutput::new(document.clone(), document));
+                }
+                warnings_included = true;
+            }
+        }
 
         // A binary payload and an artifact own the file the user named, and a
         // silent outcome writes nothing, so none of them takes the destination
@@ -573,18 +624,21 @@ impl App {
             }
         }
 
+        let handled = |text: String| {
+            DispatchResult::Handled(
+                RunOutput::command(text)
+                    .with_exit_status(status)
+                    .with_warnings_included(warnings_included),
+            )
+        };
         match final_output {
-            RenderedOutput::Text(t) => {
-                DispatchResult::Handled(RunOutput::command(t.formatted).with_exit_status(status))
-            }
+            RenderedOutput::Text(t) => handled(t.formatted),
             RenderedOutput::Binary(_, _) if status != ExitStatus::SUCCESS => DispatchResult::Error(
                 super::super::dispatch::status_without_a_carrier(status, "binary"),
             ),
             RenderedOutput::Binary(b, f) => DispatchResult::Binary(b, f),
             RenderedOutput::Artifact(_) => unreachable!("artifacts returned above"),
-            RenderedOutput::Silent => {
-                DispatchResult::Handled(RunOutput::command(String::new()).with_exit_status(status))
-            }
+            RenderedOutput::Silent => handled(String::new()),
         }
     }
 
@@ -887,7 +941,7 @@ impl App {
         }
         drop(stderr);
 
-        if !crate::cli::carries_warning_entries(result.outcome(), output_mode) {
+        if !crate::cli::warnings_delivered_on_stdout(result.outcome(), output_mode) {
             standout_render::warnings::flush_to_stderr(
                 &self.theme,
                 result.color_policy(),

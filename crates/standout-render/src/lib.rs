@@ -62,7 +62,9 @@ pub use standout_bbparser::{
 };
 
 pub use diagnostics::TagResolution;
-pub use document::{deserialize_document, result_entry, serialize_document};
+pub use document::{
+    deserialize_document, result_entry, result_record, serialize_document, serialize_record_array,
+};
 
 pub use util::{
     csv_records, rgb_to_ansi256, rgb_to_truecolor, truncate_to_width,
