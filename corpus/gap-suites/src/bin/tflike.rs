@@ -7,7 +7,7 @@
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use serde::Serialize;
 use standout::cli::{
-    App, CommandContext, Diagnostic, EventsFnHandler, ExitStatus, HandlerResult, Output, Results,
+    App, CommandContext, Diagnostic, EventsFnHandler, ExitStatus, Results, Summary, SummaryResult,
 };
 use standout::EmbeddedTemplates;
 use std::collections::BTreeSet;
@@ -179,7 +179,7 @@ fn plan(
     matches: &ArgMatches,
     _ctx: &CommandContext,
     results: &mut Results<Entry>,
-) -> HandlerResult<()> {
+) -> SummaryResult<()> {
     results.emit(Entry::Version {
         format_version: FORMAT_VERSION,
     })?;
@@ -196,9 +196,9 @@ fn plan(
     })?;
     let changed = matches.get_flag("detailed-exitcode") && !plan.changes.is_empty();
     Ok(if changed {
-        Output::Silent.with_exit_status(ExitStatus::from(2))
+        Summary::Silent.with_exit_status(ExitStatus::from(2))
     } else {
-        Output::Silent
+        Summary::Silent
     })
 }
 
@@ -206,7 +206,7 @@ fn apply(
     matches: &ArgMatches,
     _ctx: &CommandContext,
     results: &mut Results<Entry>,
-) -> HandlerResult<()> {
+) -> SummaryResult<()> {
     results.emit(Entry::Version {
         format_version: FORMAT_VERSION,
     })?;
@@ -247,7 +247,7 @@ fn apply(
         add: plan.add,
         remove: plan.remove,
     })?;
-    Ok(Output::Silent)
+    Ok(Summary::Silent)
 }
 
 fn app() -> App {

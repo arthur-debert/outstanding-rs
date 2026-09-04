@@ -1,7 +1,9 @@
 #![allow(non_snake_case)] // Generated handler names use __handler suffix
 
 use clap::ArgMatches;
-use standout::cli::handler::{CommandContext, Handler, NoEvents, Output, Results, RunRecorder};
+use standout::cli::handler::{
+    CommandContext, Handler, NoEvents, Output, Results, RunRecorder, Summary,
+};
 use standout_macros::handler;
 
 #[handler]
@@ -422,11 +424,11 @@ enum Step {
 fn incremental(
     #[flag] verbose: bool,
     results: &mut Results<Step>,
-) -> Result<Output<bool>, anyhow::Error> {
+) -> Result<Summary<bool>, anyhow::Error> {
     results.emit(Step::Started {
         name: "one".to_string(),
     })?;
-    Ok(Output::Render(verbose))
+    Ok(Summary::Render(verbose))
 }
 
 fn verbose_matches(args: &[&str]) -> ArgMatches {
@@ -446,9 +448,9 @@ fn a_results_parameter_makes_the_generated_handler_carry_the_event_type() {
     let recorder = RunRecorder::new();
     let mut results = Results::<Step>::recording(recorder.clone());
 
-    let output = incremental__handler(&matches, &ctx, &mut results).unwrap();
+    let summary = incremental__handler(&matches, &ctx, &mut results).unwrap();
 
-    assert!(matches!(output, Output::Render(true)));
+    assert!(matches!(summary, Summary::Render(true)));
     assert_eq!(
         recorder.records(),
         vec![serde_json::json!({ "type": "started", "name": "one" })]

@@ -10,8 +10,8 @@ use serial_test::serial;
 use standout::cli::hooks::TextOutput;
 use standout::cli::RunErrorKind;
 use standout::cli::{
-    App, CommandContext, Delivery, EventsFnHandler, FnHandler, HandlerResult, Output,
-    RenderedOutput, Results,
+    App, CommandContext, Delivery, EventsFnHandler, FnHandler, Output, RenderedOutput, Results,
+    Summary, SummaryResult,
 };
 use standout::{ColorPolicy, EmbeddedTemplates, InputSources, Representation, TargetProperties};
 use standout_test::{ScopedEnv, TestHarness, TestResult};
@@ -56,9 +56,9 @@ fn app() -> App {
                 |_: &ArgMatches,
                  _: &CommandContext,
                  results: &mut Results<Event>|
-                 -> HandlerResult<serde_json::Value> {
+                 -> SummaryResult<serde_json::Value> {
                     results.emit(Event::Applying { resource: "web" })?;
-                    Ok(Output::Render(json!({ "done": 1 })))
+                    Ok(Summary::Render(json!({ "done": 1 })))
                 },
             ),
             |cfg| cfg.pageable(),

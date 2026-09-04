@@ -23,13 +23,13 @@ fn apply(
     _matches: &ArgMatches,
     _ctx: &CommandContext,
     results: &mut Results<Event>,
-) -> HandlerResult<Summary> {
+) -> SummaryResult<Applied> {
     for change in plan()? {
         results.emit(Event::ApplyStart { resource: change.name.clone() })?;
         change.apply()?;                  // a failure here follows the events
         results.emit(Event::ApplyComplete { resource: change.name.clone() })?;
     }
-    Ok(Output::Render(summary))           // the summary, after the last event
+    Ok(Summary::Render(applied))          // the summary, after the last event
 }
 ```
 
@@ -81,8 +81,8 @@ starting db…
 `.build()` requires the `.event` template of every command that declares an
 event type, so a missing one is a setup error rather than a failure on the
 first event. A command whose events are its whole result returns
-`Output::Silent` as its summary and needs only the `.event` template: the
-summary template is the one `.build()` lets it skip, because which `Output`
+`Summary::Silent` as its summary and needs only the `.event` template: the
+summary template is the one `.build()` lets it skip, because which `Summary`
 variant a handler returns is not something the build can read.
 
 Incremental human output never goes through the pager, whatever the command
@@ -134,12 +134,12 @@ status, so a command that changes things is never left half done by a pipe.
 
 ## Binary and artifact output cannot follow events
 
-A command whose event type is not `NoEvents` carries `Output::Render` and
-`Output::Silent` only, so either payload is a render error under every
-representation — on the run that emitted nothing too, since the refusal follows
-the type rather than the count. Under `ndjson` a payload is a render error
-whether or not the command declares events: a stream of JSON lines has no room
-for one.
+A command whose event type is not `NoEvents` returns `Summary`, which has
+`Render` and `Silent` and no payload variant, so a handler that tries to return
+one does not compile — on the run that emits nothing too, since the type
+follows the declaration rather than the count. Under `ndjson` a payload is a
+render error whether or not the command declares events: a stream of JSON lines
+has no room for one.
 
 ## Where the bytes go
 

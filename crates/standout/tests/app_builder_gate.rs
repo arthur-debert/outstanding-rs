@@ -11,3 +11,9 @@ fn a_handler_cannot_reach_the_run_recorder_or_clone_its_results_channel() {
     let cases = trybuild::TestCases::new();
     cases.compile_fail("tests/ui/handler_cannot_reach_the_recorder.rs");
 }
+
+#[test]
+fn a_command_that_declares_events_cannot_return_a_payload() {
+    let cases = trybuild::TestCases::new();
+    cases.compile_fail("tests/ui/emitting_command_cannot_return_a_payload.rs");
+}

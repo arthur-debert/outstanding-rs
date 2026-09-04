@@ -58,7 +58,8 @@ pub use handler::{
     DiagnosticPosition, DiagnosticRange, DispatchResult, EmitError, Envelope, EventsFnHandler,
     ExitStatus, ExternalFailure, FnHandler, Handler, HandlerResult, InvalidAppStatus,
     InvalidExternalStatus, NoEvents, Output, OutputKind, Results, RunError, RunErrorKind,
-    RunOutput, RunRecorder, Severity, StreamCapture, StreamSink, SuccessKind,
+    RunOutput, RunRecorder, Severity, StreamCapture, StreamSink, SuccessKind, Summary,
+    SummaryResult,
 };
 
 pub use help::{HelpArg, HelpDocument, HelpSubcommand};

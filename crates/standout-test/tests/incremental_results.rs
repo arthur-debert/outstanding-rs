@@ -6,7 +6,7 @@ use clap::Command;
 use serde::Serialize;
 use serde_json::json;
 use standout::cli::{
-    App, Diagnostic, EventsFnHandler, ExitStatus, HandlerResult, Output, Results, RunErrorKind,
+    App, Diagnostic, EventsFnHandler, ExitStatus, Results, RunErrorKind, Summary, SummaryResult,
 };
 use standout::ColorPolicy;
 use standout::{EmbeddedTemplates, Representation};
@@ -43,12 +43,12 @@ fn app() -> App {
         .command_with(
             "apply",
             EventsFnHandler::new(
-                |_, _ctx, results: &mut Results<Event>| -> HandlerResult<serde_json::Value> {
+                |_, _ctx, results: &mut Results<Event>| -> SummaryResult<serde_json::Value> {
                     for resource in ["web", "db"] {
                         results.emit(Event::ApplyStart { resource })?;
                         results.emit(Event::ApplyComplete { resource })?;
                     }
-                    Ok(Output::Render(json!({ "add": 2, "remove": 0 })))
+                    Ok(Summary::Render(json!({ "add": 2, "remove": 0 })))
                 },
             ),
             |cfg| cfg,
@@ -57,7 +57,7 @@ fn app() -> App {
         .command_with(
             "refuse",
             EventsFnHandler::new(
-                |_, _ctx, results: &mut Results<Event>| -> HandlerResult<serde_json::Value> {
+                |_, _ctx, results: &mut Results<Event>| -> SummaryResult<serde_json::Value> {
                     results.emit(Event::ApplyStart { resource: "web" })?;
                     results.emit(Event::ApplyComplete { resource: "web" })?;
                     results.emit(Event::ApplyStart { resource: "db" })?;

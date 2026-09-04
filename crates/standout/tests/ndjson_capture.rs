@@ -2,6 +2,7 @@ use clap::{Arg, Command};
 use serde_json::json;
 use standout::cli::{
     App, EventsFnHandler, FnHandler, HandlerResult, Output, Results, StreamCapture, StreamSink,
+    Summary, SummaryResult,
 };
 use standout::ColorPolicy;
 use standout::{
@@ -32,10 +33,10 @@ fn stream_handler(
     _: &clap::ArgMatches,
     _ctx: &standout::cli::CommandContext,
     results: &mut Results<serde_json::Value>,
-) -> HandlerResult<serde_json::Value> {
+) -> SummaryResult<serde_json::Value> {
     results.emit(json!({ "type": "apply_start", "resource": "web" }))?;
     results.emit(json!({ "type": "apply_complete", "resource": "web" }))?;
-    Ok(Output::Render(json!({ "applied": 1 })))
+    Ok(Summary::Render(json!({ "applied": 1 })))
 }
 
 fn app() -> App {

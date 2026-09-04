@@ -4,7 +4,8 @@ pub use standout_dispatch::{
     DiagnosticRange, DispatchResult, EmitError, Envelope, EventSink, EventsFnHandler, ExitStatus,
     Extensions, ExternalFailure, FnHandler, Handler, HandlerResult, InvalidAppStatus,
     InvalidExternalStatus, NoEvents, Output, OutputKind, Results, RunError, RunErrorKind,
-    RunOutput, RunRecorder, Severity, StreamCapture, StreamSink, SuccessKind,
+    RunOutput, RunRecorder, Severity, StreamCapture, StreamSink, SuccessKind, Summary,
+    SummaryResult,
 };
 
 use standout_input::{InputSourceKind, Inputs, MissingInput};

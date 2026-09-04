@@ -104,10 +104,10 @@ retain nothing, and the encodings that produce one document retain the serialize
 until the command ends. A recorder, which the test harness and the in-process capture
 entry points install, retains the records under any representation.
 
-The summary is the `Output<S>` the handler returns, with the meanings it already has:
-`Silent` produces no summary record and no summary render, leaving the events alone;
-`with_exit_status` applies as it does to a batch value; `Binary` and `Artifact` from a
-command that declares events are a render error decided before anything is written.
+The summary is the `Summary<S>` the handler returns — `Render` or `Silent`, either of
+them carrying an exit status — so a command that declares events cannot return a payload
+at all: `Silent` produces no summary record and no summary render, leaving the events
+alone, and `with_exit_status` applies as it does to a batch value.
 
 ## Failure after emitted events
 

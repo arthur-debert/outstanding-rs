@@ -86,35 +86,6 @@ pub(crate) fn payload_without_a_stream(output: &str) -> RunError {
     )
 }
 
-/// A command that produces its result while it runs writes it to the
-/// destination as it goes, so a payload cannot follow: it would be a second
-/// document sharing one file or one stdout. `emits_events` comes from the
-/// command's `Handler::Event` type, so an invocation that emitted nothing is
-/// refused the same way.
-pub(crate) fn reject_payload_from_an_emitting_command(
-    emits_events: bool,
-    is_binary: bool,
-    is_artifact: bool,
-) -> Result<(), RunError> {
-    if !emits_events {
-        return Ok(());
-    }
-    let payload = if is_binary {
-        "binary"
-    } else if is_artifact {
-        "artifact"
-    } else {
-        return Ok(());
-    };
-    Err(RunError::new(
-        format!(
-            "{payload} output was produced by a command that emits events; a command \
-             producing events carries Output::Render and Output::Silent only"
-        ),
-        RunErrorKind::Render,
-    ))
-}
-
 pub(crate) fn reject_payload_under_stream(
     output_mode: crate::Representation,
     is_binary: bool,

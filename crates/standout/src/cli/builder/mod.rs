@@ -1582,14 +1582,6 @@ impl App {
             super::dispatch::reject_status_without_a_carrier(status, is_binary, is_artifact)
                 .map_err(|e| HookError::post_output("Render error").with_source(e))
         };
-        let reject_payload_from_an_emitting_command = |is_binary: bool, is_artifact: bool| {
-            super::dispatch::reject_payload_from_an_emitting_command(
-                emits_events::<H::Event>(),
-                is_binary,
-                is_artifact,
-            )
-            .map_err(|e| HookError::post_output("Render error").with_source(e))
-        };
         reject_status_without_a_carrier(output.is_binary(), output.is_artifact())?;
 
         let render_value = |data: serde_json::Value| -> Result<RenderedOutput, HookError> {
@@ -1672,7 +1664,6 @@ impl App {
             None => output,
         };
         reject_status_without_a_carrier(output.is_binary(), output.is_artifact())?;
-        reject_payload_from_an_emitting_command(output.is_binary(), output.is_artifact())?;
         super::dispatch::reject_payload_under_stream(
             output_mode,
             output.is_binary(),

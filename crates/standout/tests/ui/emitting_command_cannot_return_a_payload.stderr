@@ -1,0 +1,32 @@
+error[E0277]: a command that declares events returns a `Summary`, not an `Output`
+  --> tests/ui/emitting_command_cannot_return_a_payload.rs:12:1
+   |
+12 | #[handler]
+   | ^^^^^^^^^^ the trait `IntoSummaryResult<standout_dispatch::Output<()>>` is not implemented for `Result<standout_dispatch::Output<()>, anyhow::Error>`
+   |
+   = note: the events carried the run's results already, so a summary is `Render` or `Silent`
+help: the trait `IntoSummaryResult<T>` is implemented for `Result<Summary<T>, anyhow::Error>`
+  --> $WORKSPACE/crates/standout-dispatch/src/handler.rs
+   |
+   | impl<T: Serialize> IntoSummaryResult<T> for SummaryResult<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: this error originates in the attribute macro `handler` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0308]: mismatched types
+  --> tests/ui/emitting_command_cannot_return_a_payload.rs:12:1
+   |
+12 | #[handler]
+   | ^^^^^^^^^^
+   | |
+   | expected `Result<Output<()>, Error>`, found `Result<Output<Output<()>>, Error>`
+   | expected `Result<standout_dispatch::Output<()>, anyhow::Error>` because of return type
+   |
+   = note: expected enum `Result<standout_dispatch::Output<()>, anyhow::Error>`
+              found enum `Result<standout_dispatch::Output<standout_dispatch::Output<()>>, anyhow::Error>`
+   = note: this error originates in the attribute macro `handler` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0599]: no variant, associated function, or constant named `Artifact` found for enum `Summary<T>` in the current scope
+  --> tests/ui/emitting_command_cannot_return_a_payload.rs:26:17
+   |
+26 |     Ok(Summary::Artifact(Artifact::new(vec![0])))
+   |                 ^^^^^^^^ variant, associated function, or constant not found in `Summary<_>`

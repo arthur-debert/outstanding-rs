@@ -1,7 +1,9 @@
 use clap::Command;
 use serde_json::json;
 use serial_test::serial;
-use standout::cli::{App, AppBuilder, DispatchResult, EventsFnHandler, HandlerResult, Output};
+use standout::cli::{
+    App, AppBuilder, DispatchResult, EventsFnHandler, Output, Summary, SummaryResult,
+};
 use standout::cli::{FnHandler, Results};
 use standout::ColorPolicy;
 use standout::EmbeddedTemplates;
@@ -28,9 +30,9 @@ fn incremental_show_app(templates: &'static [(&'static str, &'static str)]) -> A
         .command_with(
             "show",
             EventsFnHandler::new(
-                |_m, _ctx, results: &mut Results<Started>| -> HandlerResult<serde_json::Value> {
+                |_m, _ctx, results: &mut Results<Started>| -> SummaryResult<serde_json::Value> {
                     results.emit(Started { name: "web" })?;
-                    Ok(Output::Render(json!({"done": 1})))
+                    Ok(Summary::Render(json!({"done": 1})))
                 },
             ),
             |cfg| cfg,

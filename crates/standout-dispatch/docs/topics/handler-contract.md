@@ -528,10 +528,9 @@ comes from the handler's own signature rather than a declaration beside it, so
 no handler can say one thing and do another, and the framework can decide
 before the handler runs what counting one invocation's events could only tell
 it afterwards. It decides at build time that the command needs its
-`<name>.event` template; it refuses `Output::Binary` and `Output::Artifact`
-from an incremental command on the run that emits nothing too; and it refuses
-an incremental command under an encoding that carries a command's results as
-one document before the handler runs.
+`<name>.event` template; and it refuses an incremental command under an
+encoding that carries a command's results as one document before the handler
+runs.
 
 `Event` is `'static` because an associated type carries no lifetime from
 `handle`'s parameters: an event holding a borrow of something the handler was
@@ -550,7 +549,10 @@ cannot ask which representation is running or where the bytes go.
 
 The adapter behind a two-argument closure (`FnHandler`) sets `Event = NoEvents`;
 `EventsFnHandler` is the adapter behind a three-argument closure taking
-`&mut Results<E>`. `#[handler]` picks between them from whether the function
+`&mut Results<E>`, and that closure returns `Summary<T>` — `Render` or
+`Silent`, with an exit status — rather than `Output<T>`, so a payload from a
+command that declares events does not compile. `#[handler]` picks between the
+two adapters, and between the two return types, from whether the function
 declares a `Results` parameter.
 
 `RunRecorder` is the framework's own retention of the same values, passed to

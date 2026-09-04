@@ -4,8 +4,8 @@ use console::Style;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use standout::cli::{
-    App, AppBuilder, DispatchResult, EventsFnHandler, FnHandler, HandlerResult, HelpResult, Output,
-    Results, RunErrorKind, StreamSink, TermSettings,
+    App, AppBuilder, DispatchResult, EventsFnHandler, FnHandler, HelpResult, Output, Results,
+    RunErrorKind, StreamSink, Summary, SummaryResult, TermSettings,
 };
 use standout::{ColorPolicy, EmbeddedTemplates, InputSources, Representation, TemplateRef, Theme};
 use standout_test::{serial, TestHarness};
@@ -207,9 +207,9 @@ fn emitting_app() -> App {
                 |_m,
                  _ctx,
                  results: &mut Results<serde_json::Value>|
-                 -> HandlerResult<serde_json::Value> {
+                 -> SummaryResult<serde_json::Value> {
                     results.emit(json!({ "step": "one" }))?;
-                    Ok(Output::Render(json!({ "done": 1 })))
+                    Ok(Summary::Render(json!({ "done": 1 })))
                 },
             ),
             |cfg| cfg,

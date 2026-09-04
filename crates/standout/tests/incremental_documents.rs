@@ -5,8 +5,8 @@ use clap::{ArgMatches, Command};
 use serde_json::{json, Value};
 use standout::cli::hooks::TextOutput;
 use standout::cli::{
-    App, ArtifactOutput, CommandContext, CommandContextInput, EventsFnHandler, ExitStatus,
-    HandlerResult, Output, RenderedOutput, Results, RunErrorKind,
+    App, CommandContext, CommandContextInput, EventsFnHandler, ExitStatus, RenderedOutput, Results,
+    RunErrorKind, Summary, SummaryResult,
 };
 use standout::tabular::{Column, Width};
 use standout::{
@@ -27,8 +27,6 @@ const HOOK_WARNING: &str = "a warning the post-output hook raised";
 
 const REPLACEMENT: &str = "the hook's own document";
 
-const PAYLOAD: &[u8] = b"the hook's own bytes";
-
 #[derive(Clone, Copy, PartialEq)]
 enum Ending {
     Summary,
@@ -44,8 +42,6 @@ enum PostOutput {
     Warns,
     Unchanged,
     ChangesRawOnly,
-    ReturnsBinary,
-    ReturnsArtifact,
 }
 
 fn events(results: &mut Results<Value>) -> Result<(), anyhow::Error> {
@@ -66,12 +62,12 @@ fn app(ending: Ending, hook: PostOutput) -> App {
                 move |_: &ArgMatches,
                       ctx: &CommandContext,
                       results: &mut Results<Value>|
-                      -> HandlerResult<Value> {
+                      -> SummaryResult<Value> {
                     events(results)?;
-                    let summary = Output::Render(json!({ "add": RESOURCES.len() }));
+                    let summary = Summary::Render(json!({ "add": RESOURCES.len() }));
                     match ending {
                         Ending::Summary => Ok(summary),
-                        Ending::Silent => Ok(Output::Silent),
+                        Ending::Silent => Ok(Summary::Silent),
                         Ending::Failure => Err(anyhow::anyhow!("db: refused")),
                         Ending::SummaryAndWarning => {
                             ctx.warn(WARNING);
@@ -101,17 +97,6 @@ fn app(ending: Ending, hook: PostOutput) -> App {
                         )),
                         output => output,
                     })
-                }),
-                PostOutput::ReturnsBinary => cfg.post_output(|_, _, _| {
-                    Ok(RenderedOutput::Binary(PAYLOAD.to_vec(), "run.bin".into()))
-                }),
-                PostOutput::ReturnsArtifact => cfg.post_output(|_, _, _| {
-                    Ok(RenderedOutput::Artifact(ArtifactOutput {
-                        bytes: PAYLOAD.to_vec(),
-                        suggested_destination: None,
-                        stdout_allowed: false,
-                        report: None,
-                    }))
                 }),
             },
         )
@@ -311,12 +296,12 @@ fn nothing_is_written_before_the_command_completes() {
                     move |_: &ArgMatches,
                           _: &CommandContext,
                           results: &mut Results<Value>|
-                          -> HandlerResult<Value> {
+                          -> SummaryResult<Value> {
                         for resource in RESOURCES {
                             results.emit(json!({"type": "apply_start", "resource": resource}))?;
                             watching.borrow_mut().push(written.borrow().len());
                         }
-                        Ok(Output::Render(json!({ "add": RESOURCES.len() })))
+                        Ok(Summary::Render(json!({ "add": RESOURCES.len() })))
                     },
                 ),
                 |cfg| cfg,
@@ -439,9 +424,9 @@ fn a_summary_that_does_not_serialize_fails_the_run_before_any_document() {
                 |_: &ArgMatches,
                  _: &CommandContext,
                  results: &mut Results<Value>|
-                 -> HandlerResult<std::collections::HashMap<(u8, u8), u8>> {
+                 -> SummaryResult<std::collections::HashMap<(u8, u8), u8>> {
                     events(results)?;
-                    Ok(Output::Render([((1u8, 2u8), 3u8)].into_iter().collect()))
+                    Ok(Summary::Render([((1u8, 2u8), 3u8)].into_iter().collect()))
                 },
             ),
             |cfg| cfg,
@@ -548,9 +533,9 @@ fn nested_event_app() -> App {
                 |_: &ArgMatches,
                  _: &CommandContext,
                  results: &mut Results<Value>|
-                 -> HandlerResult<Value> {
+                 -> SummaryResult<Value> {
                     results.emit(json!({ "type": "apply_start", "at": { "line": 2 } }))?;
-                    Ok(Output::Render(json!({ "add": 1 })))
+                    Ok(Summary::Render(json!({ "add": 1 })))
                 },
             ),
             |cfg| cfg,
@@ -600,9 +585,9 @@ fn a_csv_projection_declared_on_the_command_takes_the_events_as_its_rows() {
                 |_: &ArgMatches,
                  _: &CommandContext,
                  results: &mut Results<Value>|
-                 -> HandlerResult<Value> {
+                 -> SummaryResult<Value> {
                     events(results)?;
-                    Ok(Output::Render(json!({ "add": 2 })))
+                    Ok(Summary::Render(json!({ "add": 2 })))
                 },
             ),
             move |cfg| cfg.structured_output_projection(projection.clone()),
@@ -646,12 +631,12 @@ fn summaryless_app(absence: NoSummaryTemplate, renders_summary: bool) -> App {
                 move |_: &ArgMatches,
                       _: &CommandContext,
                       results: &mut Results<Value>|
-                      -> HandlerResult<Value> {
+                      -> SummaryResult<Value> {
                     events(results)?;
                     if renders_summary {
-                        Ok(Output::Render(json!({ "add": RESOURCES.len() })))
+                        Ok(Summary::Render(json!({ "add": RESOURCES.len() })))
                     } else {
-                        Ok(Output::Silent)
+                        Ok(Summary::Silent)
                     }
                 },
             ),
@@ -718,38 +703,6 @@ fn a_successful_run_puts_its_results_on_stdout_and_writes_nothing_to_stderr() {
             Representation::Human => assert_eq!(result.stdout(), HUMAN_LINES),
             Representation::Csv => assert_eq!(result.stdout(), EVENT_ROWS),
             _ => assert_eq!(records(&result), stream_records(), "{representation:?}"),
-        }
-    }
-}
-
-const PAYLOAD_ENCODINGS: [Representation; 3] = [
-    Representation::Csv,
-    Representation::Json,
-    Representation::Yaml,
-];
-
-#[test]
-fn a_post_output_hook_cannot_turn_an_emitting_run_into_a_payload() {
-    for (hook, payload) in [
-        (PostOutput::ReturnsBinary, "binary"),
-        (PostOutput::ReturnsArtifact, "artifact"),
-    ] {
-        for representation in PAYLOAD_ENCODINGS {
-            let result = run_hooked(Ending::Summary, hook, representation);
-
-            assert_eq!(
-                result.error_kind(),
-                Some(RunErrorKind::Render),
-                "{payload} {representation:?}: {}",
-                result.stdout()
-            );
-            let summary = result.expect_diagnostic().summary;
-            assert!(
-                summary.contains(&format!(
-                    "{payload} output was produced by a command that emits events"
-                )),
-                "{payload} {representation:?}: {summary}"
-            );
         }
     }
 }

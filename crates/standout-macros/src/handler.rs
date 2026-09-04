@@ -285,7 +285,7 @@ fn generate_call_arg(param: &ParamInfo) -> TokenStream {
 fn extract_output_type(ty: &Type) -> Option<&Type> {
     if let Type::Path(type_path) = ty {
         if let Some(segment) = type_path.path.segments.last() {
-            if segment.ident == "Output" {
+            if segment.ident == "Output" || segment.ident == "Summary" {
                 if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
                     if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
                         return Some(inner);
@@ -400,10 +400,17 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
 
     let return_type = &fn_item.sig.output;
 
+    let emits = event_type.is_some();
+
     let call_and_return = if is_unit_result(&fn_item) {
+        let empty = if emits {
+            quote! { #dispatch::Summary::Silent }
+        } else {
+            quote! { #dispatch::Output::Silent }
+        };
         quote! {
             #fn_name(#(#call_args),*)?;
-            Ok(#dispatch::Output::Silent)
+            Ok(#empty)
         }
     } else {
         quote! {
@@ -412,7 +419,11 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
     };
 
     let wrapper_return_type = if is_unit_result(&fn_item) {
-        quote! { -> #dispatch::HandlerResult<()> }
+        if emits {
+            quote! { -> #dispatch::SummaryResult<()> }
+        } else {
+            quote! { -> #dispatch::HandlerResult<()> }
+        }
     } else {
         quote! { #return_type }
     };
@@ -445,6 +456,19 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
         quote! { #ok_type }
     };
 
+    let into_handler_result = if emits {
+        quote! {
+            ::core::result::Result::map(
+                #dispatch::IntoSummaryResult::into_summary_result(#wrapper_name(matches, ctx #event_argument)),
+                #dispatch::Output::from,
+            )
+        }
+    } else {
+        quote! {
+            #dispatch::IntoHandlerResult::into_handler_result(#wrapper_name(matches, ctx #event_argument))
+        }
+    };
+
     Ok(quote! {
         #clean_fn
 
@@ -474,7 +498,7 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
                 #handler_results: &mut #dispatch::Results<Self::Event>,
             ) -> #dispatch::HandlerResult<Self::Output>
             {
-                #dispatch::IntoHandlerResult::into_handler_result(#wrapper_name(matches, ctx #event_argument))
+                #into_handler_result
             }
 
             fn expected_args(&self) -> ::std::vec::Vec<#dispatch::verify::ExpectedArg> {
