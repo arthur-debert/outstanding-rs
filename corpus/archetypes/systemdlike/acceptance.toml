@@ -152,7 +152,7 @@ exit_code = 0
 stdout = "UNIT          LOAD   ACTIVE   SUB\ncore.service  loaded active   running\nweb.service   loaded active   running\ncache.service loaded inactive dead\nbackup.timer  loaded active   waiting\n\n4 units listed.\n"
 
 # The two explicit-flag cases keep the names the accepted baseline report
-# carries; they ask with `--color` since TERM01-WS05.
+# carries; they ask with `--color`.
 
 [[case]]
 name = "output-text-beats-tool-var"

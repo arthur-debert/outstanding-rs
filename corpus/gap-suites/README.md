@@ -1,18 +1,19 @@
-# Corpus gap-spec acceptance suites (expected-fail)
+# Corpus gap-spec acceptance suites
 
 Executable definitions-of-done for the parity epics.
 The two gap archetypes (`corpus/archetypes/tflike/`, `corpus/archetypes/jjlike/`)
-describe capability standout does not have; their acceptance suites here are red on
-arrival, deliberately.
+were written ahead of the capability, so their suites here are authored red and turn
+green as the owning epic lands.
 
 The archetypes also sit in the roster proper: each carries the roster's three files
-(`spec.md`, `manifest.toml`, `acceptance.toml`, all `expected = "fail"` cases — see
-`corpus/README.md`) for the runner. The suites *here* are the byte-precise form
-of the same criteria — per-line NDJSON parseability, exact byte offsets, state-file
-rewrites — and the form that runs under plain `pixi run test`.
+(`spec.md`, `manifest.toml`, `acceptance.toml` — see `corpus/README.md`) for the
+runner, with each case `expected = "fail"` until its milestone group closes. The
+suites *here* are the byte-precise form of the same criteria — per-line NDJSON
+parseability, exact byte offsets, state-file rewrites — and the form that runs under
+plain `pixi run test`.
 
-**Gating note.** These suites gate the parity epics and must be green before those
-epics close; `gaps.toml` records each gate's owning epic and status:
+**Gating note.** An epic cannot close while its suite is red; `gaps.toml` records
+each gate's owning epic and status:
 
 - `tests/tflike_diagnostic.rs` — machine contract,
   `docs/spec/implemented/parity-machine-contract.md`.
@@ -81,7 +82,7 @@ binary still works. Under a custom `CARGO_TARGET_DIR` export the variable yourse
 The harness library links nothing; the fixture is the one target in this package
 built on standout.
 
-The fixture carries exactly the capability the tflike gates cover, both of them
-now closed. A promoted assertion resolves the binary with
+The fixture carries exactly the capability the two tflike gates cover, both
+closed. A promoted assertion resolves the binary with
 `corpus_gap_suites::required_binary`, which panics — a broken suite — rather than
 skipping when the variable names nothing.

@@ -1,7 +1,8 @@
 # Acceptance suite for the `tflike` archetype. Format: corpus/README.md.
 # Written spec-first (ROB03-WS03) as a gap archetype, in two milestone groups:
-# the diagnostic cases owned by PAR02 and the progress cases owned by TERM01,
-# which pass since typed incremental results landed.
+# the diagnostic cases owned by PAR02, which stay expected-fail because the
+# runner has no produced tflike binary, and the progress cases owned by TERM01,
+# which pass.
 # The byte-precise form of these assertions — per-line NDJSON parseability,
 # lifecycle ordering, state-file rewrites — lives in `corpus/gap-suites`
 # (tests/tflike_diagnostic.rs, tests/tflike_progress.rs) and runs today under
