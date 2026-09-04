@@ -13,7 +13,7 @@ Properties of the destination being rendered to for one invocation (width, stdou
 _Avoid_: RuntimeProperties, Capabilities, TargetFacts, environment globals, a single color capability for both streams
 
 **ColorPolicy**:
-The color setting on a **RenderRequest** (`Auto` / `Always` / `Never`). Independent of format (`OutputMode`) and of per-stream color capability on **TargetProperties**. Every production run sets `Auto`; the user's only ANSI control today is `--output term` versus `text`, which is a representation choice, not this field. `docs/spec/typed-command-output.md` separates ANSI presentation from representation.
+The color setting on a **RenderRequest** (`Auto` / `Always` / `Never`). Independent of the run's `Representation` and of per-stream color capability on **TargetProperties**. The CLI user names it with `--color auto|always|never`, an application with the `[term] color` key; `Auto` leaves the answer to the destination's reported capability. `docs/spec/implemented/typed-command-output.md` separates ANSI presentation from representation.
 _Avoid_: folding color into `--output`, a single capability bool, detecting color policy inside the leaf
 
 **RenderContext**:

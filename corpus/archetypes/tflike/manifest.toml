@@ -1,8 +1,8 @@
 # Feature/interaction manifest for `tflike`. Format: corpus/README.md.
 #
-# Gap archetype (ROB03-WS03): the spec deliberately describes capability
-# standout did not have. The diagnostic-group cases are still expected-fail;
-# the progress group passes since TERM01. The byte-precise, runnable-today form
+# Gap archetype (ROB03-WS03): the spec was written ahead of the capability.
+# The diagnostic-group cases stay expected-fail because the runner has no
+# produced tflike binary; the progress group passes. The byte-precise, runnable-today form
 # of this suite is the workspace crate `corpus/gap-suites`
 # (tests/tflike_diagnostic.rs, tests/tflike_progress.rs), which runs under
 # plain `pixi run test`.
@@ -53,4 +53,4 @@ cases = [
 
 [gaps]
 PAR02 = "The machine contract (docs/spec/implemented/parity-machine-contract.md): NDJSON stream mode, diagnostics as stream entries with severity and range, -detailed-exitcode's 0/2/1 vocabulary, handler-error-as-diagnostic. The diagnostic-milestone cases are its executable shape; PAR02 is done when they turn green."
-typed-command-output = "Typed command output (docs/spec/typed-command-output.md): apply_start and apply_complete as typed incremental result events on the command's stream, with human progress rendering absent under structured encodings. The progress-milestone cases were its executable shape; TERM01 closed them."
+typed-command-output = "Typed command output (docs/spec/implemented/typed-command-output.md): apply_start and apply_complete as typed incremental result events on the command's stream, with human progress rendering absent under structured encodings. The progress-milestone cases are its executable shape, closed by TERM01."

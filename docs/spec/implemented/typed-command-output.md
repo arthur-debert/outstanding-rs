@@ -1,5 +1,33 @@
 # Typed Command Output
 
+> **Implemented** by TERM01 (#511): WS01 #521 (ADR-0041), WS02 #522, WS03 #523,
+> WS04 #526 and #527, WS05 #525, WS06 #531, WS07 #529. As built, where the text
+> below differs:
+>
+> - The pager variable's `MYAPP` is the name the application gives
+>   `AppBuilder::name`, upper-cased with every character outside `A-Z0-9` as
+>   `_`. An application that never names itself reads `PAGER` alone, so the
+>   framework never guesses a name from argv or the binary.
+> - The human representation of an incremental command is one rendered line per
+>   event, then the returned summary. No spinner, counter or transient line is
+>   derived from the events, and no setting asks for one; that feature is still
+>   the separate spec the Non-goals name.
+> - The corpus `systemdlike` member asks for color with `--color never` and
+>   `--color always` in place of the retired `--output text` and `--output
+>   term`. Its produced binary predates the change, so it leaves the per-PR
+>   corpus subset until #519 re-accepts it from a fresh blind run; an empty
+>   subset passes that workflow rather than failing it.
+> - The harness reads a run's values with `TestResult::results()`, every
+>   recorded value in order, and `TestResult::result()`, the last one — the
+>   summary for a command that returns one. ADR-0041's typed
+>   `TestResult::events::<E>()` was not built, so a test compares
+>   `serde_json::Value`s rather than deserializing into its own event type.
+> - WS08 (#519) has not run in full. The documentation, the help text and this
+>   Spec's filing as implemented are done; what it still owes is the adopter half — the corpus
+>   applications replacing their own `--no-pager` flag and `PAGER` reading with
+>   the framework's, one compiled reference command covering the batch and
+>   incremental combinations, and the blind run that re-accepts `systemdlike`.
+
 ## Problem
 
 An application author writing a Standout handler returns one serializable value, and
@@ -58,7 +86,7 @@ NDJSON is not a separate format: it is the JSON record encoding plus line framin
 is what a sequence of values needs to be read before the command ends. Under line framing
 each event is written as the handler's value, carrying whatever discriminator the
 application gave it, and the summary is the `result` record
-[the machine contract](../topics/execution-outcomes.md) already gives a batch value; a
+[the machine contract](../../topics/execution-outcomes.md) already gives a batch value; a
 `version` line an application writes first is an event like any other, and Standout adds
 no header. A sequence under an encoding without line framing is the array of exactly
 those records, in that order, written when the command ends, so `--output json` is what
@@ -186,6 +214,6 @@ handler, and any structured encoding beyond the supported set.
 The handler contract for an incremental command — the types and signatures, who owns
 `Results<E>`, the order events and the summary reach a consumer in, what a failure after
 an emitted event means, and how hooks and the test harness read the values — is defined by
-[ADR 0041 — Hand the handler a typed results sink](../adr/0041-hand-the-handler-a-typed-results-sink.md),
-written by TERM01-WS01 after prototyping a sink, a returned iterator and a channel
-against the existing handler boundary.
+[ADR 0041 — Hand the handler a typed results sink](../../adr/0041-hand-the-handler-a-typed-results-sink.md),
+which also records the returned iterator and the channel that were prototyped against the
+handler boundary and rejected.

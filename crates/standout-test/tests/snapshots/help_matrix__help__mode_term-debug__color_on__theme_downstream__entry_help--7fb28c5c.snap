@@ -31,7 +31,7 @@ Names a change the way a human would.[/about]
                              [values]possible values: brief, full, none[/values]
   [item]--output[/item] [metavar]<MODE>[/metavar]            [desc]Structured output encoding[/desc]
                              [values]possible values: json, yaml, csv, ndjson, term-debug[/values]
-  [item]--no-pager[/item]                 [desc]Write output straight to stdout, never through a pager[/desc]
+  [item]--no-pager[/item]                 [desc]Do not page the output[/desc]
   [item]--output-file-path[/item] [metavar]<PATH>[/metavar]  [desc]Write output to file instead of stdout[/desc]
   [item]-h, --help[/item]                 [desc]Print help (see more with '--help')[/desc]
 

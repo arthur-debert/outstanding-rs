@@ -652,7 +652,7 @@ let app = App::builder()
 
 > **Verify:** Run `cargo build` - it should compile without errors.
 > **Verify:** Run `tdoo list` - you should see colored, styled output!
-> **Verify:** Run `tdoo list | cat` - plain text, no colors.
+> **Verify:** Run `tdoo list --color never` - plain text, no colors.
 
 Now you're leveraging the core rendering design of Standout:
 

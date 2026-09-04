@@ -424,5 +424,5 @@ No ADR: recipe/config dispatch closures collapse to one helper. There is no publ
 
 The parity Specs (`parity-machine-contract.md`, implemented beside this one;
 `docs/spec/parity-config-layering.md`; and a third, since replaced by
-`docs/spec/typed-command-output.md`) name the sockets they expect this epic to leave.
+`docs/spec/implemented/typed-command-output.md`) name the sockets they expect this epic to leave.
 Read them with this Spec before the grill.

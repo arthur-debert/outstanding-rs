@@ -1,9 +1,13 @@
 # Output Modes
 
-Standout supports multiple output formats through a single handler because modern CLI tools serve two masters: human operators and machine automation.
+A handler returns one serializable value and Standout decides what a run does
+with it: renders the command's template for a person, or encodes the value as
+JSON, YAML, CSV or NDJSON for a script. The same handler serves both, so an
+application writes no separate "API" path.
 
-The same handler logic produces a rendered page for eyes or structured JSON for
-`jq` pipelines. This frees you from writing separate "API" and "CLI" logic.
+Three decisions come apart, and a flag settles each: `--output` names the
+representation, `--color` decides the escape sequences, and `--no-pager` and
+`--output-file-path` decide where the bytes land.
 
 ## Representation and style are two decisions
 
@@ -63,10 +67,23 @@ sequences, whatever the policy says.
 
 ## The color policy
 
-`ColorPolicy` is `Auto`, `Always` or `Never`. In-process entry points name it —
-`App::run_with_color`, `App::run_command`, `HelpConfig::color`,
-`TopicRenderConfig::color`, and `TestHarness::color` — and everything else
-resolves `Auto` against the destination.
+`ColorPolicy` is `Auto`, `Always` or `Never`. The CLI user names it with
+`--color auto|always|never`, which is on every command the way `--output` is
+and renames or disappears through the same seam ([App
+Configuration](./app-configuration.md#color-flag)). In-process entry points
+name it too — `App::run_with_color`, `App::run_command`, `HelpConfig::color`,
+`TopicRenderConfig::color`, and `TestHarness::color`.
+
+The policy is resolved in the terminal-setting order: an explicit `--color`
+first, then `NO_COLOR`, then the `[term] color` key from the application's
+configuration ([Configuration Files](./config-files.md#the-term-section)), then
+whether the destination reports color capability. A named output file never
+does, and a pager inherits stdout's answer.
+
+```bash
+myapp list --color never              # no escape sequences, on any terminal
+myapp list --color always | tee log   # escape sequences into the pipe
+```
 
 ## The --output Flag
 
@@ -294,113 +311,11 @@ tabular specifications and layout.
 
 ## Incremental Commands
 
-A command whose result accrues while it runs — a plan, an apply, a long listing
-— produces a sequence of typed events and then a summary. It declares an event
-type and takes the run's results channel as a third handler parameter:
-
-```rust
-#[derive(Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum Event {
-    ApplyStart { resource: String },
-    ApplyComplete { resource: String },
-}
-
-fn apply(
-    _matches: &ArgMatches,
-    _ctx: &CommandContext,
-    results: &mut Results<Event>,
-) -> HandlerResult<Summary> {
-    for change in plan()? {
-        results.emit(Event::ApplyStart { resource: change.name.clone() })?;
-        change.apply()?;                  // a failure here follows the events
-        results.emit(Event::ApplyComplete { resource: change.name.clone() })?;
-    }
-    Ok(Output::Render(summary))           // the summary, after the last event
-}
-```
-
-Register it with `EventsFnHandler::new(apply)`, or write the same three
-parameters under `#[handler]`, which reads the `Results` parameter and derives
-the command's event type from it. `emit` takes the value by value, returns once
-it has been rendered or written, and fails when the value does not serialize,
-does not render, or cannot be written; propagate with `?` and the run fails
-with it. The event type is `'static`, so an event owns what it carries rather
-than borrowing from the invocation. Standout reports that failure as a render error whether or not the
-handler propagates it. The framework never inspects an event: its shape, including
-whether it carries a `type` key, is the application's contract with its
-consumers.
-
-`Results` exposes `emit` and nothing else. A handler cannot ask which
-representation is running or where the bytes go, and emits the same events
-under every representation.
-
-### The human representation
-
-Standout renders each event from the command's template name with an `.event`
-suffix — `apply.event` beside `apply` — resolved through the same directories
-and theme. The template receives the event as `event` and branches on the
-application's own discriminator, so one template covers every kind:
-
-```jinja
-{% if event.type == "apply_start" %}starting {{ event.resource }}…
-{% elif event.type == "apply_complete" %}{{ "✔" | style("ok") }} {{ event.resource }}
-{% endif %}
-```
-
-Each rendered event is one flushed write, on a terminal and in a pipe alike;
-the summary follows from the command's own template. `.build()` requires the
-`.event` template of every command that declares an event type, so a missing one
-is a setup error rather than a failure on the first event. A command whose
-events are its whole result returns `Output::Silent` as its summary and needs
-only the `.event` template: the summary template is the one `.build()` lets it
-skip, because which `Output` variant a handler returns is not something the
-build can read.
-
-```text
-$ myapp apply
-starting web…
-✔ web
-starting db…
-✔ db
-2 added, 0 removed
-```
-
-### Under a structured encoding
-
-`--output ndjson` is the JSON record encoding plus line framing: each event is
-written as the handler produced it, compact, on its own line and flushed, and
-the summary is the `result` record the machine contract gives a batch value.
-Standout adds no header, so a `version` line an application writes first is an
-event like any other.
-
-```text
-$ myapp apply --output ndjson
-{"type":"version","format_version":1}
-{"type":"apply_start","resource":"web"}
-{"type":"apply_complete","resource":"web"}
-{"type":"result","data":{"applied":1}}
-```
-
-`json`, `yaml` and `csv` have no line framing, so they carry a command's events
-as one document written when the command ends. Standout does not build that
-document yet: an emitting command under those encodings is a render error,
-decided from the handler's event type before the handler runs.
-
-A failure after emitted events keeps them — the human representation has
-rendered them, line framing has written them — and the diagnostic follows in
-the shape [Execution Outcomes](./execution-outcomes.md#failures-under-a-structured-mode)
-gives it. A reader that goes away is not one of those failures: when stdout
-stops reading (`myapp apply --output ndjson | head -1`), Standout discards what
-follows, lets the handler run to completion, and reports the command's own
-status.
-
-Binary and artifact output cannot follow events. A command whose event type is
-not `NoEvents` carries `Output::Render` and `Output::Silent` only, so either
-payload is a render error under every representation — on the run that emitted
-nothing too, since the refusal follows the type rather than the count. Under
-`ndjson` a payload is a render error whether or not the command's event type is
-`NoEvents`: a stream of JSON lines has no room for one.
+A command whose result accrues while it runs emits typed events and then a
+summary, and every representation on this page carries both:
+[Incremental Commands](./incremental-commands.md) is the whole mechanism —
+the `Results` channel, the `.event` template, the record array each encoding
+builds, and what a failure part-way through leaves behind.
 
 ## NDJSON Mode
 
@@ -437,11 +352,55 @@ Behavior:
 - Text output: written to file, nothing printed to stdout
 - Binary output: written to the requested file instead of stdout
 - Silent output: no-op
-- An incremental command: the file is the whole run. It receives each event as
-  it is emitted, then the summary or the diagnostic, then the warning entries
-  under `ndjson`; stdout carries nothing.
+- An incremental command: the file is the whole run and stdout carries nothing
+  ([Incremental Commands](./incremental-commands.md#where-the-bytes-go))
 
 After writing to file, stdout output is suppressed to prevent double-printing.
+
+## Paging
+
+An external pager reads complete human output when the user is at a terminal,
+so a long listing scrolls instead of running off the top of the screen. The
+application author says which commands may page; the CLI user declines with
+`--no-pager`, which is on every command the way `--output` is:
+
+```bash
+myapp log             # human text through the pager on a terminal
+myapp log --no-pager  # the same text straight to stdout
+```
+
+A command is eligible when it declares
+[`pageable`](./dispatch-attributes.md#every-variant-attribute), and every help
+page and topic page is eligible without declaring anything.
+
+Standout runs a pager only when all of these hold, and writes to stdout
+otherwise:
+
+- the command is eligible and the user did not pass `--no-pager`;
+- the representation is the human template: `term-debug` and the structured
+  encodings never page, and neither does incremental human output, which
+  arrives while the command runs rather than complete;
+- stdout is a terminal, and the user named no `--output-file-path`, which wins
+  over paging;
+- an environment variable names a pager.
+
+The pager command comes from the environment alone, `<APP>_PAGER` then `PAGER`,
+so no configuration file can name a program Standout will execute and there is
+no `[term]` pager key. `<APP>` is the name the application gave
+[`AppBuilder::name`](./app-configuration.md#the-application-name), upper-cased
+with every character outside `A-Z0-9` written as `_`, so `my-app` reads
+`MY_APP_PAGER`; an application that never named itself reads `PAGER` only.
+Neither variable set, or the winning value empty, means nothing pages.
+
+The value is a shell word list rather than a program name, run through `sh -c`,
+so `less -FRX` and `sed -n 1p` both work as they do for git. Windows has no
+such shell and never pages. Standout sets `LESS=FRX` and `LV=-c` in the pager's
+environment when the user has not, so colored text pages readably through a
+bare `less`.
+
+A pager that cannot start delivers the bytes to stdout unpaged and leaves the
+run's exit status alone; a pager the user quits early has spent the bytes, and
+the run still reports the command's own status.
 
 ## Customizing Flags
 
@@ -451,6 +410,8 @@ Rename or disable the flags via `AppBuilder`:
 App::builder()
     .output_flag(Some("format"))       // --format instead of --output
     .output_file_flag(Some("out"))     // --out instead of --output-file-path
+    .color_flag(Some("colour"))        // --colour instead of --color
+    .pager_flag(Some("plain"))         // --plain instead of --no-pager
     .build()?
 ```
 
@@ -458,6 +419,8 @@ App::builder()
 App::builder()
     .no_output_flag()                  // Disable --output entirely
     .no_output_file_flag()             // Disable file output
+    .no_color_flag()                   // Disable --color
+    .no_pager_flag()                   // Disable --no-pager
     .build()?
 ```
 

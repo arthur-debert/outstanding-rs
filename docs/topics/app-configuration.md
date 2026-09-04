@@ -515,6 +515,39 @@ App::builder()
     .no_color_flag()  // Disable entirely; an application that spells --color itself needs this
 ```
 
+### Pager Flag
+
+`--no-pager` turns paging off for one run, leaving the bytes to whichever
+destination they would have had without a pager. It renames and disappears
+through the same seam.
+
+```rust
+App::builder()
+    .pager_flag(Some("plain"))  // --plain instead of --no-pager
+```
+
+```rust
+App::builder()
+    .no_pager_flag()  // Remove it; the user then declines paging only by unsetting the variable
+```
+
+Which commands may page is a per-command declaration, not a builder call: see
+[`pageable`](./dispatch-attributes.md#every-variant-attribute) and
+[Paging](./output-modes.md#paging).
+
+### The Application Name
+
+```rust
+App::builder()
+    .name(env!("CARGO_PKG_NAME"))
+```
+
+The name Standout reads the application's own pager variable from:
+`<NAME>_PAGER` before `PAGER`, upper-cased with every character outside
+`A-Z0-9` written as `_`. An application that never names itself is paged by
+`PAGER` alone. This is separate from clap's own `Command::name`, which owns the
+spelling in usage lines.
+
 ### Configuration
 
 `config(clapfig_builder)` registers the application's settings struct;
@@ -525,22 +558,10 @@ described in [Configuration Files](./config-files.md).
 
 ## The App Struct
 
-`build()` produces an `App`. The theme `build()` merged is always present
-(`theme: Theme`); `get_default_theme()` returns `&Theme`.
-
-```rust
-pub struct App {
-    registry: TopicRegistry,
-    output_flag: Option<String>,
-    output_mode_fallback: Representation,
-    output_file_flag: Option<String>,
-    color_flag: Option<String>,
-    theme: Theme,
-    command_hooks: HashMap<String, Hooks>,
-    template_registry: Option<TemplateRegistry>,
-    stylesheet_registry: Option<StylesheetRegistry>,
-}
-```
+`build()` produces an `App`, which holds everything the builder resolved: the
+flag names, the output-mode fallback, the topic, template and stylesheet
+registries, the hooks per command path, and the theme. The theme `build()`
+merged is always present; `get_default_theme()` returns `&Theme`.
 
 ## Running the App
 
@@ -591,7 +612,7 @@ Outcomes](./execution-outcomes.md).
 ```rust
 match app.get_matches_from(cmd, std::env::args(), &InputSources::from_process()) {
     HelpResult::Matches(matches) => { /* use matches for manual dispatch */ }
-    HelpResult::Help(text) | HelpResult::PagedHelp(text) => { /* the invocation asked for help */ }
+    HelpResult::Help(text) => { /* the invocation asked for help */ }
     HelpResult::Error(e) => { /* a clap::Error: usage failure, or --version display */ }
 }
 ```

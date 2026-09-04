@@ -1325,7 +1325,7 @@ impl App {
                     .long(flag_name.clone())
                     .global(true)
                     .action(ArgAction::SetTrue)
-                    .help("Write output straight to stdout, never through a pager"),
+                    .help("Do not page the output"),
             );
         }
 

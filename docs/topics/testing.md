@@ -59,14 +59,20 @@ Argument parsing is clap's responsibility, and clap has an extensive test suite 
 - Env vars (real `std::env::set_var`, originals captured and restored on drop)
 - Working directory (real `std::env::set_current_dir`, original restored on drop)
 - Fixture files (written into a `tempfile::TempDir`)
-- Destination facts on `TargetProperties`: width, whether stdout is a terminal, color-scheme, icon mode, ambiguous-width (injected, never detected)
+- Destination facts on `TargetProperties`: width, whether each stream is a terminal and reports color capability, color-scheme, icon mode, ambiguous-width (injected, never detected)
 - Stdin, clipboard, and prompt responder as an [`InputSources`](https://docs.rs/standout/latest/standout/struct.InputSources.html) value passed into `App::run_with` (not process-global overrides)
 - Interactive prompt responder on those sources, so wizard handlers that call `.prompt_from(ctx.input_sources())` are testable in process — see [Interactive Flows → Testing Wizards](../crates/input/topics/interactive-flows.md#testing-wizards)
 - The `Representation` (injected as `--output=<encoding>` into argv; the human representation names no flag) and the run's `ColorPolicy`, which are two separate settings
 - Framework warnings captured from the run boundary, including accepted answer-sheet parse warnings queued by questionnaire commands
 
 Its `TestResult` exposes `exit_status()`, `success_kind()`, and
-`error_kind()`, with assertions for typed status and failure origin. `NoMatch`
+`error_kind()`, with assertions for typed status and failure origin. It also
+separates what a run produced from how it was presented: `results()` is every
+result value the run recorded, in order, and `result()` the last of them —
+identical whatever representation ran, so a test asserts on the values once and
+on the rendered stdout separately. `delivery()` names where those rendered
+bytes went: stdout, the file the user asked for, or the pager the environment
+named, which an in-process run reports without starting one. `NoMatch`
 returns no framework status because the fallback dispatcher still owns the
 command. For an `AppFailure` or an `ExternalFailure`, `error_kind()` is
 `RunErrorKind::App` or `RunErrorKind::External`, `exit_status()` is the declared

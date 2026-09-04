@@ -135,8 +135,7 @@ count as the flag being present.
 
 ## The `[term]` section
 
-`standout::TermSettings` is the framework's own section. In this release it holds
-two keys:
+`standout::TermSettings` is the framework's own section. It holds two keys:
 
 ```toml
 [term]
@@ -145,24 +144,29 @@ color = "auto"      # auto | always | never: whether human text carries escapes
 ```
 
 `output` names one of the four structured encodings — `json`, `yaml`, `csv` or
-`ndjson` — and nothing else; a file naming a retired value (`auto`, `term`, `text`)
-fails the way any unknown configuration value fails, and `term-debug` is a
-diagnostic view with no configuration spelling.
+`ndjson` — and nothing else; any other value fails the way an unknown
+configuration value fails. `term-debug` is a diagnostic view of the template's
+style tags and has no configuration spelling.
 
 The value fills the same slot as `output_mode_fallback` on the builder, and an
 explicit `--output` still outranks it. It never applies to `--help` or a usage
 error, which are emitted before configuration exists; for the same reason the
 `[default: ...]` shown in `--help` for `--output` is the builder's static fallback
 when that fallback is a structured encoding, and absent when it is the human
-representation, which the flag cannot name. An application that used to read its own file into
-`output_mode_fallback` at build time should stop doing so and let `[term] output`
-carry the setting.
+representation, which the flag cannot name. An application that reads its own
+configuration file into `output_mode_fallback` at build time is doing by hand
+what `[term] output` already does.
 
 `color` takes the same three values as `--color` and fills the same arm of the
 color resolution: an explicit `--color` outranks it, `NO_COLOR` outranks a
-configured `always`, and `auto` leaves the answer to the destination. Pager and
-verbosity keys join this section with the terminal-citizenship work; the theme is
-not a key, because the theme is resolved when the application is built.
+configured `always`, and `auto` leaves the answer to the destination
+([The color policy](./output-modes.md#the-color-policy)).
+
+Two things a reader may look for here are deliberately not keys. The pager is
+read from the environment (`<APP>_PAGER`, then `PAGER`), because Standout
+executes that value and a project's checked-in configuration file must not be
+able to name a program the framework runs. The theme is resolved when the
+application is built, before any file is read.
 
 ## The `config` command
 

@@ -29,7 +29,7 @@ OPTIONS
                              possible values: brief, full, none
   --output <MODE>            Structured output encoding
                              possible values: json, yaml, csv, ndjson, term-debug
-  --no-pager                 Write output straight to stdout, never through a pager
+  --no-pager                 Do not page the output
   --output-file-path <PATH>  Write output to file instead of stdout
   -h, --help                 Print help (see more with '--help')
 
