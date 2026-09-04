@@ -104,4 +104,6 @@ jobs:
           RESULT: ${{ needs.member.result }}
         run: |
           echo "corpus subset: $RESULT"
-          test "$RESULT" = "success"
+          # An empty subset (every member out of the PR lane, pending
+          # re-acceptance) skips the matrix; that is a pass, not a failure.
+          test "$RESULT" = "success" || test "$RESULT" = "skipped"
