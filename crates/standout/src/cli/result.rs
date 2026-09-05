@@ -22,7 +22,7 @@ pub struct CompletedRun {
 }
 
 impl CompletedRun {
-    pub fn from_dispatch(
+    pub(crate) fn from_dispatch(
         inner: DispatchResult,
         warnings: Vec<String>,
         output_mode: Representation,
@@ -40,7 +40,7 @@ impl CompletedRun {
         }
     }
 
-    pub fn with_entries(mut self, entries: String) -> Self {
+    pub(crate) fn with_entries(mut self, entries: String) -> Self {
         self.entries = entries;
         self
     }

@@ -1,7 +1,8 @@
 use serial_test::serial;
 use standout_fixtures::{downstream, Fixture};
 use standout_render::Representation;
-use standout_test::{assert_page_snapshot, matrix};
+mod common;
+use common::{assert_page_snapshot, matrix};
 const ENTRY_POINTS: [&str; 3] = ["-h", "--help", "help"];
 const MODES: [Representation; 2] = [Representation::Human, Representation::TermDebug];
 fn fixture_for(theme_name: &str) -> Fixture {

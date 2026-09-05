@@ -15,7 +15,7 @@
 //!
 //! Windows nest: a handler may drive another app through `run_to_string`,
 //! opening an inner window inside the outer one. Closing the inner window
-//! publishes its own batch to [`take_captured`] *and* folds it into the
+//! publishes its own batch to `take_captured` *and* folds it into the
 //! enclosing window one level deeper on [`TagResolution::nesting_depth`] —
 //! unconditionally, because this layer sees only the returned `String` and
 //! cannot tell whether the caller embedded it or discarded it, and
@@ -213,11 +213,11 @@ pub fn begin_capture() -> CaptureWindow {
     }
 }
 
-pub fn is_capturing() -> bool {
+fn is_capturing() -> bool {
     WINDOWS.with(|windows| !windows.borrow().is_empty())
 }
 
-pub fn record(resolution: TagResolution) {
+fn record(resolution: TagResolution) {
     WINDOWS.with(|windows| {
         if let Some(current) = windows.borrow_mut().last_mut() {
             current.push(resolution);
@@ -225,7 +225,8 @@ pub fn record(resolution: TagResolution) {
     });
 }
 
-pub fn drain() -> Vec<TagResolution> {
+#[cfg(test)]
+fn drain() -> Vec<TagResolution> {
     WINDOWS.with(|windows| {
         windows
             .borrow_mut()
@@ -235,6 +236,7 @@ pub fn drain() -> Vec<TagResolution> {
     })
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub fn take_captured() -> Vec<TagResolution> {
     CAPTURED.with(|captured| std::mem::take(&mut *captured.borrow_mut()))
 }

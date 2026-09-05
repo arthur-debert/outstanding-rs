@@ -42,6 +42,7 @@ clapfig = "0.26"
 [features]
 default = []
 macros = []
+test-support = ["standout-render/test-support"]
 
 # Opt-in input backends. These re-export feature flags from standout-input
 # so that depending on `standout` with `features = ["input-editor"]` is

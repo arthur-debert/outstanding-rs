@@ -9,9 +9,9 @@ categories = ["command-line-interface", "development-tools::testing"]
 repository = "https://github.com/arthur-debert/standout"
 
 [dependencies]
-standout = { version = "12.0.1", path = "../standout" }
+standout = { version = "12.0.1", path = "../standout", features = ["test-support"] }
 standout-input = { version = "12.0.1", path = "../standout-input" }
-standout-render = { version = "12.0.1", path = "../standout-render" }
+standout-render = { version = "12.0.1", path = "../standout-render", features = ["test-support"] }
 clap = { version = "4", features = ["derive", "help"] }
 console = "0.16"
 serde_json = { version = "1", features = ["preserve_order"] }

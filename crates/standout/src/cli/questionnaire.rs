@@ -1,5 +1,5 @@
 use std::io::{self, BufRead, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use crate::cli::CommandContextInput;
@@ -109,7 +109,7 @@ const NO_ATTENDED_TERMINAL: &str =
      rerun in a terminal to review and confirm, or pass --yes to continue \
      without a confirmation prompt; nothing was run";
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "test-support")]
 const TERMINAL_SEAM_VAR: &str = "STANDOUT_QUESTIONNAIRE_TERMINAL";
 
 #[derive(Clone)]
@@ -361,13 +361,13 @@ impl AttendedTerminal for ControllingTerminal {
     }
 }
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(feature = "test-support")]
 struct ScriptedTerminal {
     attended: bool,
     replies: std::collections::VecDeque<String>,
 }
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(feature = "test-support")]
 impl ScriptedTerminal {
     fn absent() -> Self {
         Self {
@@ -384,7 +384,7 @@ impl ScriptedTerminal {
     }
 }
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(feature = "test-support")]
 impl AttendedTerminal for ScriptedTerminal {
     fn is_attended(&self) -> bool {
         self.attended
@@ -406,7 +406,7 @@ fn confirm_attended_from_env(confirmation: &Confirmation) -> anyhow::Result<bool
 }
 
 fn attended_terminal_from_env() -> anyhow::Result<Box<dyn AttendedTerminal>> {
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "test-support")]
     match std::env::var_os(TERMINAL_SEAM_VAR) {
         None => Ok(Box::new(ControllingTerminal)),
         Some(value) if value == "absent" => Ok(Box::new(ScriptedTerminal::absent())),
@@ -414,7 +414,7 @@ fn attended_terminal_from_env() -> anyhow::Result<Box<dyn AttendedTerminal>> {
             let script = std::fs::read_to_string(&path).map_err(|error| {
                 anyhow::anyhow!(
                     "failed to read the scripted terminal replies from {}: {error}",
-                    Path::new(&path).display()
+                    std::path::Path::new(&path).display()
                 )
             })?;
             Ok(Box::new(ScriptedTerminal::from_replies(
@@ -422,7 +422,7 @@ fn attended_terminal_from_env() -> anyhow::Result<Box<dyn AttendedTerminal>> {
             )))
         }
     }
-    #[cfg(not(debug_assertions))]
+    #[cfg(not(feature = "test-support"))]
     Ok(Box::new(ControllingTerminal))
 }
 
