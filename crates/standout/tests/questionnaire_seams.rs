@@ -269,7 +269,7 @@ fn a_parent_global_yes_collides_with_the_injected_questionnaire_flag() {
 #[test]
 #[serial(questionnaire)]
 #[should_panic(expected = "Long option names must be unique")]
-fn running_a_parent_global_yes_is_rejected_by_clap() {
+fn running_a_parent_global_yes_panics_today_instead_of_reporting_the_reserved_name() {
     let cmd = Command::new("formlike")
         .subcommand_required(true)
         .arg(
