@@ -981,6 +981,28 @@ mod tests {
         }
 
         #[test]
+        fn a_cut_closes_the_less_common_sgr_groups_too() {
+            for opener in [
+                "\x1b[26m", "\x1b[51m", "\x1b[53m", "\x1b[60m", "\x1b[64m", "\x1b[73m",
+                "\x1b[74m",
+            ] {
+                let source = format!("{opener}alpha beta");
+                let text = StyledText::parse(&source);
+                assert_eq!(
+                    text.select_range(0..5),
+                    format!("{opener}alpha\x1b[0m"),
+                    "{opener:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn a_cut_falling_on_a_tag_boundary_closes_the_ansi_after_the_tag() {
+            let text = StyledText::parse("[row]\x1b[31mabc[/row]def");
+            assert_eq!(text.select_range(0..3), "[row]\x1b[31mabc[/row]\x1b[0m");
+        }
+
+        #[test]
         fn a_range_covering_the_whole_text_leaves_unbalanced_source_alone() {
             let input = "[outer]hello[/outer]\x1b[31m";
             let text = StyledText::parse(input);

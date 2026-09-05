@@ -40,7 +40,9 @@ pub fn ansi_units(source: &str) -> impl Iterator<Item = AnsiUnit<'_>> {
 
 /// The reset code of each attribute group SGR can leave open, indexed by the
 /// bit that records the group as open.
-const GROUP_RESETS: [u16; 13] = [10, 22, 23, 24, 25, 27, 28, 29, 39, 49, 54, 55, 59];
+const GROUP_RESETS: [u16; 16] = [
+    10, 22, 23, 24, 25, 27, 28, 29, 39, 49, 50, 54, 55, 59, 65, 75,
+];
 
 /// The group a parameter opens, as an index into `GROUP_RESETS`.
 fn opened_group(code: u16) -> Option<usize> {
@@ -53,11 +55,14 @@ fn opened_group(code: u16) -> Option<usize> {
         8 => 28,
         9 => 29,
         11..=19 => 10,
+        26 => 50,
         30..=38 | 90..=97 => 39,
         40..=48 | 100..=107 => 49,
         51 | 52 => 54,
         53 => 55,
         58 => 59,
+        60..=64 => 65,
+        73 | 74 => 75,
         _ => return None,
     };
     GROUP_RESETS.iter().position(|group| *group == reset)
@@ -76,7 +81,7 @@ fn opened_group(code: u16) -> Option<usize> {
 /// resets.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AnsiBalance {
-    open_groups: u16,
+    open_groups: u32,
 }
 
 impl AnsiBalance {
@@ -106,13 +111,21 @@ impl AnsiBalance {
             };
 
             if !is_compound && matches!(code, 38 | 48 | 58) {
-                let swallow = match parameters.next().and_then(|next| next.parse::<u16>().ok()) {
-                    Some(2) => 3,
-                    Some(5) => 1,
-                    _ => 0,
+                let channels = match parameters
+                    .clone()
+                    .next()
+                    .and_then(|space| space.parse::<u16>().ok())
+                {
+                    Some(2) => Some(3),
+                    Some(5) => Some(1),
+                    _ => None,
                 };
-                for _ in 0..swallow {
-                    parameters.next();
+                // A colour space nobody recognises swallows nothing, so a
+                // parameter that follows still applies.
+                if let Some(channels) = channels {
+                    for _ in 0..=channels {
+                        parameters.next();
+                    }
                 }
             }
 
@@ -217,7 +230,7 @@ mod tests {
     }
 
     #[test]
-    fn a_targeted_reset_closes_only_the_group_it_names() {
+    fn every_group_opens_on_its_parameter_and_closes_on_its_own_reset() {
         for (opener, closer) in [
             ("\u{1b}[31m", "\u{1b}[39m"),
             ("\u{1b}[38;2;255;0;0m", "\u{1b}[39m"),
@@ -226,11 +239,38 @@ mod tests {
             ("\u{1b}[2m", "\u{1b}[22m"),
             ("\u{1b}[3m", "\u{1b}[23m"),
             ("\u{1b}[4m", "\u{1b}[24m"),
+            ("\u{1b}[5m", "\u{1b}[25m"),
+            ("\u{1b}[7m", "\u{1b}[27m"),
+            ("\u{1b}[8m", "\u{1b}[28m"),
+            ("\u{1b}[9m", "\u{1b}[29m"),
+            ("\u{1b}[11m", "\u{1b}[10m"),
+            ("\u{1b}[26m", "\u{1b}[50m"),
+            ("\u{1b}[51m", "\u{1b}[54m"),
+            ("\u{1b}[53m", "\u{1b}[55m"),
+            ("\u{1b}[58;5;9m", "\u{1b}[59m"),
+            ("\u{1b}[60m", "\u{1b}[65m"),
+            ("\u{1b}[61m", "\u{1b}[65m"),
+            ("\u{1b}[62m", "\u{1b}[65m"),
+            ("\u{1b}[63m", "\u{1b}[65m"),
+            ("\u{1b}[64m", "\u{1b}[65m"),
+            ("\u{1b}[73m", "\u{1b}[75m"),
+            ("\u{1b}[74m", "\u{1b}[75m"),
         ] {
             let mut balance = AnsiBalance::default();
             balance.observe(opener);
+            assert_eq!(balance.closing(), ANSI_RESET, "{opener:?}");
             balance.observe(closer);
             assert_eq!(balance.closing(), "", "{opener:?} then {closer:?}");
+
+            // Another group's reset leaves this one open.
+            let mut balance = AnsiBalance::default();
+            balance.observe(opener);
+            balance.observe(if closer == "\u{1b}[39m" {
+                "\u{1b}[49m"
+            } else {
+                "\u{1b}[39m"
+            });
+            assert_eq!(balance.closing(), ANSI_RESET, "{opener:?}");
         }
 
         let mut balance = AnsiBalance::default();
@@ -238,6 +278,29 @@ mod tests {
         balance.observe("\u{1b}[39m");
         assert_eq!(balance.closing(), ANSI_RESET);
         balance.observe("\u{1b}[22m");
+        assert_eq!(balance.closing(), "");
+    }
+
+    #[test]
+    fn an_extended_colour_swallows_its_channels_and_nothing_else() {
+        for sequence in ["\u{1b}[38;0m", "\u{1b}[48;0m", "\u{1b}[58;0m"] {
+            let mut balance = AnsiBalance::default();
+            balance.observe("\u{1b}[1m");
+            balance.observe(sequence);
+            assert_eq!(balance.closing(), "", "{sequence:?}");
+        }
+
+        let mut balance = AnsiBalance::default();
+        balance.observe("\u{1b}[38;2;0;0;0;0m");
+        assert_eq!(balance.closing(), "");
+
+        let mut balance = AnsiBalance::default();
+        balance.observe("\u{1b}[38;5;0;39m");
+        assert_eq!(balance.closing(), "");
+
+        let mut balance = AnsiBalance::default();
+        balance.observe("\u{1b}[38;31m");
+        balance.observe("\u{1b}[39m");
         assert_eq!(balance.closing(), "");
     }
 
