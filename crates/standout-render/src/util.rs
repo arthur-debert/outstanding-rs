@@ -39,6 +39,20 @@ pub fn truncate_to_width_with_policy(
     calculator.truncate_visible(s, max_width, "…", crate::width::VisibleTruncateAt::End)
 }
 
+pub fn escape_style_tags(text: String) -> String {
+    if !text.contains(['[', ']']) {
+        return text;
+    }
+    let mut escaped = String::with_capacity(text.len() + 8);
+    for character in text.chars() {
+        if character == '[' || character == ']' {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+    escaped
+}
+
 /// `value` is one flat record (scalar values) or an array of them; anything
 /// else is a [`RenderError`] pointing at `CsvProjection`. Columns are the keys
 /// in first-seen order; a missing or null key is an empty cell.

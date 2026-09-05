@@ -30,6 +30,7 @@ use super::util::{
     truncate_visible_start_with_policy, visible_width_with_policy,
 };
 use crate::template::stringify;
+use crate::util::escape_style_tags;
 use crate::width::RenderWidthSource;
 
 const DEFAULT_TABULAR_WIDTH: usize = 80;
@@ -188,7 +189,7 @@ pub(crate) fn register_tabular_filters_with_source(
     });
 
     env.add_filter("style_as", |value: Value, style: String| -> String {
-        let text = stringify(&value).into_owned();
+        let text = escape_style_tags(stringify(&value).into_owned());
         if style.is_empty() {
             text
         } else {
@@ -798,6 +799,8 @@ mod tests {
     use super::*;
     use minijinja::context;
     use serde::Serialize;
+    use standout_bbparser::{TagTransform, UnknownTagBehavior};
+    use std::collections::HashMap;
 
     fn setup_env() -> Environment<'static> {
         let mut env = crate::template::new_environment();
@@ -1063,6 +1066,32 @@ mod tests {
             .render(context!(value => "Error message"))
             .unwrap();
         assert_eq!(result, "[error]Error message[/error]");
+    }
+
+    #[test]
+    fn filter_style_as_keeps_a_bracketed_value_literal_inside_its_style() {
+        let mut env = setup_env();
+        env.add_template("test", "{{ value | style_as('error') }}")
+            .unwrap();
+        let result = env
+            .get_template("test")
+            .unwrap()
+            .render(context!(value => "missing [severity_map] table"))
+            .unwrap();
+        assert_eq!(result, r"[error]missing \[severity_map\] table[/error]");
+
+        let styles = HashMap::from([("error".to_string(), console::Style::new().bold())]);
+        let _window = crate::diagnostics::begin_capture();
+        assert_eq!(
+            crate::diagnostics::resolve_tags(
+                &result,
+                styles,
+                TagTransform::Remove,
+                UnknownTagBehavior::Strip,
+            ),
+            "missing [severity_map] table"
+        );
+        assert!(crate::diagnostics::unresolved_in_current_window().is_empty());
     }
 
     #[test]
