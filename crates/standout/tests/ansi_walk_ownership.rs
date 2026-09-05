@@ -52,6 +52,9 @@ fn production_lines(source: &str) -> Vec<(usize, &str)> {
     lines
 }
 
+/// Walking through the owning module is what puts `AnsiBalance` within reach of
+/// a cutter; whether to use it stays each cutter's decision, and one of them
+/// walks through the module without balancing.
 #[test]
 fn only_the_bbparser_ansi_module_walks_ansi_units() {
     let root = workspace_root();
