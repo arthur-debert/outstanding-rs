@@ -307,7 +307,7 @@ fn rendering_pairs_match_the_separate_representation_and_color_setters() {
         (Representation::Json, ColorPolicy::Never),
     ];
     let mut rendered: Vec<String> = Vec::new();
-    for (representation, color) in pairs {
+    for &(representation, color) in &pairs {
         let paired = TestHarness::new().rendering(representation, color).run(
             &app,
             cmd.clone(),
@@ -318,6 +318,7 @@ fn rendering_pairs_match_the_separate_representation_and_color_setters() {
             .color(color)
             .run(&app, cmd.clone(), ["app", "say"]);
         paired.assert_success();
+        separate.assert_success();
         assert_eq!(
             paired.output_mode(),
             separate.output_mode(),
