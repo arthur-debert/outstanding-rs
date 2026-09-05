@@ -1,6 +1,6 @@
 //! Dispatch seams an application reaches for: the output-mode fallback, an
-//! app-owned exit status and diagnostic, hook diagnostic framing, and the
-//! matches a hook receives.
+//! app-owned exit status and diagnostic, the status a clap rejection exits
+//! with, hook diagnostic framing, and the matches a hook receives.
 
 use clap::{Arg, ArgAction, Command};
 use serde_json::json;
@@ -359,4 +359,198 @@ fn questionnaire_resolution_runs_where_its_call_sits_in_the_hook_chain() {
     result.assert_success();
     result.assert_stdout_eq("db-1");
     assert_eq!(&*seen.borrow(), &["before: no", "after: yes"]);
+}
+
+fn framed_failure_app(status: u8, diagnostic: &'static str) -> App {
+    App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "view",
+            FnHandler::new(move |_matches, _ctx| -> HandlerResult<serde_json::Value> {
+                Err(AppFailure::new(status, diagnostic).unwrap().framed().into())
+            }),
+            |cfg| cfg.structured_only(),
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+#[test]
+#[serial]
+fn a_framed_domain_error_keeps_its_status_and_takes_the_handler_framing() {
+    let result = TestHarness::new().run(
+        &framed_failure_app(2, "proiectio: drift detected"),
+        view_command(),
+        ["proiectio", "view"],
+    );
+
+    result.assert_error();
+    result.assert_error_kind(RunErrorKind::App);
+    assert_eq!(result.exit_status().map(ExitStatus::code), Some(2));
+    result.assert_stdout_eq("");
+    result.assert_stderr_eq("Error: proiectio: drift detected\n");
+}
+
+#[test]
+#[serial]
+fn a_framed_domain_error_is_a_stdout_document_with_stderr_silent() {
+    use standout::cli::DiagnosticKind;
+
+    let result = TestHarness::new().run(
+        &framed_failure_app(2, "proiectio: drift detected"),
+        view_command(),
+        ["proiectio", "view", "--output", "json"],
+    );
+
+    result.assert_error();
+    result.assert_error_kind(RunErrorKind::App);
+    assert_eq!(result.exit_status().map(ExitStatus::code), Some(2));
+    result.assert_stderr_empty();
+
+    let diagnostic = result.expect_diagnostic();
+    assert_eq!(diagnostic.kind, DiagnosticKind::App);
+    assert_eq!(diagnostic.summary, "proiectio: drift detected");
+    assert_eq!(diagnostic.detail, "");
+}
+
+#[test]
+#[serial]
+fn an_unframed_domain_error_keeps_its_verbatim_stderr_under_both_representations() {
+    use standout::cli::DiagnosticKind;
+
+    let human = TestHarness::new().run(
+        &app_owned_failure_app(2, "proiectio: drift detected\n"),
+        view_command(),
+        ["proiectio", "view"],
+    );
+    human.assert_error();
+    assert_eq!(human.exit_status().map(ExitStatus::code), Some(2));
+    human.assert_stdout_eq("");
+    human.assert_stderr_eq("proiectio: drift detected\n");
+
+    let structured = TestHarness::new().run(
+        &app_owned_failure_app(2, "proiectio: drift detected\n"),
+        view_command(),
+        ["proiectio", "view", "--output", "json"],
+    );
+    structured.assert_error();
+    assert_eq!(structured.exit_status().map(ExitStatus::code), Some(2));
+    structured.assert_stderr_eq("proiectio: drift detected\n");
+
+    let diagnostic = structured.expect_diagnostic();
+    assert_eq!(diagnostic.kind, DiagnosticKind::App);
+    assert_eq!(diagnostic.summary, "proiectio: drift detected");
+    assert_eq!(diagnostic.detail, "proiectio: drift detected\n");
+}
+
+#[test]
+#[serial]
+fn a_framed_domain_error_carries_no_terminal_escape_sequence() {
+    let result = TestHarness::new().run(
+        &framed_failure_app(2, "proiectio: \u{1b}]0;pwned\u{7}drift"),
+        view_command(),
+        ["proiectio", "view"],
+    );
+
+    result.assert_error();
+    result.assert_stderr_eq("Error: proiectio: \\u{1b}]0;pwned\\u{7}drift\n");
+}
+
+fn usage_status_app(usage_exit_status: Option<u8>) -> App {
+    let mut builder = App::builder().templates(EmbeddedTemplates::new(TEMPLATES, ""));
+    if let Some(status) = usage_exit_status {
+        builder = builder.usage_exit_status(status);
+    }
+    builder
+        .command_with(
+            "view",
+            FnHandler::new(|_matches, _ctx| -> HandlerResult<serde_json::Value> {
+                Err(anyhow::anyhow!("proiectio: could not read the archive"))
+            }),
+            |cfg| cfg.structured_only(),
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+#[test]
+#[serial]
+fn a_clap_rejection_exits_two_for_an_app_that_names_no_usage_status() {
+    let result = TestHarness::new().run(
+        &usage_status_app(None),
+        view_command(),
+        ["proiectio", "view", "--unknown"],
+    );
+
+    result.assert_error();
+    result.assert_error_kind(RunErrorKind::ClapUsage);
+    result.assert_exit_status(ExitStatus::USAGE_ERROR);
+}
+
+#[test]
+#[serial]
+fn a_clap_rejection_exits_with_the_status_the_app_named() {
+    let result = TestHarness::new().run(
+        &usage_status_app(Some(1)),
+        view_command(),
+        ["proiectio", "view", "--unknown"],
+    );
+
+    result.assert_error();
+    result.assert_error_kind(RunErrorKind::ClapUsage);
+    result.assert_exit_status(ExitStatus::FAILURE);
+    assert!(
+        result.stderr().contains("unexpected argument '--unknown'"),
+        "the clap prose is unchanged, got {:?}",
+        result.stderr()
+    );
+}
+
+#[test]
+#[serial]
+fn a_named_usage_status_leaves_every_other_failure_alone() {
+    let result = TestHarness::new().run(
+        &usage_status_app(Some(2)),
+        view_command(),
+        ["proiectio", "view"],
+    );
+
+    result.assert_error();
+    result.assert_error_kind(RunErrorKind::Handler);
+    result.assert_exit_status(ExitStatus::FAILURE);
+}
+
+#[test]
+#[serial]
+fn a_named_usage_status_reaches_the_stdout_document_too() {
+    use standout::cli::DiagnosticKind;
+
+    let result = TestHarness::new().run(
+        &usage_status_app(Some(1)),
+        view_command(),
+        ["proiectio", "view", "--unknown", "--output", "json"],
+    );
+
+    result.assert_error();
+    result.assert_exit_status(ExitStatus::FAILURE);
+    result.assert_stderr_empty();
+    assert_eq!(result.expect_diagnostic().kind, DiagnosticKind::ClapUsage);
+}
+
+#[test]
+fn a_usage_status_of_zero_refuses_to_build() {
+    let built = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .usage_exit_status(0)
+        .build();
+
+    let Err(error) = built else {
+        panic!("a usage status of zero must not build");
+    };
+    assert!(
+        error.to_string().contains("usage_exit_status(0)"),
+        "got {error}"
+    );
 }

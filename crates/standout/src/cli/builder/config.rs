@@ -212,6 +212,18 @@ impl AppBuilder {
         self.strict_style_tags = enabled;
         self
     }
+
+    pub fn usage_exit_status(mut self, status: u8) -> Self {
+        if status == 0 {
+            self.setup_errors.push(SetupError::Config(
+                "usage_exit_status(0) would report a rejected command line as shell success"
+                    .to_string(),
+            ));
+            return self;
+        }
+        self.usage_exit_status = Some(crate::cli::ExitStatus::from(status));
+        self
+    }
 }
 
 #[cfg(test)]

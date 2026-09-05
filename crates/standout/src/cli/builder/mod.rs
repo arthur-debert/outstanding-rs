@@ -39,8 +39,8 @@ use super::default_command::ParseFailure;
 use super::dispatch::DispatchFn;
 use super::group::CommandRecipe;
 use super::handler::{
-    emits_events, CommandContext, Extensions, Handler, HandlerOutcome, Output as HandlerOutput,
-    Results, StreamSink,
+    emits_events, CommandContext, ExitStatus, Extensions, Handler, HandlerOutcome,
+    Output as HandlerOutput, Results, StreamSink,
 };
 use super::help::data::{extract_help_data, extract_help_data_with_topics};
 use super::help::{
@@ -384,6 +384,7 @@ pub struct App {
     pub(crate) version: Option<String>,
     pub(crate) startup_warnings: Vec<String>,
     pub(crate) strict_style_tags: bool,
+    pub(crate) usage_exit_status: Option<ExitStatus>,
     pub(crate) config: Option<Rc<dyn ConfigSeam>>,
     pub(crate) config_override_flag: Option<String>,
     pub(crate) config_command: bool,
@@ -436,6 +437,8 @@ pub struct AppBuilder {
 
     pub(crate) strict_style_tags: bool,
 
+    pub(crate) usage_exit_status: Option<ExitStatus>,
+
     pub(crate) config: Option<Box<dyn ConfigSeam>>,
 
     pub(crate) term_accessor: Option<Box<dyn std::any::Any>>,
@@ -479,6 +482,7 @@ impl AppBuilder {
             version: None,
             startup_warnings: Vec::new(),
             strict_style_tags: false,
+            usage_exit_status: None,
             config: None,
             term_accessor: None,
             config_override_flag: None,
@@ -688,6 +692,7 @@ impl AppBuilder {
             startup_warnings: self.startup_warnings,
             strict_style_tags: self.strict_style_tags
                 || strict_style_tags_from_env(std::env::var_os(STRICT_STYLE_TAGS_ENV)),
+            usage_exit_status: self.usage_exit_status,
             config: self.config.map(Rc::from),
             config_override_flag: self.config_override_flag,
             config_command: self.config_command,

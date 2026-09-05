@@ -4,10 +4,11 @@ use crate::cli::handler::{
 use crate::{ColorPolicy, Representation};
 
 #[must_use = "exit the process with `status`, or otherwise act on the outcome"]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct ProcessOutcome {
     pub handled: bool,
     pub status: ExitStatus,
+    pub final_write_failure: Option<RunError>,
 }
 
 #[derive(Debug)]

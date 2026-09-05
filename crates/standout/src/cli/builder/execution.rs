@@ -482,6 +482,7 @@ impl App {
                         format!("Error writing output: {}", e),
                         RunErrorKind::FinalWrite(OutputKind::Text),
                     )
+                    .with_source(e)
                 })?;
                 sink.redirect(file);
             } else {
@@ -634,28 +635,37 @@ impl App {
                         .and_then(|()| file.flush())
                     });
                     if let Err(e) = written {
-                        return DispatchResult::Error(RunError::new(
-                            format!("Error writing output: {}", e),
-                            RunErrorKind::FinalWrite(OutputKind::Text),
-                        ));
+                        return DispatchResult::Error(
+                            RunError::new(
+                                format!("Error writing output: {}", e),
+                                RunErrorKind::FinalWrite(OutputKind::Text),
+                            )
+                            .with_source(e),
+                        );
                     }
                     final_output = RenderedOutput::Silent;
                 }
                 RenderedOutput::Text(t) => {
                     if let Err(e) = write_output(&t.formatted, &dest) {
-                        return DispatchResult::Error(RunError::new(
-                            format!("Error writing output: {}", e),
-                            RunErrorKind::FinalWrite(OutputKind::Text),
-                        ));
+                        return DispatchResult::Error(
+                            RunError::new(
+                                format!("Error writing output: {}", e),
+                                RunErrorKind::FinalWrite(OutputKind::Text),
+                            )
+                            .with_source(e),
+                        );
                     }
                     final_output = RenderedOutput::Silent;
                 }
                 RenderedOutput::Binary(b, _) => {
                     if let Err(e) = write_binary_output(b, &dest) {
-                        return DispatchResult::Error(RunError::new(
-                            format!("Error writing output: {}", e),
-                            RunErrorKind::FinalWrite(OutputKind::Binary),
-                        ));
+                        return DispatchResult::Error(
+                            RunError::new(
+                                format!("Error writing output: {}", e),
+                                RunErrorKind::FinalWrite(OutputKind::Binary),
+                            )
+                            .with_source(e),
+                        );
                     }
                     final_output = RenderedOutput::Silent;
                 }
@@ -1076,6 +1086,7 @@ impl App {
                             format!("Error writing output: {}", error),
                             RunErrorKind::FinalWrite(OutputKind::Text),
                         )
+                        .with_source(error)
                     })
             });
         let paged = help_to_file.is_none() && self.page_delivery(&result);
@@ -1131,7 +1142,11 @@ impl App {
             .or(primary_status)
             .unwrap_or(ExitStatus::SUCCESS);
 
-        ProcessOutcome { handled, status }
+        ProcessOutcome {
+            handled,
+            status,
+            final_write_failure,
+        }
     }
 
     pub(crate) fn seed_startup_warnings(&self, warnings: &WarningBuffer) {
@@ -1143,6 +1158,8 @@ impl App {
     /// The capture window every entry point shares. Help and answer-sheet
     /// outcomes return before the pre-commit strict check, so they are checked
     /// here instead, and the run's surviving delivery is recorded here too.
+    /// Every clap rejection passes through here, so this is also where an
+    /// application's `usage_exit_status` replaces the framework's `2`.
     fn collect_run_warnings(
         &self,
         recorder: &RunRecorder,
@@ -1160,6 +1177,11 @@ impl App {
         if outcome.success_kind().is_some() {
             if let Some(error) = self.strict_style_tags_error(&warnings) {
                 outcome = DispatchResult::Error(error);
+            }
+        }
+        if let (Some(status), DispatchResult::Error(error)) = (self.usage_exit_status, &outcome) {
+            if error.kind() == RunErrorKind::ClapUsage {
+                outcome = DispatchResult::Error(error.clone().with_usage_exit_status(status));
             }
         }
         if let (Some(pager), DispatchResult::Handled(output)) = (&pager, &outcome) {
@@ -1601,10 +1623,13 @@ impl App {
         if let ArtifactDestination::File(path) = &destination {
             let dest = OutputDestination::File(path.clone());
             if let Err(e) = write_binary_output(&artifact.bytes, &dest) {
-                return DispatchResult::Error(RunError::new(
-                    format!("Error writing artifact: {}", e),
-                    RunErrorKind::FinalWrite(OutputKind::Artifact),
-                ));
+                return DispatchResult::Error(
+                    RunError::new(
+                        format!("Error writing artifact: {}", e),
+                        RunErrorKind::FinalWrite(OutputKind::Artifact),
+                    )
+                    .with_source(e),
+                );
             }
         }
 
