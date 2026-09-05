@@ -27,36 +27,22 @@ fn walk_rs(dir: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-fn production_lines(source: &str) -> Vec<(usize, &str)> {
-    let mut lines = Vec::new();
-    let mut test_module_indent = None;
-    for (number, line) in source.lines().enumerate() {
-        let indent = line.len() - line.trim_start().len();
-        match test_module_indent {
-            Some(open) if indent <= open && line.trim_start().starts_with('}') => {
-                test_module_indent = None;
-                continue;
-            }
-            Some(_) => continue,
-            None => {}
-        }
-        if line.trim_start().starts_with("#[cfg(test)]") {
-            test_module_indent = Some(indent);
-            continue;
-        }
-        if line.trim_start().starts_with("//") {
-            continue;
-        }
-        lines.push((number + 1, line));
-    }
-    lines
+fn offenders_in(relative: &str, source: &str) -> Vec<String> {
+    source
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| line.contains(WALKER))
+        .map(|(number, line)| format!("{relative}:{}: {}", number + 1, line.trim()))
+        .collect()
 }
 
 /// Walking through the owning module is what puts `AnsiBalance` within reach of
 /// a cutter; whether to use it stays each cutter's decision, and one of them
-/// walks through the module without balancing.
+/// walks through the module without balancing. The rule is that the name
+/// appears nowhere else, test code included, so the scan reads every line and
+/// has nothing it can skip.
 #[test]
-fn only_the_bbparser_ansi_module_walks_ansi_units() {
+fn only_the_bbparser_ansi_module_names_the_walker() {
     let root = workspace_root();
     let mut files = Vec::new();
     walk_rs(&root.join("crates"), &mut files);
@@ -64,7 +50,6 @@ fn only_the_bbparser_ansi_module_walks_ansi_units() {
 
     let mut offenders = Vec::new();
     for file in &files {
-        let source = fs::read_to_string(file).unwrap();
         let relative = file
             .strip_prefix(&root)
             .unwrap()
@@ -73,11 +58,8 @@ fn only_the_bbparser_ansi_module_walks_ansi_units() {
         if relative == OWNER || !relative.contains("/src/") {
             continue;
         }
-        for (number, line) in production_lines(&source) {
-            if line.contains(WALKER) {
-                offenders.push(format!("{relative}:{number}: {}", line.trim()));
-            }
-        }
+        let source = fs::read_to_string(file).unwrap();
+        offenders.extend(offenders_in(&relative, &source));
     }
 
     assert!(
@@ -88,8 +70,11 @@ fn only_the_bbparser_ansi_module_walks_ansi_units() {
 }
 
 #[test]
-fn the_scan_reads_past_a_test_module_and_a_comment() {
+fn the_scan_reads_lines_a_cfg_test_item_would_have_hidden() {
     let source = "\
+#[cfg(test)]
+use console::AnsiCodeIterator;
+
 fn production() {
     let _ = AnsiCodeIterator::new(\"\");
 }
@@ -104,10 +89,13 @@ mod tests {
 // AnsiCodeIterator in a comment
 fn after() {}
 ";
-    let hits: Vec<_> = production_lines(source)
-        .into_iter()
-        .filter(|(_, line)| line.contains(WALKER))
-        .map(|(number, _)| number)
-        .collect();
-    assert_eq!(hits, [2]);
+    assert_eq!(
+        offenders_in("file.rs", source),
+        [
+            "file.rs:2: use console::AnsiCodeIterator;",
+            "file.rs:5: let _ = AnsiCodeIterator::new(\"\");",
+            "file.rs:11: let _ = AnsiCodeIterator::new(\"\");",
+            "file.rs:15: // AnsiCodeIterator in a comment",
+        ]
+    );
 }
