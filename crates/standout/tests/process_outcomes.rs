@@ -383,8 +383,6 @@ struct EmittedRun {
     handled: bool,
     status: u8,
     failure: String,
-    /// The `ErrorKind` of the `io::Error` beneath the failure, `none` when the
-    /// failure carries no source and `not-io` when it carries something else.
     source: String,
 }
 

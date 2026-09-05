@@ -189,8 +189,7 @@ fn failure_kind(error: &EmitError) -> RunErrorKind {
     }
 }
 
-/// Rebuilt rather than moved: `record_failure` borrows an error it must also hand
-/// back to the caller, and `io::Error` does not clone.
+// Rebuilt, not moved: `record_failure` borrows an error it must also return, and `io::Error` does not clone.
 fn rebuilt(error: &std::io::Error) -> std::io::Error {
     error.raw_os_error().map_or_else(
         || std::io::Error::new(error.kind(), error.to_string()),
