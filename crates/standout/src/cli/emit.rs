@@ -84,13 +84,15 @@ fn emit_failure<W: Write + ?Sized, E: Write + ?Sized>(
     stderr: &mut E,
 ) -> Option<RunError> {
     let stderr_prose = if error.writes_diagnostic_verbatim() {
-        stderr.write_all(error.as_str().as_bytes())
+        stderr
+            .write_all(error.as_str().as_bytes())
+            .and_then(|()| stderr.flush())
     } else if carries_diagnostic_document(output_mode) {
         Ok(())
     } else {
-        writeln!(stderr, "{}", error)
+        writeln!(stderr, "{}", error).and_then(|()| stderr.flush())
     };
-    if let Err(write_error) = stderr_prose.and_then(|()| stderr.flush()) {
+    if let Err(write_error) = stderr_prose {
         return Some(
             RunError::new(
                 format!("Error writing stderr: {}", write_error),
@@ -450,6 +452,29 @@ mod tests {
         assert_eq!(document["detail"], "");
         assert!(document.get("range").is_none());
         assert!(stdout.ends_with('\n'));
+    }
+
+    #[test]
+    fn a_structured_failure_does_not_report_the_flush_of_a_stderr_it_never_wrote() {
+        let mut stdout = Vec::new();
+        let mut stderr = FlushFailingWriter::default();
+        let emitted = emit_run_result(
+            &DispatchResult::Error(RunError::new(
+                "Error: boom",
+                RunErrorKind::Hook(HookPhase::PreDispatch),
+            )),
+            Representation::Json,
+            &mut stdout,
+            &mut stderr,
+        );
+        assert!(
+            emitted.unwrap(),
+            "the document reached stdout, so the run has no final-write failure to report"
+        );
+        assert!(stderr.bytes.is_empty(), "{:?}", stderr.bytes);
+        let document: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+        assert_eq!(document["kind"], "hook-pre-dispatch");
+        assert_eq!(document["summary"], "boom");
     }
 
     #[test]
