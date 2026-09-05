@@ -13,6 +13,7 @@ pub mod document;
 mod embedded;
 mod environment;
 mod error;
+mod escape;
 pub mod file_loader;
 pub mod output;
 pub mod prelude;

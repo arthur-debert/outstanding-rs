@@ -19,6 +19,7 @@ pub mod artifact;
 mod contract;
 mod diagnostic;
 mod dispatch;
+mod escape;
 mod handler;
 mod hooks;
 mod results;

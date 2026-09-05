@@ -1,5 +1,6 @@
 use crate::artifact::{Artifact, ArtifactRun};
 use crate::diagnostic::{Diagnostic, Severity};
+use crate::escape::escape_control_characters;
 use crate::hooks::HookPhase;
 use crate::results::{NoEvents, Results};
 use crate::verify::ExpectedArg;
@@ -585,7 +586,7 @@ impl RunError {
             _ => ExitStatus::FAILURE,
         };
         Self {
-            message: message.into(),
+            message: escape_control_characters(message.into()),
             kind,
             status,
             source: None,
@@ -601,7 +602,7 @@ impl RunError {
     }
     /// Replaces the summary `diagnostic()` would otherwise derive from the prose message.
     pub fn with_diagnostic(mut self, diagnostic: Diagnostic) -> Self {
-        self.diagnostic = Some(Box::new(diagnostic));
+        self.diagnostic = Some(Box::new(escape_diagnostic(diagnostic)));
         self
     }
     /// The carried diagnostic wins; otherwise the first prose line (one `Error: ` framing
@@ -689,6 +690,14 @@ impl From<AppFailure> for RunError {
 }
 fn first_line(text: &str) -> &str {
     text.lines().next().unwrap_or("").trim_end()
+}
+fn escape_diagnostic(mut diagnostic: Diagnostic) -> Diagnostic {
+    diagnostic.summary = escape_control_characters(diagnostic.summary);
+    diagnostic.detail = escape_control_characters(diagnostic.detail);
+    if let Some(range) = diagnostic.range.as_mut() {
+        range.filename = escape_control_characters(std::mem::take(&mut range.filename));
+    }
+    diagnostic
 }
 impl From<String> for RunError {
     fn from(message: String) -> Self {
@@ -1590,6 +1599,42 @@ mod tests {
         assert_eq!(bare.summary, "plain");
         assert_eq!(bare.kind, DiagnosticKind::FinalWrite);
     }
+    #[test]
+    fn framework_composed_prose_carries_no_terminal_escape_sequence() {
+        let usage = RunError::new(
+            "error: invalid value '\u{1b}]0;pwned\u{7}' for '--color <WHEN>'\n\nUsage: app [OPTIONS]\n",
+            RunErrorKind::ClapUsage,
+        );
+        assert!(!usage.as_str().contains('\u{1b}'), "{:?}", usage.as_str());
+        let diagnostic = usage.diagnostic();
+        assert_eq!(
+            diagnostic.summary,
+            "invalid value '\\u{1b}]0;pwned\\u{7}' for '--color <WHEN>'"
+        );
+        assert_eq!(diagnostic.detail, "Usage: app [OPTIONS]");
+
+        let carried = RunError::new("Error: bad archive", RunErrorKind::Handler).with_diagnostic(
+            Diagnostic::error("bad entry \u{1b}]0;pwned\u{7}")
+                .detail("in \u{1b}[2Jarchive")
+                .range("\u{1b}]0;pwned\u{7}.tfl", 2, 1),
+        );
+        let carried = carried.diagnostic();
+        assert_eq!(carried.summary, "bad entry \\u{1b}]0;pwned\\u{7}");
+        assert_eq!(carried.detail, "in \\u{1b}[2Jarchive");
+        assert_eq!(carried.range.unwrap().filename, "\\u{1b}]0;pwned\\u{7}.tfl");
+    }
+
+    #[test]
+    fn owner_declared_failures_keep_their_bytes_verbatim() {
+        let painted = "ghlike: \u{1b}]0;pwned\u{7}\n";
+        let app = RunError::from(AppFailure::new(3, painted).unwrap());
+        assert_eq!(app.as_str(), painted);
+        assert_eq!(app.diagnostic().detail, painted);
+        let external = RunError::from(ExternalFailure::new(128, painted).unwrap());
+        assert_eq!(external.as_str(), painted);
+        assert_eq!(external.diagnostic().detail, painted);
+    }
+
     #[test]
     fn owner_declared_failures_keep_their_bytes_as_detail() {
         let app = RunError::from(
