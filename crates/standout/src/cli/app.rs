@@ -35,6 +35,24 @@ pub(crate) fn find_canonical_subcommand_recursive<'a>(
     Some(current)
 }
 
+pub(crate) fn declared_surfaces_built(cmd: &Command) -> Command {
+    let mut built = cmd.clone();
+    suppress_generated_surfaces(&mut built);
+    built.build();
+    built
+}
+
+fn suppress_generated_surfaces(cmd: &mut Command) {
+    let declared = std::mem::take(cmd);
+    *cmd = declared
+        .disable_help_flag(true)
+        .disable_version_flag(true)
+        .disable_help_subcommand(true);
+    for sub in cmd.get_subcommands_mut() {
+        suppress_generated_surfaces(sub);
+    }
+}
+
 pub(crate) fn verify_recursive(
     cmd: &Command,
     expected_args: &HashMap<String, Vec<ExpectedArg>>,

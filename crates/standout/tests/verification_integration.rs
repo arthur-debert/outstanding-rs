@@ -194,3 +194,31 @@ fn test_verification_rejects_a_registration_on_claps_generated_help() {
     let msg = app.verify_command(&cmd_def).unwrap_err().to_string();
     assert!(msg.contains("No invocation reaches `help`"), "{msg}");
 }
+
+#[handler]
+fn generated_names_handler(
+    #[arg] help: Option<String>,
+    #[arg] version: Option<String>,
+) -> Result<standout::cli::Output<Empty>, anyhow::Error> {
+    let _ = (help, version);
+    Ok(Output::Render(Empty))
+}
+
+#[test]
+fn test_verification_rejects_handler_args_named_after_claps_generated_flags() {
+    let cmd_def = Command::new("app").version("1.0");
+
+    let app = App::builder()
+        .version("1.0")
+        .command_with("", generated_names_handler_Handler, |config| {
+            config.structured_only()
+        })
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let msg = app.verify_command(&cmd_def).unwrap_err().to_string();
+    assert!(msg.contains("verification failed"), "{msg}");
+    assert!(msg.contains("`help`"), "{msg}");
+    assert!(msg.contains("`version`"), "{msg}");
+}

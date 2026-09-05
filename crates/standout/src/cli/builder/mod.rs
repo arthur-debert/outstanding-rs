@@ -1695,7 +1695,8 @@ impl App {
             .iter()
             .map(|(path, cmd)| (path.clone(), cmd.recipe.expected_args()))
             .collect();
-        super::app::verify_recursive(&self.built_clone(cmd), &expected_args, &[], true)
+        let declared = super::app::declared_surfaces_built(cmd);
+        super::app::verify_recursive(&declared, &expected_args, &[], true)
     }
 }
 
