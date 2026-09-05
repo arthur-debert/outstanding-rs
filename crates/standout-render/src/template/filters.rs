@@ -14,7 +14,7 @@ pub fn register_filters_with_policy(env: &mut Environment<'static>, policy: crat
     });
 
     env.add_filter("verbatim", |value: Value| -> String {
-        crate::util::escape_style_tags(crate::template::spelling::stringify(&value).into_owned())
+        crate::util::escape_style_tags(&crate::template::spelling::stringify(&value)).into_owned()
     });
 
     env.add_filter(

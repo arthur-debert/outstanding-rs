@@ -189,9 +189,10 @@ pub(crate) fn register_tabular_filters_with_source(
     });
 
     env.add_filter("style_as", |value: Value, style: String| -> String {
-        let text = escape_style_tags(stringify(&value).into_owned());
+        let stringified = stringify(&value);
+        let text = escape_style_tags(&stringified);
         if style.is_empty() {
-            text
+            text.into_owned()
         } else {
             format!("[{}]{}[/{}]", style, text, style)
         }
@@ -1092,6 +1093,51 @@ mod tests {
             "missing [severity_map] table"
         );
         assert!(crate::diagnostics::unresolved_in_current_window().is_empty());
+    }
+
+    #[test]
+    fn filter_style_as_keeps_ansi_in_its_value_zero_width_and_unsplit() {
+        let mut env = setup_env();
+        env.add_template("measure", "{{ value | style_as('row') | display_width }}")
+            .unwrap();
+        env.add_template(
+            "truncate",
+            "{{ value | style_as('row') | truncate_at(8, 'end', '') }}",
+        )
+        .unwrap();
+        let value = "\u{1b}[31m[boom] alpha\u{1b}[0m";
+
+        let width = env
+            .get_template("measure")
+            .unwrap()
+            .render(context!(value))
+            .unwrap();
+        assert_eq!(width, "12", "the ANSI sequences carry no visible width");
+
+        let truncated = env
+            .get_template("truncate")
+            .unwrap()
+            .render(context!(value))
+            .unwrap();
+        assert_eq!(truncated, "[row]\u{1b}[31m\\[boom\\] a[/row]");
+        assert_eq!(
+            crate::diagnostics::resolve_tags(
+                &truncated,
+                HashMap::new(),
+                TagTransform::Remove,
+                UnknownTagBehavior::Strip,
+            ),
+            "\u{1b}[31m[boom] a"
+        );
+
+        env.add_template("plain", "{{ value | style_as('row') }}")
+            .unwrap();
+        let ansi_only = env
+            .get_template("plain")
+            .unwrap()
+            .render(context!(value => "\u{1b}[31malpha\u{1b}[0m"))
+            .unwrap();
+        assert_eq!(ansi_only, "[row]\u{1b}[31malpha\u{1b}[0m[/row]");
     }
 
     #[test]

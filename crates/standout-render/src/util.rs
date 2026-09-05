@@ -1,3 +1,6 @@
+use std::borrow::Cow;
+
+use console::AnsiCodeIterator;
 use serde_json::{Map, Value};
 
 use crate::error::RenderError;
@@ -39,18 +42,31 @@ pub fn truncate_to_width_with_policy(
     calculator.truncate_visible(s, max_width, "…", crate::width::VisibleTruncateAt::End)
 }
 
-pub fn escape_style_tags(text: String) -> String {
+pub fn escape_style_tags(text: &str) -> Cow<'_, str> {
     if !text.contains(['[', ']']) {
-        return text;
+        return Cow::Borrowed(text);
+    }
+    let plain_bracket =
+        AnsiCodeIterator::new(text).any(|(unit, is_ansi)| !is_ansi && unit.contains(['[', ']']));
+    if !plain_bracket {
+        return Cow::Borrowed(text);
     }
     let mut escaped = String::with_capacity(text.len() + 8);
-    for character in text.chars() {
-        if character == '[' || character == ']' {
-            escaped.push('\\');
+    for (unit, is_ansi) in AnsiCodeIterator::new(text) {
+        // An escaped `\[` no longer introduces a CSI sequence, so the width and
+        // truncation machinery would count the sequence body as visible text.
+        if is_ansi {
+            escaped.push_str(unit);
+            continue;
         }
-        escaped.push(character);
+        for character in unit.chars() {
+            if character == '[' || character == ']' {
+                escaped.push('\\');
+            }
+            escaped.push(character);
+        }
     }
-    escaped
+    Cow::Owned(escaped)
 }
 
 /// `value` is one flat record (scalar values) or an array of them; anything

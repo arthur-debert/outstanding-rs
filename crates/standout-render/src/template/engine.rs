@@ -304,7 +304,7 @@ fn register_filters_with_source(env: &mut Environment<'static>, widths: RenderWi
     });
 
     env.add_filter("verbatim", |value: Value| -> String {
-        crate::util::escape_style_tags(stringify(&value).into_owned())
+        crate::util::escape_style_tags(&stringify(&value)).into_owned()
     });
 
     env.add_filter(
