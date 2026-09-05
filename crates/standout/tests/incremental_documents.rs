@@ -135,8 +135,7 @@ fn run_with(ending: Ending, representation: Representation, args: &[&str]) -> Te
     argv.extend_from_slice(args);
     argv.push("apply");
     TestHarness::new()
-        .color(ColorPolicy::Never)
-        .output_mode(representation)
+        .rendering(representation, ColorPolicy::Never)
         .run(&app(ending, PostOutput::None), command(), argv)
 }
 
@@ -146,8 +145,7 @@ fn run(ending: Ending, representation: Representation) -> TestResult {
 
 fn run_hooked(ending: Ending, hook: PostOutput, representation: Representation) -> TestResult {
     TestHarness::new()
-        .color(ColorPolicy::Never)
-        .output_mode(representation)
+        .rendering(representation, ColorPolicy::Never)
         .run(&app(ending, hook), command(), ["app", "apply"])
 }
 

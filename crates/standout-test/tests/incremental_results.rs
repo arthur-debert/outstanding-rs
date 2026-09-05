@@ -148,8 +148,7 @@ fn a_named_output_file_takes_the_whole_run_and_stdout_stays_empty() {
         let dir = tempfile::TempDir::new().unwrap();
         let path = dir.path().join("run.out");
         let result = TestHarness::new()
-            .output_mode(representation)
-            .color(ColorPolicy::Never)
+            .rendering(representation, ColorPolicy::Never)
             .run(
                 &app(),
                 command(),

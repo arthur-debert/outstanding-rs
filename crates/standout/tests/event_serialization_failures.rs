@@ -46,8 +46,7 @@ fn run(propagates: bool, representation: Representation) -> TestResult {
         .unwrap();
 
     TestHarness::new()
-        .color(ColorPolicy::Never)
-        .output_mode(representation)
+        .rendering(representation, ColorPolicy::Never)
         .run(&app, command(), ["app", "apply"])
 }
 

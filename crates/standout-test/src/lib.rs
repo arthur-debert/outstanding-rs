@@ -155,6 +155,9 @@ impl TestHarness {
         self.output_mode = Some(representation);
         self
     }
+    pub fn rendering(self, representation: Representation, color: ColorPolicy) -> Self {
+        self.output_mode(representation).color(color)
+    }
     pub fn output_flag_name(mut self, name: impl Into<String>) -> Self {
         self.output_flag_name = name.into();
         self
