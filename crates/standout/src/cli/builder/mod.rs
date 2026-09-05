@@ -1683,6 +1683,7 @@ impl App {
     }
 
     pub fn verify_command(&self, cmd: &Command) -> Result<(), SetupError> {
+        let cmd = &self.built_clone(cmd);
         self.malformed_registrations()?;
         self.validate_questionnaire_surfaces(cmd)?;
         self.unreachable_registrations(cmd)?;

@@ -904,19 +904,21 @@ impl App {
         }
     }
 
+    pub(crate) fn built_clone(&self, cmd: &Command) -> Command {
+        let mut built = cmd.clone();
+        if let Some(version) = &self.version {
+            built = built.version(version.clone());
+        }
+        built.build();
+        built
+    }
+
     pub(crate) fn config_override_flag_collision(&self, cmd: &Command) -> Result<(), SetupError> {
         let Some(flag) = self.config_override_flag.as_deref() else {
             return Ok(());
         };
         // Generated `--help`/`--version` only exist per command once clap builds the tree.
-        let built = matches!(flag, "help" | "version").then(|| {
-            let mut built = cmd.clone();
-            if let Some(version) = &self.version {
-                built = built.version(version.clone());
-            }
-            built.build();
-            built
-        });
+        let built = matches!(flag, "help" | "version").then(|| self.built_clone(cmd));
         if command_takes_flag(built.as_ref().unwrap_or(cmd), flag) {
             return Err(SetupError::Config(format!(
                 "config_override_flag(\"{flag}\") is already taken by this application's clap Command"
@@ -948,14 +950,7 @@ impl App {
         let built = installed
             .iter()
             .any(|(_, _, flag)| matches!(*flag, Some("help" | "version")))
-            .then(|| {
-                let mut built = cmd.clone();
-                if let Some(version) = &self.version {
-                    built = built.version(version.clone());
-                }
-                built.build();
-                built
-            });
+            .then(|| self.built_clone(cmd));
         for (seam, removal, flag) in installed {
             let Some(flag) = flag else { continue };
             let searched = match flag {
