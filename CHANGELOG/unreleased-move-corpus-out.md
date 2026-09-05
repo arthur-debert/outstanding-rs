@@ -1,0 +1,1 @@
+- The corpus runner, the archetype roster, the gap suites and the committed run evidence moved verbatim to [arthur-debert/standout-corpus](https://github.com/arthur-debert/standout-corpus); the per-PR `corpus` workflow is gone from this repository.

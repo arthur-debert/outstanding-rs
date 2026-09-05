@@ -34,18 +34,6 @@ ignore = [
   "CHANGELOG/**",
   "package-lock.json",
   "pnpm-lock.yaml",
-  # Committed corpus run evidence: a report is what the runner wrote and the
-  # sanitizer rewrote, and nothing else may edit it — a formatter reflowing a
-  # report would make the committed artifact stop being the run's own output.
-  # Fixture reports under corpus-runner's tests get the same exemption: they
-  # stand in for committed runs and a formatter reflowing them would drift
-  # them from what the tests pin.
-  "corpus/pilot/runs/**",
-  "corpus/rerun/runs/**",
-  "corpus/completion/runs/**",
-  "corpus/parity/runs/**",
-  "corpus/demo/**",
-  "crates/corpus-runner/tests/fixtures/**",
 ]
 
 # [lanes] — the declared PR-time check units (ADP02-WS05, #184). The lane

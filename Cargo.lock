@@ -437,38 +437,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "corpus-gap-suites"
-version = "12.0.0"
-dependencies = [
- "anyhow",
- "clap",
- "libc",
- "serde",
- "serde_json",
- "standout",
- "tempfile",
- "toml 0.8.23",
-]
-
-[[package]]
-name = "corpus-runner"
-version = "12.0.0"
-dependencies = [
- "anyhow",
- "clap",
- "console",
- "landlock",
- "libc",
- "serde",
- "serde_json",
- "sha2",
- "standout-input",
- "standout-test",
- "tempfile",
- "toml 0.8.23",
-]
-
-[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1080,17 +1048,6 @@ dependencies = [
  "cfg-if",
  "futures-util",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "landlock"
-version = "0.4.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4cca98e95f35b29d469dade6724c6f96cec9236640f745a0e99b0334ec320ab1"
-dependencies = [
- "enumflags2",
- "libc",
- "thiserror 2.0.20",
 ]
 
 [[package]]
