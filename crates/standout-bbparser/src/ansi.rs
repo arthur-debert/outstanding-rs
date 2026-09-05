@@ -3,20 +3,40 @@
 //! Escape sequences occupy no terminal columns, so every operation that
 //! measures, escapes or cuts styled text splits the text into sequences and the
 //! plain runs between them, and most also need the byte offset each unit starts
-//! at. An operation that *cuts* needs one thing more: the sequence closing what
-//! the discarded remainder would have closed.
+//! at. `ansi_units` is that split, and it is meant to be the only one; a
+//! hand-written walk anywhere else in the workspace fails the ownership test in
+//! `standout`.
 //!
-//! Both live here because separating them is what leaks colour. A walking
-//! primitive on its own leaves each caller to remember the balancing rule, and a
-//! caller that forgets it emits an opener with no reset, dyeing every later line
-//! of terminal output.
+//! An operation that *cuts* needs one thing more: the sequence closing what the
+//! discarded remainder would have closed. `AnsiBalance` is that rule. Only SGR
+//! sequences carry styling — `ESC [ … m` and the C1 `CSI … m` — and their
+//! parameters apply in the order written, each opening or closing one attribute
+//! group. So a targeted reset (`22`, `23`, `24`, `39`, `49`, …) closes only its
+//! own group, `ESC [ 31 ; 0 m` ends closed, and the extended-colour forms
+//! `38`/`48`/`58` swallow the parameters spelling the colour out so their zero
+//! channels are not read as resets. Whatever is left open closes with one
+//! `ESC [ 0 m`.
+//!
+//! Walking and balancing live together because separating them is what leaks
+//! colour: a caller walking the text itself has to remember the rule, and one
+//! that forgets emits an opener with no reset, dyeing every later line of
+//! terminal output.
+//!
+//! Reaching for the balance is still each cutter's decision, and not every
+//! cutter should. `StyledText::render_range` cuts to discard, so it closes what
+//! it cuts. `take_prefix_to_display_width` in `standout-render` serves two
+//! callers that want opposite things: wrapping continues the value on the next
+//! line, where a reset would break it mid-colour, while truncation discards the
+//! remainder and wants the reset. It also returns the byte length of what it
+//! produced, which the wrapping caller uses as a source offset, so appending a
+//! reset there would corrupt that arithmetic. Separating those two uses is the
+//! prerequisite for balancing in it, and until then it walks here without
+//! balancing.
 
 use console::AnsiCodeIterator;
 
 const ANSI_RESET: &str = "\u{1b}[0m";
 
-/// One unit of a source string: a whole ANSI escape sequence, or a run of plain
-/// text between sequences. `offset` is where `text` starts in the source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AnsiUnit<'a> {
     pub text: &'a str,
@@ -24,7 +44,6 @@ pub struct AnsiUnit<'a> {
     pub is_escape: bool,
 }
 
-/// Splits `source` into escape sequences and the plain runs between them.
 pub fn ansi_units(source: &str) -> impl Iterator<Item = AnsiUnit<'_>> {
     let mut offset = 0;
     AnsiCodeIterator::new(source).map(move |(text, is_escape)| {
@@ -38,13 +57,11 @@ pub fn ansi_units(source: &str) -> impl Iterator<Item = AnsiUnit<'_>> {
     })
 }
 
-/// The reset code of each attribute group SGR can leave open, indexed by the
-/// bit that records the group as open.
+// The codes are ECMA-48 SGR, plus the 73/74/75 superscript extension.
 const GROUP_RESETS: [u16; 16] = [
     10, 22, 23, 24, 25, 27, 28, 29, 39, 49, 50, 54, 55, 59, 65, 75,
 ];
 
-/// The group a parameter opens, as an index into `GROUP_RESETS`.
 fn opened_group(code: u16) -> Option<usize> {
     let reset = match code {
         1 | 2 => 22,
@@ -68,24 +85,12 @@ fn opened_group(code: u16) -> Option<usize> {
     GROUP_RESETS.iter().position(|group| *group == reset)
 }
 
-/// Whether the escape sequences shown to it leave a style open, and the
-/// sequence that closes it.
-///
-/// Only SGR sequences carry styling — `ESC [ … m` and the C1 `CSI … m`; anything
-/// else passes without changing the answer. Parameters apply in the order
-/// written, each opening or closing one attribute group, so `0` and the
-/// targeted resets (`22`, `23`, `24`, `39`, `49`, …) close what earlier
-/// parameters opened and `ESC [ 31 ; 0 m` ends closed. The extended-colour
-/// forms `38`/`48`/`58` swallow the parameters that spell out the colour, so
-/// the zeroes in `ESC [ 38 ; 2 ; 255 ; 0 ; 0 m` are colour channels rather than
-/// resets.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AnsiBalance {
     open_groups: u32,
 }
 
 impl AnsiBalance {
-    /// Records one emitted escape sequence.
     pub fn observe(&mut self, escape: &str) {
         let Some(parameters) = escape
             .strip_prefix("\u{1b}[")
@@ -97,8 +102,6 @@ impl AnsiBalance {
 
         let mut parameters = parameters.split(';');
         while let Some(parameter) = parameters.next() {
-            // A colon form spells the whole colour out inside one parameter, so
-            // only the semicolon form swallows what follows it.
             let (head, is_compound) = match parameter.split_once(':') {
                 Some((head, _)) => (head, true),
                 None => (parameter, false),
@@ -120,8 +123,6 @@ impl AnsiBalance {
                     Some(5) => Some(1),
                     _ => None,
                 };
-                // A colour space nobody recognises swallows nothing, so a
-                // parameter that follows still applies.
                 if let Some(channels) = channels {
                     for _ in 0..=channels {
                         parameters.next();
@@ -139,8 +140,6 @@ impl AnsiBalance {
         }
     }
 
-    /// `ESC [ 0 m` while a style is open and `""` otherwise, so a caller ending
-    /// a cut appends this unconditionally.
     pub fn closing(self) -> &'static str {
         if self.open_groups != 0 {
             ANSI_RESET
@@ -183,8 +182,6 @@ mod tests {
         }
     }
 
-    // width.rs measures with console's `strip_ansi_codes` instead of walking;
-    // this pins that the two draw the same line between text and escapes.
     #[test]
     fn dropping_the_escape_units_is_what_strip_ansi_codes_returns() {
         for source in CORPUS {
@@ -262,7 +259,6 @@ mod tests {
             balance.observe(closer);
             assert_eq!(balance.closing(), "", "{opener:?} then {closer:?}");
 
-            // Another group's reset leaves this one open.
             let mut balance = AnsiBalance::default();
             balance.observe(opener);
             balance.observe(if closer == "\u{1b}[39m" {

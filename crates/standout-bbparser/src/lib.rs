@@ -281,10 +281,8 @@ impl<'a> StyledText<'a> {
                             }
                             return;
                         }
-                        // The first character left behind is where the cut is,
-                        // and the ANSI closes there rather than after the tags.
-                        // A range covering the whole text never reaches here,
-                        // so nothing was cut and the source passes through.
+                        // A range covering the whole text never reaches here, so
+                        // untruncated source passes through unbalanced.
                         if started && !cut && visible_index >= range.end {
                             result.push_str(ansi.closing());
                             cut = true;

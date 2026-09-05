@@ -235,10 +235,6 @@ mod tests {
         );
     }
 
-    // `standout`'s config command carried its own escaper, spelled below as
-    // `bracket_replace`. This pins that the surviving function still produces
-    // what that one did for the inputs it ever saw, and names the one input
-    // class where they part company — the reason only one of them is left.
     #[test]
     fn the_shared_escaper_agrees_with_the_bracket_replacement_it_replaced() {
         fn bracket_replace(text: &str) -> String {
