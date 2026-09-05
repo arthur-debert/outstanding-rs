@@ -265,3 +265,24 @@ fn a_parent_global_yes_collides_with_the_injected_questionnaire_flag() {
         "{error}"
     );
 }
+
+#[test]
+#[serial(questionnaire)]
+#[should_panic(expected = "Long option names must be unique")]
+fn running_a_parent_global_yes_is_rejected_by_clap() {
+    let cmd = Command::new("formlike")
+        .subcommand_required(true)
+        .arg(
+            clap::Arg::new("yes")
+                .long("yes")
+                .global(true)
+                .action(clap::ArgAction::SetTrue),
+        )
+        .subcommand(Command::new("entry"));
+
+    TestHarness::new().fixture("answers.txt", SPEC_SHEET).run(
+        &spec_sheet_app(),
+        cmd,
+        ["formlike", "entry", "--answers", "answers.txt", "--yes"],
+    );
+}
