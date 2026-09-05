@@ -170,7 +170,7 @@ pub(crate) fn config_result_output(
     let data = if output_mode.is_structured() {
         structured
     } else {
-        json!({ "line": escape_style_tags(line.into()) })
+        json!({ "line": escape_style_tags(line.into()).into_owned() })
     };
     (
         Output::Render(data),

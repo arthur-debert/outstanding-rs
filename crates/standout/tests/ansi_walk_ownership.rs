@@ -53,8 +53,11 @@ fn production_lines(source: &str) -> Vec<(usize, &str)> {
 }
 
 /// Every operation that reads text in ANSI units goes through
-/// `standout_bbparser::ansi`, so the balancing rule that module owns cannot be
-/// bypassed by a caller that walks the text itself.
+/// `standout_bbparser::ansi` rather than walking the text itself, which is what
+/// puts `AnsiBalance` within reach of a cutter. Reaching for it is still the
+/// cutter's decision: `take_prefix_to_display_width` walks through this module
+/// and deliberately does not balance, because its callers want opposite things
+/// (#570).
 #[test]
 fn only_the_bbparser_ansi_module_walks_ansi_units() {
     let root = workspace_root();

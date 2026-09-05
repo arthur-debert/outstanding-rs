@@ -38,15 +38,45 @@ pub fn ansi_units(source: &str) -> impl Iterator<Item = AnsiUnit<'_>> {
     })
 }
 
+/// The reset code of each attribute group SGR can leave open, indexed by the
+/// bit that records the group as open.
+const GROUP_RESETS: [u16; 13] = [10, 22, 23, 24, 25, 27, 28, 29, 39, 49, 54, 55, 59];
+
+/// The group a parameter opens, as an index into `GROUP_RESETS`.
+fn opened_group(code: u16) -> Option<usize> {
+    let reset = match code {
+        1 | 2 => 22,
+        3 | 20 => 23,
+        4 | 21 => 24,
+        5 | 6 => 25,
+        7 => 27,
+        8 => 28,
+        9 => 29,
+        11..=19 => 10,
+        30..=38 | 90..=97 => 39,
+        40..=48 | 100..=107 => 49,
+        51 | 52 => 54,
+        53 => 55,
+        58 => 59,
+        _ => return None,
+    };
+    GROUP_RESETS.iter().position(|group| *group == reset)
+}
+
 /// Whether the escape sequences shown to it leave a style open, and the
 /// sequence that closes it.
 ///
 /// Only SGR sequences carry styling — `ESC [ … m` and the C1 `CSI … m`; anything
-/// else passes without changing the answer. A sequence whose parameters are all
-/// zero closes, and any other SGR sequence opens.
+/// else passes without changing the answer. Parameters apply in the order
+/// written, each opening or closing one attribute group, so `0` and the
+/// targeted resets (`22`, `23`, `24`, `39`, `49`, …) close what earlier
+/// parameters opened and `ESC [ 31 ; 0 m` ends closed. The extended-colour
+/// forms `38`/`48`/`58` swallow the parameters that spell out the colour, so
+/// the zeroes in `ESC [ 38 ; 2 ; 255 ; 0 ; 0 m` are colour channels rather than
+/// resets.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AnsiBalance {
-    open: bool,
+    open_groups: u16,
 }
 
 impl AnsiBalance {
@@ -59,15 +89,47 @@ impl AnsiBalance {
         else {
             return;
         };
-        self.open = !parameters
-            .split(';')
-            .all(|parameter| parameter.bytes().all(|byte| byte == b'0'));
+
+        let mut parameters = parameters.split(';');
+        while let Some(parameter) = parameters.next() {
+            // A colon form spells the whole colour out inside one parameter, so
+            // only the semicolon form swallows what follows it.
+            let (head, is_compound) = match parameter.split_once(':') {
+                Some((head, _)) => (head, true),
+                None => (parameter, false),
+            };
+            let Ok(code) = head.trim().parse::<u16>() else {
+                if head.trim().is_empty() {
+                    self.open_groups = 0;
+                }
+                continue;
+            };
+
+            if !is_compound && matches!(code, 38 | 48 | 58) {
+                let swallow = match parameters.next().and_then(|next| next.parse::<u16>().ok()) {
+                    Some(2) => 3,
+                    Some(5) => 1,
+                    _ => 0,
+                };
+                for _ in 0..swallow {
+                    parameters.next();
+                }
+            }
+
+            if code == 0 {
+                self.open_groups = 0;
+            } else if let Some(group) = GROUP_RESETS.iter().position(|reset| *reset == code) {
+                self.open_groups &= !(1 << group);
+            } else if let Some(group) = opened_group(code) {
+                self.open_groups |= 1 << group;
+            }
+        }
     }
 
     /// `ESC [ 0 m` while a style is open and `""` otherwise, so a caller ending
     /// a cut appends this unconditionally.
     pub fn closing(self) -> &'static str {
-        if self.open {
+        if self.open_groups != 0 {
             ANSI_RESET
         } else {
             ""
@@ -122,7 +184,7 @@ mod tests {
     }
 
     #[test]
-    fn a_zero_parameter_sequence_closes_and_any_other_opens() {
+    fn a_sequence_that_leaves_an_attribute_set_opens_and_a_full_reset_closes() {
         let mut balance = AnsiBalance::default();
         assert_eq!(balance.closing(), "");
 
@@ -130,6 +192,8 @@ mod tests {
             "\u{1b}[31m",
             "\u{1b}[1;32m",
             "\u{1b}[38;2;255;0;0m",
+            "\u{1b}[38;5;0m",
+            "\u{1b}[38:2::255:0:0m",
             "\u{1b}[1m",
             "\u{9b}31m",
         ] {
@@ -150,6 +214,46 @@ mod tests {
             balance.observe(closer);
             assert_eq!(balance.closing(), "", "{closer:?}");
         }
+    }
+
+    #[test]
+    fn a_targeted_reset_closes_only_the_group_it_names() {
+        for (opener, closer) in [
+            ("\u{1b}[31m", "\u{1b}[39m"),
+            ("\u{1b}[38;2;255;0;0m", "\u{1b}[39m"),
+            ("\u{1b}[41m", "\u{1b}[49m"),
+            ("\u{1b}[1m", "\u{1b}[22m"),
+            ("\u{1b}[2m", "\u{1b}[22m"),
+            ("\u{1b}[3m", "\u{1b}[23m"),
+            ("\u{1b}[4m", "\u{1b}[24m"),
+        ] {
+            let mut balance = AnsiBalance::default();
+            balance.observe(opener);
+            balance.observe(closer);
+            assert_eq!(balance.closing(), "", "{opener:?} then {closer:?}");
+        }
+
+        let mut balance = AnsiBalance::default();
+        balance.observe("\u{1b}[1;31m");
+        balance.observe("\u{1b}[39m");
+        assert_eq!(balance.closing(), ANSI_RESET);
+        balance.observe("\u{1b}[22m");
+        assert_eq!(balance.closing(), "");
+    }
+
+    #[test]
+    fn parameters_apply_in_the_order_they_are_written() {
+        let mut balance = AnsiBalance::default();
+        balance.observe("\u{1b}[31;0m");
+        assert_eq!(balance.closing(), "");
+
+        let mut balance = AnsiBalance::default();
+        balance.observe("\u{1b}[0;31m");
+        assert_eq!(balance.closing(), ANSI_RESET);
+
+        let mut balance = AnsiBalance::default();
+        balance.observe("\u{1b}[39;31m");
+        assert_eq!(balance.closing(), ANSI_RESET);
     }
 
     #[test]
