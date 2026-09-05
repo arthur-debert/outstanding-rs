@@ -286,3 +286,38 @@ fn running_a_parent_global_yes_is_rejected_by_clap() {
         ["formlike", "entry", "--answers", "answers.txt", "--yes"],
     );
 }
+
+#[test]
+#[serial(questionnaire)]
+fn a_questionnaire_arg_shadowing_an_ancestor_global_runs_and_verifies_clean() {
+    let cmd = Command::new("formlike")
+        .subcommand_required(true)
+        .arg(
+            clap::Arg::new("yes")
+                .long("yes")
+                .global(true)
+                .action(clap::ArgAction::SetTrue),
+        )
+        .subcommand(
+            Command::new("entry").arg(
+                clap::Arg::new("yes")
+                    .long("confirm")
+                    .action(clap::ArgAction::SetTrue),
+            ),
+        );
+
+    assert!(spec_sheet_app().verify_command(&cmd).is_ok());
+
+    let mut clap_built = cmd.clone();
+    clap_built.build();
+    assert!(spec_sheet_app().verify_command(&clap_built).is_ok());
+
+    let result = TestHarness::new().fixture("answers.txt", SPEC_SHEET).run(
+        &spec_sheet_app(),
+        cmd,
+        ["formlike", "entry", "--answers", "answers.txt", "--yes"],
+    );
+
+    result.assert_success();
+    assert_eq!(result.stdout(), "ada/eu");
+}
