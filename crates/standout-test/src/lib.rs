@@ -33,12 +33,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tempfile::TempDir;
-pub mod clap_parity;
-#[cfg(test)]
-mod decoder_roundtrip;
-pub mod invariants;
 mod matrix;
-mod page;
 mod process;
 #[cfg(unix)]
 pub mod pty;

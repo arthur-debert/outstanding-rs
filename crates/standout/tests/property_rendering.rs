@@ -4,9 +4,6 @@ use proptest::prelude::*;
 use serde_json::{json, Value};
 use standout::cli::{App, DispatchResult, Output, RunErrorKind};
 use standout::{Representation, Theme};
-use standout_test::invariants::{
-    assert_no_unresolved_tag_markers_in_page, assert_styling_preserves_layout_in_pages,
-};
 
 fn output_mode_strategy() -> impl Strategy<Value = Representation> {
     prop_oneof![
@@ -146,6 +143,42 @@ fn validate_structured_output(output: &str, mode: Representation) {
         }
         _ => {}
     }
+}
+
+fn assert_no_unresolved_tag_markers_in_page(page: &str) {
+    let mut cursor = 0;
+    while let Some(offset) = page[cursor..].find("?]") {
+        let marker_end = cursor + offset;
+        if let Some(open) = page[..marker_end].rfind('[') {
+            let inner = &page[open + 1..marker_end];
+            let name = inner.strip_prefix('/').unwrap_or(inner);
+            let is_tag = !name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
+            assert!(
+                !is_tag,
+                "unresolved tag marker [{name}?] reached the page:\n{page}"
+            );
+        }
+        cursor = marker_end + 2;
+    }
+}
+
+fn assert_styling_preserves_layout_in_pages(styled_stripped: &str, plain: &str) {
+    if styled_stripped == plain {
+        return;
+    }
+    let mismatch = styled_stripped
+        .lines()
+        .zip(plain.lines())
+        .position(|(l, r)| l != r)
+        .map(|index| index + 1);
+    panic!(
+        "styling changed the page beyond color; first difference at line {:?}\n\
+         --- styled (stripped) ---\n{}\n--- plain ---\n{}\n-------------",
+        mismatch, styled_stripped, plain
+    );
 }
 
 fn assert_agrees_with_the_plain_page(
