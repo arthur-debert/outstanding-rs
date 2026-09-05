@@ -1,6 +1,0 @@
-# The corpus gap suites locate an archetype binary through an environment
-# variable (corpus/gap-suites/README.md). tflike's is built in-repo with the
-# suites (corpus/gap-suites/src/bin/tflike.rs), so every cargo test and
-# nextest run resolves it here; a value already in the environment wins.
-[env]
-CORPUS_TFLIKE_BIN = { value = "target/debug/tflike", relative = true }

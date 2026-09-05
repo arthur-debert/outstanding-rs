@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/corpus-runner",
     "crates/standout",
     "crates/standout-bbparser",
     "crates/standout-dispatch",
@@ -15,5 +14,4 @@ members = [
     "crates/standout-test",
     "crates/todo-example/todo-core",
     "crates/todo-example/tdoo",
-    "corpus/gap-suites",
 ]

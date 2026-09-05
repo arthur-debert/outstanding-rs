@@ -1,4 +1,0 @@
-[title]Star Catalog[/title]
-{% for star in stars %}
-[name]{{ "%-12s"|format(star.name) }}[/name] [constellation]{{ "%-15s"|format(star.constellation) }}[/constellation] {{ "%.2f"|format(star.magnitude) }}
-{% endfor %}
