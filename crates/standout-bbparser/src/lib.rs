@@ -981,8 +981,7 @@ mod tests {
         #[test]
         fn a_cut_closes_the_less_common_sgr_groups_too() {
             for opener in [
-                "\x1b[26m", "\x1b[51m", "\x1b[53m", "\x1b[60m", "\x1b[64m", "\x1b[73m",
-                "\x1b[74m",
+                "\x1b[26m", "\x1b[51m", "\x1b[53m", "\x1b[60m", "\x1b[64m", "\x1b[73m", "\x1b[74m",
             ] {
                 let source = format!("{opener}alpha beta");
                 let text = StyledText::parse(&source);

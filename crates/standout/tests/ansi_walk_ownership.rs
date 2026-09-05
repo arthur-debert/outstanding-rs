@@ -36,11 +36,6 @@ fn offenders_in(relative: &str, source: &str) -> Vec<String> {
         .collect()
 }
 
-/// Walking through the owning module is what puts `AnsiBalance` within reach of
-/// a cutter; whether to use it stays each cutter's decision, and one of them
-/// walks through the module without balancing. The rule is that the name
-/// appears nowhere else, test code included, so the scan reads every line and
-/// has nothing it can skip.
 #[test]
 fn only_the_bbparser_ansi_module_names_the_walker() {
     let root = workspace_root();

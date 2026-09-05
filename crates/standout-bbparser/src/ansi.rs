@@ -17,10 +17,6 @@
 //! channels are not read as resets. Whatever is left open closes with one
 //! `ESC [ 0 m`.
 //!
-//! There are sixteen such groups, one per reset code. The nonzero parameters
-//! outside them — 56, 57, 66-72, 76-89, 98, 99 — are unassigned and set no
-//! attribute, so a cut after one leaves nothing to close.
-//!
 //! Walking and balancing live together because separating them is what leaks
 //! colour: a caller walking the text itself has to remember the rule, and one
 //! that forgets emits an opener with no reset, dyeing every later line of
@@ -33,8 +29,9 @@
 //! line, where a reset would break it mid-colour, while truncation discards the
 //! remainder and wants the reset. It also returns the byte length of what it
 //! produced, which the wrapping caller uses as a source offset, so appending a
-//! reset there would corrupt that arithmetic. Until those two uses are
-//! separated it walks here without balancing.
+//! reset there would corrupt that arithmetic. Separating those two uses is the
+//! prerequisite for balancing in it, and until then it walks here without
+//! balancing.
 
 use console::AnsiCodeIterator;
 
