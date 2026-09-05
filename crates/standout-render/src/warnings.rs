@@ -15,6 +15,7 @@ use std::cell::RefCell;
 use std::io::Write;
 use std::rc::Rc;
 
+use crate::escape::escape_control_characters;
 use crate::request::ColorPolicy;
 use crate::theme::Theme;
 use crate::TargetProperties;
@@ -38,11 +39,13 @@ impl WarningBuffer {
     }
 
     pub fn push(&self, message: impl Into<String>) {
-        self.inner.borrow_mut().push(message.into());
+        self.inner
+            .borrow_mut()
+            .push(escape_control_characters(message.into()));
     }
 
     pub fn push_once(&self, message: impl Into<String>) {
-        let message = message.into();
+        let message = escape_control_characters(message.into());
         let mut warnings = self.inner.borrow_mut();
         if !warnings.contains(&message) {
             warnings.push(message);
@@ -187,6 +190,31 @@ mod tests {
         assert_eq!(drained, vec!["first".to_string(), "second".to_string()]);
         assert!(buffer.is_empty());
         assert!(buffer.take().is_empty());
+    }
+
+    #[test]
+    fn a_buffered_warning_cannot_carry_a_terminal_escape_sequence() {
+        let buffer = WarningBuffer::new();
+        buffer.push("archive \u{1b}]0;pwned\u{7}.tar");
+        buffer.push_once("archive \u{1b}]0;pwned\u{7}.tar");
+        assert_eq!(buffer.snapshot(), ["archive \\u{1b}]0;pwned\\u{7}.tar"]);
+        let block = render_block_plain(&buffer.take());
+        assert!(!block.contains('\u{1b}'), "{block:?}");
+        assert!(block.contains("\\u{1b}]0;pwned\\u{7}"), "{block:?}");
+    }
+
+    #[test]
+    fn a_styled_block_keeps_its_own_ansi_around_an_escaped_warning() {
+        let theme = Theme::default();
+        let block =
+            render_block_for_target(&theme, ColorPolicy::Always, sample_target(false, true), &{
+                let buffer = WarningBuffer::new();
+                buffer.push("archive \u{1b}]0;pwned\u{7}.tar");
+                buffer.take()
+            });
+        assert!(block.contains("\u{1b}["), "{block:?}");
+        assert!(!block.contains("\u{1b}]0;"), "{block:?}");
+        assert!(block.contains("\\u{1b}]0;pwned\\u{7}"), "{block:?}");
     }
 
     #[test]
