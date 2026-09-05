@@ -15,7 +15,7 @@
 //!
 //! Windows nest: a handler may drive another app through `run_to_string`,
 //! opening an inner window inside the outer one. Closing the inner window
-//! publishes its own batch to [`take_captured`] *and* folds it into the
+//! publishes its own batch to `take_captured` *and* folds it into the
 //! enclosing window one level deeper on [`TagResolution::nesting_depth`] —
 //! unconditionally, because this layer sees only the returned `String` and
 //! cannot tell whether the caller embedded it or discarded it, and
