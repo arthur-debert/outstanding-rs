@@ -2054,7 +2054,6 @@ dependencies = [
  "console",
  "insta",
  "libc",
- "proptest",
  "serde",
  "serde_json",
  "serde_yaml",

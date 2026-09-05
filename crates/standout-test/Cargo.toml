@@ -25,10 +25,6 @@ libc = "0.2"
 [dev-dependencies]
 standout-fixtures = { path = "../standout-fixtures" }
 anyhow = "1"
-# The round-trip property tests build commands from generated values, which
-# needs clap's owned-string builder API.
-clap = { version = "4", features = ["derive", "help", "string"] }
 insta = "1.46.1"
-proptest = "1"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
