@@ -11,13 +11,14 @@ pub struct MatrixCell<T> {
 }
 impl<T> MatrixCell<T> {
     pub fn harness(&self) -> TestHarness {
-        TestHarness::new()
-            .output_mode(self.mode)
-            .color(if self.color {
+        TestHarness::new().rendering(
+            self.mode,
+            if self.color {
                 ColorPolicy::Always
             } else {
                 ColorPolicy::Never
-            })
+            },
+        )
     }
     pub fn snapshot_case(&self, subject: impl Into<String>) -> SnapshotCase {
         SnapshotCase::new(subject)

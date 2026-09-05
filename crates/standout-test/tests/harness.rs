@@ -11,7 +11,8 @@ use standout::tabular::{Column, Width};
 use standout::views::list_view;
 use standout::EmbeddedTemplates;
 use standout::{
-    ColorMode, CsvProjection, IconDefinition, IconMode, StructuredOutputProjection, Theme,
+    ColorMode, ColorPolicy, CsvProjection, IconDefinition, IconMode, StructuredOutputProjection,
+    Theme,
 };
 use standout_input::{ClipboardSource, EnvSource, InputChain, StdinSource};
 use standout_render::{AmbiguousWidth, Representation};
@@ -293,6 +294,52 @@ fn harness_run_is_independent_of_detected_process_facts() {
         say_default, say_nerd,
         "Classic vs NerdFont must be visible so NERD_FONT independence is meaningful"
     );
+}
+#[test]
+#[serial]
+fn rendering_pairs_match_the_separate_representation_and_color_setters() {
+    let app = build_detectable_facts_app();
+    let cmd = detectable_command();
+    let pairs = [
+        (Representation::Human, ColorPolicy::Never),
+        (Representation::Human, ColorPolicy::Always),
+        (Representation::TermDebug, ColorPolicy::Never),
+        (Representation::Json, ColorPolicy::Never),
+    ];
+    let mut rendered: Vec<String> = Vec::new();
+    for &(representation, color) in &pairs {
+        let paired = TestHarness::new().rendering(representation, color).run(
+            &app,
+            cmd.clone(),
+            ["app", "say"],
+        );
+        let separate = TestHarness::new()
+            .output_mode(representation)
+            .color(color)
+            .run(&app, cmd.clone(), ["app", "say"]);
+        paired.assert_success();
+        separate.assert_success();
+        assert_eq!(
+            paired.output_mode(),
+            separate.output_mode(),
+            "{representation:?}/{color:?}"
+        );
+        assert_eq!(
+            paired.stdout(),
+            separate.stdout(),
+            "{representation:?}/{color:?}"
+        );
+        rendered.push(paired.stdout().to_string());
+    }
+    for (i, left) in rendered.iter().enumerate() {
+        for (j, right) in rendered.iter().enumerate().skip(i + 1) {
+            assert_ne!(
+                left, right,
+                "{:?} and {:?} must render differently or the pairs prove nothing",
+                pairs[i], pairs[j]
+            );
+        }
+    }
 }
 #[test]
 #[serial]
