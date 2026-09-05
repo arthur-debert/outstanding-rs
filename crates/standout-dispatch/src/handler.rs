@@ -400,6 +400,7 @@ pub struct InvalidAppStatus;
 pub struct AppFailure {
     status: ExitStatus,
     diagnostic: String,
+    framed: bool,
     source: Option<Arc<dyn std::error::Error + Send + Sync + 'static>>,
 }
 impl AppFailure {
@@ -410,8 +411,13 @@ impl AppFailure {
         Ok(Self {
             status: ExitStatus(status),
             diagnostic: diagnostic.into(),
+            framed: false,
             source: None,
         })
+    }
+    pub fn framed(mut self) -> Self {
+        self.framed = true;
+        self
     }
     pub const fn exit_status(&self) -> ExitStatus {
         self.status
@@ -568,6 +574,7 @@ pub struct RunError {
     message: String,
     kind: RunErrorKind,
     status: ExitStatus,
+    verbatim: bool,
     source: Option<Arc<dyn std::error::Error + Send + Sync + 'static>>,
     diagnostic: Option<Box<Diagnostic>>,
 }
@@ -589,9 +596,18 @@ impl RunError {
             message: escape_control_characters(message.into()),
             kind,
             status,
+            verbatim: false,
             source: None,
             diagnostic: None,
         }
+    }
+    pub fn with_usage_exit_status(mut self, status: ExitStatus) -> Self {
+        assert!(
+            self.kind == RunErrorKind::ClapUsage,
+            "a usage exit status applies to a clap rejection"
+        );
+        self.status = status;
+        self
     }
     pub fn with_source<E>(mut self, source: E) -> Self
     where
@@ -608,12 +624,12 @@ impl RunError {
     /// The carried diagnostic wins; otherwise the first prose line (one `Error: ` framing
     /// stripped) is `summary` and the rest `detail`.
     pub fn diagnostic(&self) -> Diagnostic {
-        let mut diagnostic = match (&self.diagnostic, self.kind) {
+        let mut diagnostic = match (&self.diagnostic, self.verbatim) {
             (Some(diagnostic), _) => (**diagnostic).clone(),
-            (None, RunErrorKind::External | RunErrorKind::App) => {
+            (None, true) => {
                 Diagnostic::error(first_line(&self.message)).detail(self.message.clone())
             }
-            (None, _) => {
+            (None, false) => {
                 let prose = ["Error: ", "error: "]
                     .iter()
                     .find_map(|framing| self.message.strip_prefix(framing))
@@ -640,7 +656,7 @@ impl RunError {
     }
     // A stderr payload its owner wrote: no `Error: ` framing, no trailing newline.
     pub const fn writes_diagnostic_verbatim(&self) -> bool {
-        matches!(self.kind, RunErrorKind::External | RunErrorKind::App)
+        self.verbatim
     }
 }
 impl std::ops::Deref for RunError {
@@ -672,6 +688,7 @@ impl From<ExternalFailure> for RunError {
             message: failure.diagnostic,
             kind: RunErrorKind::External,
             status: failure.status,
+            verbatim: true,
             source: failure.source,
             diagnostic: None,
         }
@@ -679,10 +696,16 @@ impl From<ExternalFailure> for RunError {
 }
 impl From<AppFailure> for RunError {
     fn from(failure: AppFailure) -> Self {
+        let message = if failure.framed {
+            escape_control_characters(format!("Error: {}", failure.diagnostic))
+        } else {
+            failure.diagnostic
+        };
         Self {
-            message: failure.diagnostic,
+            message,
             kind: RunErrorKind::App,
             status: failure.status,
+            verbatim: !failure.framed,
             source: failure.source,
             diagnostic: None,
         }

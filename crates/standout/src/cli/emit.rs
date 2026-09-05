@@ -5,11 +5,13 @@
 //! where a failure goes: under `json`, `yaml`, `csv` and `ndjson` the failure
 //! is the stdout document, serialized from [`RunError::diagnostic`], and
 //! stderr carries nothing the framework wrote for it; under the human
-//! representation the failure is prose on stderr. An `App` or `External`
-//! failure writes its verbatim bytes to stderr under every representation and
-//! adds the stdout document in the structured ones. A status a successful
-//! handler declared (`Output::with_exit_status`) changes none of this: the
-//! outcome is `Handled`, emitted as any success is.
+//! representation the failure is prose on stderr. An `External` failure, and
+//! an `App` failure that did not ask to be framed, writes its verbatim bytes
+//! to stderr under every representation and adds the stdout document in the
+//! structured ones; `AppFailure::framed` keeps the status and takes the
+//! ordinary path instead. A status a successful handler declared
+//! (`Output::with_exit_status`) changes none of this: the outcome is
+//! `Handled`, emitted as any success is.
 //!
 //! Under `ndjson` the document is one compact line, and it is the only
 //! representation whose warnings are stdout entries too:

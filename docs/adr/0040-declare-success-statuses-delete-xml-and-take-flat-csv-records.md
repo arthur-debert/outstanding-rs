@@ -10,6 +10,14 @@ A declared status is success-with-signal, never an error. The outcome stays `Dis
 
 `Output` gains the variant `WithStatus { output, status }` rather than a field on every variant, so the existing `Output::Render(x)` patterns in handlers and macros keep compiling; `map_render` and the `is_*` predicates reach through it.
 
+### The failure side of the same rule: `usage_exit_status`
+
+`2` is the status the framework assigns a clap rejection, and it was the one framework-assigned status an application could not redirect. proiectio's published contract spends `2` on a deliberate refusal and `1` on everything else, a rejected command line included; on 8.1.1 it assigned the status itself at a process edge it owned, and handing that edge to `run_emitted` cost it the contract. Its only alternatives were to rebuild the process edge or to change what its README, its `long_about` and its CI gate say.
+
+`AppBuilder::usage_exit_status(u8)` names the status a clap rejection exits with; an application that names none exits `2`. It rejects `0` at `build()`, because a rejected command line reporting shell success is the failure `AppFailure` and `ExternalFailure` reject `0` to prevent. The error's `RunErrorKind` is still `ClapUsage` and its document's `kind` is still `clap-usage`; only the status moves, and it moves at `collect_run_warnings`, the one point every entry point's outcome passes, so the harness and the process cannot report different statuses for the same run.
+
+This leaves the rule above intact rather than widening it: the framework still assigns nothing but `0`, `1` and `2` on its own, and every other status a run can exit with — a declared success status, an `AppFailure`, an `ExternalFailure`, and now a usage status — is one the application named.
+
 ## D7: XML is deleted
 
 `OutputMode::Xml`, `serialize_to_xml`, `sanitize_xml_keys` and the `quick-xml` dependency are gone, with no shim: `--output xml` is a clap usage error, exit `2`. No client project used the mode; its serializer silently dropped rows whose keys collided after element-name sanitization (#409) and rode a version with two advisories (#408). The deletion closes #107, #408 and #409.

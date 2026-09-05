@@ -232,12 +232,19 @@ fn app() -> App {
 fn main() {
     if std::env::var_os(EDGE_ENV).is_some_and(|edge| edge == "emitted") {
         let outcome = app().run_emitted(command(), std::env::args());
+        let failure = outcome
+            .final_write_failure
+            .as_ref()
+            .map_or_else(String::new, |error| {
+                format!("{:?}: {}", error.kind(), error)
+            });
         std::fs::write(
             std::env::var_os(OUTCOME_PATH_ENV).unwrap(),
             format!(
-                "handled={} status={}",
+                "handled={} status={}\nfailure={}",
                 outcome.handled,
-                outcome.status.code()
+                outcome.status.code(),
+                failure
             ),
         )
         .unwrap();

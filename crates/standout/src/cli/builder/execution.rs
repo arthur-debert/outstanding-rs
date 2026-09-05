@@ -1131,7 +1131,11 @@ impl App {
             .or(primary_status)
             .unwrap_or(ExitStatus::SUCCESS);
 
-        ProcessOutcome { handled, status }
+        ProcessOutcome {
+            handled,
+            status,
+            final_write_failure,
+        }
     }
 
     pub(crate) fn seed_startup_warnings(&self, warnings: &WarningBuffer) {
@@ -1143,6 +1147,8 @@ impl App {
     /// The capture window every entry point shares. Help and answer-sheet
     /// outcomes return before the pre-commit strict check, so they are checked
     /// here instead, and the run's surviving delivery is recorded here too.
+    /// Every clap rejection passes through here, so this is also where an
+    /// application's `usage_exit_status` replaces the framework's `2`.
     fn collect_run_warnings(
         &self,
         recorder: &RunRecorder,
@@ -1160,6 +1166,11 @@ impl App {
         if outcome.success_kind().is_some() {
             if let Some(error) = self.strict_style_tags_error(&warnings) {
                 outcome = DispatchResult::Error(error);
+            }
+        }
+        if let (Some(status), DispatchResult::Error(error)) = (self.usage_exit_status, &outcome) {
+            if error.kind() == RunErrorKind::ClapUsage {
+                outcome = DispatchResult::Error(error.clone().with_usage_exit_status(status));
             }
         }
         if let (Some(pager), DispatchResult::Handled(output)) = (&pager, &outcome) {

@@ -382,6 +382,7 @@ struct EmittedRun {
     output: Output,
     handled: bool,
     status: u8,
+    failure: String,
 }
 
 /// The fixture writes the outcome it was handed to a file and exits with the reported status.
@@ -410,7 +411,8 @@ fn run_emitted(
     let output = child.wait_with_output().unwrap();
     let outcome = std::fs::read_to_string(&outcome_path)
         .expect("run_emitted returned, so the caller's post-emission write happened");
-    let (handled, status) = outcome
+    let (reported, failure) = outcome.split_once("\nfailure=").unwrap();
+    let (handled, status) = reported
         .strip_prefix("handled=")
         .and_then(|rest| rest.split_once(" status="))
         .unwrap();
@@ -418,6 +420,7 @@ fn run_emitted(
         output,
         handled: handled.parse().unwrap(),
         status: status.parse().unwrap(),
+        failure: failure.to_string(),
     }
 }
 
@@ -600,4 +603,33 @@ fn emitted_edge_reports_closed_consumer_pipes_the_way_run_exits() {
         "stderr: {}",
         String::from_utf8_lossy(&bytes.output.stderr)
     );
+}
+
+#[test]
+fn emitted_edge_hands_the_caller_the_final_write_failure_it_computed() {
+    let binary = fixture_binary();
+
+    let broken = run_emitted(&binary, &["binary-huge"], None, true);
+    assert_eq!(broken.status, 1);
+    assert!(
+        broken.failure.starts_with("FinalWrite(Binary): "),
+        "the caller sees which write failed, got {:?}",
+        broken.failure
+    );
+    assert!(
+        broken.failure.contains("Error writing binary stdout"),
+        "the caller sees the cause beneath it, got {:?}",
+        broken.failure
+    );
+
+    let handler_failure = run_emitted(&binary, &["fail"], None, false);
+    assert_eq!(handler_failure.status, 1);
+    assert_eq!(
+        handler_failure.failure, "",
+        "an ordinary status-1 exit carries no final-write failure"
+    );
+
+    let success = run_emitted(&binary, &["ok"], None, false);
+    assert_eq!(success.status, 0);
+    assert_eq!(success.failure, "");
 }
