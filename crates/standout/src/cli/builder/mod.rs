@@ -1683,7 +1683,6 @@ impl App {
     }
 
     pub fn verify_command(&self, cmd: &Command) -> Result<(), SetupError> {
-        let cmd = &self.built_clone(cmd);
         self.malformed_registrations()?;
         self.validate_questionnaire_surfaces(cmd)?;
         self.unreachable_registrations(cmd)?;
@@ -1696,7 +1695,7 @@ impl App {
             .iter()
             .map(|(path, cmd)| (path.clone(), cmd.recipe.expected_args()))
             .collect();
-        super::app::verify_recursive(cmd, &expected_args, &[], true)
+        super::app::verify_recursive(&self.built_clone(cmd), &expected_args, &[], true)
     }
 }
 

@@ -54,8 +54,9 @@ fn test_verification_failure_missing_arg() {
 
 #[test]
 fn test_verification_failure_wrong_type() {
-    let cmd_def = Command::new("app")
-        .subcommand(Command::new("test").arg(Arg::new("foo").long("foo").action(ArgAction::SetTrue)));
+    let cmd_def = Command::new("app").subcommand(
+        Command::new("test").arg(Arg::new("foo").long("foo").action(ArgAction::SetTrue)),
+    );
 
     let app = App::builder()
         .command_with("test", my_verified_handler_Handler, |config| {
@@ -146,7 +147,9 @@ fn test_verification_preserves_structured_error() {
 }
 
 #[handler]
-fn scoped_handler(#[arg] scope: Option<String>) -> Result<standout::cli::Output<Empty>, anyhow::Error> {
+fn scoped_handler(
+    #[arg] scope: Option<String>,
+) -> Result<standout::cli::Output<Empty>, anyhow::Error> {
     let _ = scope;
     Ok(Output::Render(Empty))
 }
@@ -168,4 +171,26 @@ fn test_verification_reads_a_parent_global_arg() {
         .unwrap();
 
     assert!(app.verify_command(&cmd_def).is_ok());
+}
+
+#[handler]
+fn help_topic_handler() -> Result<standout::cli::Output<Empty>, anyhow::Error> {
+    Ok(Output::Render(Empty))
+}
+
+#[test]
+fn test_verification_rejects_a_registration_on_claps_generated_help() {
+    let cmd_def = Command::new("app").subcommand(Command::new("run"));
+
+    let app = App::builder()
+        .help_handling(false)
+        .command_with("help", help_topic_handler_Handler, |config| {
+            config.structured_only()
+        })
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let msg = app.verify_command(&cmd_def).unwrap_err().to_string();
+    assert!(msg.contains("No invocation reaches `help`"), "{msg}");
 }
