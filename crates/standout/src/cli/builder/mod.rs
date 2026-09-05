@@ -1683,8 +1683,9 @@ impl App {
     }
 
     pub fn verify_command(&self, cmd: &Command) -> Result<(), SetupError> {
+        let propagated = super::app::with_globals_propagated(cmd);
         self.malformed_registrations()?;
-        self.validate_questionnaire_surfaces(cmd)?;
+        self.validate_questionnaire_surfaces(&propagated)?;
         self.unreachable_registrations(cmd)?;
         self.config_override_flag_collision(cmd)?;
         self.framework_flag_collision(cmd)?;
@@ -1695,7 +1696,6 @@ impl App {
             .iter()
             .map(|(path, cmd)| (path.clone(), cmd.recipe.expected_args()))
             .collect();
-        let propagated = super::app::with_globals_propagated(cmd);
         super::app::verify_recursive(&propagated, &expected_args, &[], true)
     }
 }

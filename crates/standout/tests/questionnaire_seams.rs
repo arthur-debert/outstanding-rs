@@ -243,3 +243,25 @@ fn a_disabled_gate_runs_without_an_attended_terminal() {
     result.assert_success();
     assert_eq!(result.stdout(), "ada/eu");
 }
+
+#[test]
+fn a_parent_global_yes_collides_with_the_injected_questionnaire_flag() {
+    let cmd = Command::new("formlike")
+        .subcommand_required(true)
+        .arg(
+            clap::Arg::new("yes")
+                .long("yes")
+                .global(true)
+                .action(clap::ArgAction::SetTrue),
+        )
+        .subcommand(Command::new("entry"));
+
+    let error = spec_sheet_app()
+        .verify_command(&cmd)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("declares reserved name(s): --yes"),
+        "{error}"
+    );
+}
