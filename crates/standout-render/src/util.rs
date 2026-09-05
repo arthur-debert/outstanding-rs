@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
-use console::AnsiCodeIterator;
 use serde_json::{Map, Value};
+use standout_bbparser::ansi::ansi_units;
 
 use crate::error::RenderError;
 
@@ -47,19 +47,19 @@ pub fn escape_style_tags(text: Cow<'_, str>) -> Cow<'_, str> {
         return text;
     }
     let plain_bracket =
-        AnsiCodeIterator::new(&text).any(|(unit, is_ansi)| !is_ansi && unit.contains(['[', ']']));
+        ansi_units(&text).any(|unit| !unit.is_escape && unit.text.contains(['[', ']']));
     if !plain_bracket {
         return text;
     }
     let mut escaped = String::with_capacity(text.len() + 8);
-    for (unit, is_ansi) in AnsiCodeIterator::new(&text) {
+    for unit in ansi_units(&text) {
         // An escaped `\[` no longer introduces a CSI sequence, so the width and
         // truncation machinery would count the sequence body as visible text.
-        if is_ansi {
-            escaped.push_str(unit);
+        if unit.is_escape {
+            escaped.push_str(unit.text);
             continue;
         }
-        for character in unit.chars() {
+        for character in unit.text.chars() {
             if character == '[' || character == ']' {
                 escaped.push('\\');
             }
@@ -220,6 +220,52 @@ mod tests {
         assert_eq!(
             truncate_to_width("[match]Hello World[/match]", 6),
             "[match]Hello[/match]…"
+        );
+    }
+
+    #[test]
+    fn truncation_closes_an_ansi_style_it_cuts() {
+        assert_eq!(
+            truncate_to_width("\u{1b}[31malpha beta gamma\u{1b}[0m", 8),
+            "\u{1b}[31malpha b\u{1b}[0m…"
+        );
+        assert_eq!(
+            truncate_to_width("[row]\u{1b}[31malpha beta gamma\u{1b}[0m[/row]", 8),
+            "[row]\u{1b}[31malpha b\u{1b}[0m[/row]…"
+        );
+    }
+
+    #[test]
+    fn the_shared_escaper_agrees_with_the_bracket_replacement_it_replaced() {
+        fn bracket_replace(text: &str) -> String {
+            text.replace('[', "\\[").replace(']', "\\]")
+        }
+
+        for text in [
+            "",
+            "term.color",
+            "/home/user/.config/app/config.toml",
+            "term.color = auto",
+            "value [with] brackets",
+            "[unclosed",
+            "\\[already escaped\\]",
+            "nested [[double]]",
+        ] {
+            assert_eq!(
+                escape_style_tags(Cow::Borrowed(text)),
+                bracket_replace(text),
+                "{text:?}"
+            );
+        }
+
+        let with_ansi = "\u{1b}[31mred\u{1b}[0m [tag]";
+        assert_eq!(
+            escape_style_tags(Cow::Borrowed(with_ansi)),
+            "\u{1b}[31mred\u{1b}[0m \\[tag\\]"
+        );
+        assert_eq!(
+            bracket_replace(with_ansi),
+            "\u{1b}\\[31mred\u{1b}\\[0m \\[tag\\]"
         );
     }
 
