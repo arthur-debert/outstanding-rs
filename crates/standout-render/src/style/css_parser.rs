@@ -1,15 +1,3 @@
-//! Parses a subset of CSS level 3 (via `cssparser`, the tokenizer used by
-//! Firefox) into the same [`ThemeVariants`] that the YAML parser produces, so
-//! themes can be authored in whichever syntax is more convenient.
-//!
-//! Class selectors (`.error`) map to style names. `@media
-//! (prefers-color-scheme: dark|light) { ... }` blocks define light/dark
-//! overrides the same way YAML's `light:`/`dark:` sections do. Supported
-//! properties: `color`/`fg`, `background-color`/`bg`, `font-weight: bold`,
-//! `font-style: italic`, `text-decoration: underline|line-through`,
-//! `visibility: hidden`, and direct `bold`/`italic`/`dim`/`blink`/`reverse`/
-//! `hidden`/`strikethrough` flags.
-
 use std::collections::HashMap;
 
 use cssparser::{

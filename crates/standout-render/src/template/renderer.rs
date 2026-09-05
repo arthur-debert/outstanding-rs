@@ -1,12 +1,3 @@
-//! [`Renderer`] registers templates once (inline, from a directory, or
-//! embedded) and reuses them across renders. `add_embedded` shares the
-//! inline map, so inline and embedded content sit at the same top priority
-//! tier; file-based templates are checked after. In debug builds, file-based
-//! templates are re-read from disk on each render (hot reload); embedded
-//! content is used otherwise. File-based template names must be unique
-//! across all registered directories — a collision is an error, not a
-//! silent shadow.
-
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;

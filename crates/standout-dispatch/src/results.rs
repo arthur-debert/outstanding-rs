@@ -5,13 +5,11 @@
 //! summary. Both are results: the values the command exists to produce, as
 //! opposed to operational messages about the run.
 //!
-//! [`Results`] carries what retains a value and what writes it behind an `Rc`,
-//! so it needs no lifetime parameter and `Handler::handle` gains none.
 //! [`RunRecorder`] retains each value as data whatever representation the run
 //! selected, so a test asserts on the values and on the rendered bytes
 //! separately. [`EventSink`] is the representation-specific destination the
-//! consuming framework implements, because the human representation of an event
-//! is a template render and this crate does not render.
+//! consuming framework implements, because the human representation of an
+//! event is a template render and this crate does not render.
 
 use serde::Serialize;
 use std::any::TypeId;

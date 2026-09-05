@@ -1,12 +1,3 @@
-//! Copies every template in a [`TemplateRegistry`] into a [`TemplateEngine`],
-//! since direct [`crate::render_request`] callers must not have to
-//! pre-populate the engine themselves.
-//!
-//! The copy is cached per (engine identity, registry id, generation) when
-//! the registry has no file sources; file-backed registries reread on every
-//! render so on-disk changes are picked up. A named lookup that misses
-//! refreshes the registry once and retries before giving up.
-
 use std::cell::Cell;
 
 use super::engine::TemplateEngine;

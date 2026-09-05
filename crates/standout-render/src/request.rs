@@ -1,13 +1,3 @@
-//! Boundary types for an explicit render: destination facts and the request.
-//!
-//! [`TargetProperties`] is what this invocation's destination looks like.
-//! [`RenderRequest`] is what to render, including those properties, the
-//! [`crate::Representation`] to produce and a [`ColorPolicy`] independent of
-//! it. The pure
-//! leaf entry is [`render_request`]; convenience wrappers detect at their
-//! edge, build a request, and delegate here. Detection lives at
-//! [`TargetProperties::detect`].
-
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;

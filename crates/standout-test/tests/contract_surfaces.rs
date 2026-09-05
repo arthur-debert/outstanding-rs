@@ -1,7 +1,3 @@
-//! The versioned contract surfaces as a process observes them: the
-//! app-declared envelope, the framework documents carrying `schema_version`,
-//! and the help document.
-
 use clap::{Arg, ArgAction, Command};
 use serde::Serialize;
 use serde_json::{json, Value};

@@ -1,7 +1,3 @@
-//! The batch path of `docs/spec/implemented/typed-command-output.md`: one typed value, the
-//! representation `--output` may name, and the values, bytes and delivery the
-//! harness reports separately.
-
 use clap::Command;
 use serde::Serialize;
 use serial_test::serial;

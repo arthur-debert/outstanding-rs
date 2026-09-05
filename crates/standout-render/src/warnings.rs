@@ -1,15 +1,14 @@
 //! Collects non-fatal framework warnings on a [`WarningBuffer`] instead of
-//! `eprintln!`-ing them at the discovery site, so the CLI layer can render
-//! them *after* the command's own output, styled through the active theme,
-//! with a clear banner. Only framework-owned diagnostics (resource-loading
-//! fallbacks, accepted-input warnings) belong here — handler-generated
-//! stderr output stays interleaved.
+//! `eprintln!`-ing them at the discovery site, so the CLI layer can render them
+//! *after* the command's own output, styled through the active theme. Only
+//! framework-owned diagnostics belong here — handler-generated stderr output
+//! stays interleaved.
 //!
 //! Warnings are styled using stderr color capability from
 //! [`crate::TargetProperties`], independent of the primary render's stdout
-//! capability, so piped stdout does not strip a still-interactive stderr.
-//! A [`crate::ColorPolicy`] of `Never` opts out of styling entirely. There is
-//! no thread-local collector; the buffer is passed explicitly through the run.
+//! capability, so piped stdout does not strip a still-interactive stderr. There
+//! is no thread-local collector; the buffer is passed explicitly through the
+//! run.
 
 use std::cell::RefCell;
 use std::io::Write;

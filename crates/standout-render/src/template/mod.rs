@@ -1,22 +1,17 @@
 //! Two-pass template rendering with style tag processing.
 //!
-//! Templates render in two passes: a template engine ([`MiniJinjaEngine`] for
-//! full Jinja2 syntax, or [`SimpleEngine`] for `{var}`-only substitution) runs
-//! first, then a bracket-tag pass converts `[name]...[/name]` style tags to
-//! ANSI codes or strips them. Style tags use bracket notation rather than
-//! either engine's own syntax so they survive both engines unmodified and the
-//! styling pass stays independent of template logic. Tags can nest and span
-//! multiple lines; unknown tags degrade to unstyled inner text — use
-//! [`validate_template`] to catch typos at startup or in tests.
+//! A template engine ([`MiniJinjaEngine`] for full Jinja2 syntax, or
+//! [`SimpleEngine`] for `{var}`-only substitution) runs first, then a
+//! bracket-tag pass converts `[name]...[/name]` style tags to ANSI codes or
+//! strips them. Style tags use bracket notation rather than either engine's own
+//! syntax so they survive both engines unmodified and the styling pass stays
+//! independent of template logic. Unknown tags degrade to unstyled inner text —
+//! use [`validate_template`] to catch typos at startup or in tests.
 //!
 //! Render entry points, in order of how much they take over: [`render`]
 //! (auto-detects everything), [`render_with_output`] (honors `--output`),
 //! [`render_with_mode`] (explicit output + color mode), [`render_auto`] (also
-//! dispatches structured modes — JSON/YAML/CSV — straight to
-//! serialization, skipping the template entirely).
-//!
-//! See also [`crate::theme`] for style definitions, [`crate::tabular`] for
-//! column filters, and [`crate::context`] for context injection.
+//! dispatches structured modes straight to serialization).
 
 mod engine;
 pub mod filters;

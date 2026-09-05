@@ -1,9 +1,3 @@
-//! The exit-code table of the machine contract: four outcomes under `text`,
-//! `json` and `ndjson`, each row asserting the status and where the document,
-//! the diagnostic and the prose land. `diagnostics.rs`, `exit_statuses.rs` and
-//! `ndjson.rs` go deeper into each cell; this file is the contract read as one
-//! table.
-
 use clap::Command;
 use serde_json::json;
 use serial_test::serial;

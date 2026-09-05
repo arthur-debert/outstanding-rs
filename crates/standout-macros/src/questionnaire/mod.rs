@@ -2,16 +2,13 @@
 //!
 //! `Questionnaire` lowers scalar fields, marked enum-choice fields, nested
 //! questionnaire structs, and repeatable groups to `standout-input`'s public
-//! questionnaire builder, then emits direct typed filling from decoded
-//! answers. `QuestionnaireChoices` lowers a unit-variant enum to the choice
-//! vocabulary consumed by `#[question(choice)]` fields; every variant
-//! declares its user-facing choice string explicitly with
-//! `#[question(rename = "...")]`.
+//! questionnaire builder, then emits direct typed filling from decoded answers.
+//! `QuestionnaireChoices` lowers a unit-variant enum to the choice vocabulary
+//! consumed by `#[question(choice)]` fields.
 //!
 //! Both derives name the runtime through `__standout_input`, an alias bound
 //! inside the const block that wraps every expansion, so a consumer needs
-//! either `standout-input` or `standout` (which re-exports it as
-//! `standout::input`) as a dependency, not both.
+//! either `standout-input` or `standout`, not both.
 
 use std::collections::HashSet;
 

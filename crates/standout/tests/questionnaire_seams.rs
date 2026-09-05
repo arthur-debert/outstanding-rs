@@ -1,5 +1,3 @@
-//! An app-defined answer-sheet format and a configurable confirmation gate, driven through `App`.
-
 use clap::Command;
 use serde_json::json;
 use standout::cli::{

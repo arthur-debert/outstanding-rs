@@ -1,10 +1,3 @@
-//! Resolves each table column's display width from its [`Width`] spec and,
-//! for `Bounded` columns, from the data being rendered. `Fill`/`Fraction`
-//! columns split whatever space is left after fixed and bounded columns are
-//! sized; with no flex column, leftover space goes to the rightmost
-//! `Bounded` column instead (ignoring its `max`, since this is explicit
-//! layout expansion rather than the bound itself).
-
 use super::types::{FlatDataSpec, Width};
 use super::util::visible_width_with_policy;
 use crate::AmbiguousWidth;

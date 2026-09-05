@@ -1,8 +1,3 @@
-//! [`probe_color_mode`] queries the OS for the user's preferred scheme.
-//! Callers detect at the crate edge via [`crate::TargetProperties::detect`];
-//! tests construct [`crate::TargetProperties`] with an explicit
-//! [`ColorMode`]. Template functions never call this probe.
-
 use dark_light::{detect as detect_os_theme, Mode as OsThemeMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

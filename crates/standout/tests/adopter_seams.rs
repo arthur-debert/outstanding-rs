@@ -1,7 +1,3 @@
-//! Dispatch seams an application reaches for: the output-mode fallback, an
-//! app-owned exit status and diagnostic, hook diagnostic framing, and the
-//! matches a hook receives.
-
 use clap::{Arg, ArgAction, Command};
 use serde_json::json;
 use standout::cli::{

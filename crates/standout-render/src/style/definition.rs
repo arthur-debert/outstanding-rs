@@ -1,28 +1,3 @@
-//! [`StyleDefinition`] is the parsed form of one YAML stylesheet entry: an
-//! alias to another style by name, or attributes with optional light/dark
-//! overrides.
-//!
-//! ```yaml
-//! # Alias - string value that's a valid style name
-//! disabled: muted
-//!
-//! # Shorthand - string with color/attribute keywords
-//! warning: "yellow bold"
-//!
-//! # Full definition - mapping with attributes
-//! header:
-//!   fg: cyan
-//!   bold: true
-//!
-//! # Adaptive definition - base plus light/dark overrides
-//! panel:
-//!   fg: gray
-//!   light:
-//!     fg: black
-//!   dark:
-//!     fg: white
-//! ```
-
 use super::attributes::{parse_shorthand, StyleAttributes};
 use super::error::StylesheetError;
 

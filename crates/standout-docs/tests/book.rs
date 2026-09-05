@@ -1,5 +1,3 @@
-//! The book's graph, checked against this repository.
-
 use std::path::{Path, PathBuf};
 
 fn repo_root() -> PathBuf {

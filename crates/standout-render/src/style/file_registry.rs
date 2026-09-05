@@ -1,12 +1,3 @@
-//! [`StylesheetRegistry`] resolves themes by name from inline content,
-//! filesystem directories, and embedded content, in that priority order;
-//! within file-based lookup, directories are searched in registration order.
-//! Stylesheets may be CSS (preferred) or YAML (legacy), auto-detected from
-//! content; a name may be given with or without its extension, and among
-//! `.css`/`.yaml`/`.yml` files sharing a base name, that priority order picks
-//! the winner. In debug builds, file-based themes are re-read on each access
-//! so edits show up without a restart.
-
 use std::collections::HashMap;
 use std::path::Path;
 

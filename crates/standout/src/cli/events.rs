@@ -1,8 +1,7 @@
 //! What one emitted event becomes on the run's destination.
 //!
 //! A handler emits typed events through `Results<E>`; this module is the
-//! [`EventSink`] behind that channel, one per run, holding everything a
-//! representation needs to turn a value into bytes:
+//! [`EventSink`] behind that channel, one per run:
 //!
 //! - the human representation renders the command's `<name>.event` template
 //!   with the value bound to `event`, one flushed line per event;
@@ -14,8 +13,8 @@
 //!
 //! Every reason an event does not reach the destination is returned to the
 //! handler, so it stops at the `emit` that failed, and the first of them is
-//! remembered for [`EventDestination::take_failure`] whether or not the
-//! handler propagates it.
+//! remembered for [`EventDestination::take_failure`] whether or not the handler
+//! propagates it.
 
 use std::cell::RefCell;
 use std::collections::HashMap;

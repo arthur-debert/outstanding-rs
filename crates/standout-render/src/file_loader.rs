@@ -1,25 +1,20 @@
-//! File-based resource loading for templates and stylesheets, with a
-//! release mode that embeds everything into the binary at compile time.
+//! File-based resource loading for templates and stylesheets, with a release
+//! mode that embeds everything into the binary at compile time.
 //!
-//! Resources are referenced by a resolution name: the file's path relative
-//! to a registered root, without extension (`templates/report/summary.jinja`
+//! Resources are referenced by a resolution name: the file's path relative to a
+//! registered root, without extension (`templates/report/summary.jinja`
 //! resolves as `"report/summary"`). Extensions are matched against a
-//! priority-ordered list; when several files share a base name, the
-//! extension earlier in the list wins for extensionless lookups. Lookups
-//! are also extension-agnostic in the other direction: a recognized
-//! suffix on a lookup name is stripped and retried against the base name,
-//! so `get("config.j2")` can resolve to a file registered as `"config"`.
+//! priority-ordered list; when several files share a base name, the extension
+//! earlier in the list wins for extensionless lookups. Lookups are also
+//! extension-agnostic in the other direction: a recognized suffix on a lookup
+//! name is stripped and retried against the base name, so `get("config.j2")`
+//! can resolve to a file registered as `"config"`.
 //!
-//! [`FileRegistry`] holds entries as either [`LoadedEntry::File`] (dev mode:
-//! re-read and transformed from disk on every access, so edits are visible
-//! immediately) or [`LoadedEntry::Embedded`] (release mode: content baked in
-//! at compile time via the `standout_macros` embedding macros). Embedded
-//! entries always shadow file-based ones of the same name.
-//!
-//! A name resolving to files in two different registered directories is a
-//! configuration error and panics with [`LoadError::Collision`]; the same
-//! name at different extensions within one directory is resolved by
-//! priority instead.
+//! Embedded entries always shadow file-based ones of the same name. A name
+//! resolving to files in two different registered directories is a
+//! configuration error and panics with [`LoadError::Collision`]; the same name
+//! at different extensions within one directory is resolved by priority
+//! instead.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

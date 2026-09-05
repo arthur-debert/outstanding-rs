@@ -718,11 +718,9 @@ pub(crate) trait ErasedCommandConfig {
     fn hooks(&self) -> Option<&Hooks>;
     fn take_hooks(&mut self) -> Option<Hooks>;
     fn take_questionnaire(&mut self) -> Option<QuestionnaireCommand>;
-    /// True when the handler declares that it produces its result while it runs.
     fn emits_events(&self) -> bool {
         false
     }
-    /// True when the application marked the command's human output pageable.
     fn pageable(&self) -> bool {
         false
     }

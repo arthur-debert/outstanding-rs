@@ -1,6 +1,3 @@
-//! A declared exit status is a signal beside the result, never a failure: the document
-//! still goes to stdout and nothing becomes a diagnostic.
-
 use clap::{Arg, ArgAction, Command};
 use serde_json::json;
 use serial_test::serial;

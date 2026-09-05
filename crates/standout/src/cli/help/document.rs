@@ -1,12 +1,3 @@
-//! The help document: what `--help`, `-h` and the `help` word answer with
-//! under `json` and `yaml` (`docs/topics/standout-help.md`).
-//!
-//! It is built from the same clap tree as the human page, after `build()`,
-//! so clap's own `-h`/`--help` and `-V`/`--version` are among its `args`.
-//! `short` and `long` are the tokens as typed, dashes included; `name` is the
-//! clap id. `usage` and `path` name the full command path from the root by
-//! its canonical names, whichever aliases the caller typed.
-
 use clap::Command;
 use serde::{Deserialize, Serialize};
 
