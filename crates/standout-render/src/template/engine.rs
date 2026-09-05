@@ -303,6 +303,10 @@ fn register_filters_with_source(env: &mut Environment<'static>, widths: RenderWi
         format!("{}\n", stringify(&value))
     });
 
+    env.add_filter("verbatim", |value: Value| -> String {
+        crate::util::escape_style_tags(stringify(&value)).into_owned()
+    });
+
     env.add_filter(
         "style",
         |_value: Value, _name: String| -> Result<String, Error> {
@@ -370,6 +374,18 @@ mod tests {
             "a shared engine sent across threads would race per-render width state"
         );
         assert!(!Probe::<MiniJinjaEngine>(PhantomData).is_sync());
+    }
+
+    #[test]
+    fn verbatim_is_registered_on_the_engine_filter_set() {
+        let engine = MiniJinjaEngine::new();
+        let output = engine
+            .render_template(
+                "{{ body | verbatim }}",
+                &serde_json::json!({"body": "[severity_map]"}),
+            )
+            .unwrap();
+        assert_eq!(output, r"\[severity_map\]");
     }
 
     #[test]
