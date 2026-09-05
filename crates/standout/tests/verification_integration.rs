@@ -237,3 +237,65 @@ fn test_verification_reads_a_parent_global_arg_on_a_prebuilt_command() {
 
     assert!(app.verify_command(&cmd_def).is_ok());
 }
+
+fn scoped_app() -> App {
+    App::builder()
+        .command_with("config.list", scoped_handler_Handler, |config| {
+            config.structured_only()
+        })
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+fn verified_declared_and_clap_built(cmd: Command) -> Result<(), standout::SetupError> {
+    let mut clap_built = cmd.clone();
+    clap_built.build();
+
+    let app = scoped_app();
+    let declared = app.verify_command(&cmd);
+    let built = app.verify_command(&clap_built);
+    assert_eq!(
+        declared.is_err(),
+        built.is_err(),
+        "declared: {declared:?}, clap-built: {built:?}"
+    );
+    declared
+}
+
+#[test]
+fn propagation_matches_clap_for_a_global_on_an_intermediate_command() {
+    let cmd = Command::new("app").subcommand(
+        Command::new("config")
+            .arg(Arg::new("scope").long("scope").global(true))
+            .subcommand(Command::new("list")),
+    );
+
+    assert!(verified_declared_and_clap_built(cmd).is_ok());
+}
+
+#[test]
+fn propagation_matches_clap_when_a_subcommand_redeclares_an_ancestor_global() {
+    let cmd =
+        Command::new("app")
+            .arg(Arg::new("scope").long("scope").global(true))
+            .subcommand(Command::new("config").subcommand(
+                Command::new("list").arg(Arg::new("scope").long("scope").required(true)),
+            ));
+
+    assert!(verified_declared_and_clap_built(cmd).is_err());
+}
+
+#[test]
+fn propagation_matches_clap_for_an_aliased_global() {
+    let cmd = Command::new("app")
+        .arg(
+            Arg::new("scope")
+                .long("scope-name")
+                .alias("scope")
+                .global(true),
+        )
+        .subcommand(Command::new("config").subcommand(Command::new("list")));
+
+    assert!(verified_declared_and_clap_built(cmd).is_ok());
+}
