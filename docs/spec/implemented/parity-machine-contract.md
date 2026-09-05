@@ -16,14 +16,7 @@
 > - D4: the envelope is an application opt-in, so brewlike's
 >   `list-json-payload-carries-the-schema-version` passes for an implementation
 >   built from the archetype spec (mirrored in
->   `crates/standout-test/tests/contract_surfaces.rs`) and fails for the frozen
->   `standout-corpus` member, which never opted in; that member is re-accepted
->   from a fresh run.
-> - The diagnostic rows of `corpus/archetypes/tflike/acceptance.toml` keep
->   `expected = "fail"`: the corpus runner has no tflike binary to run them
->   against. The executable form of the criterion is
->   `corpus/gap-suites/tests/tflike_diagnostic.rs` against the in-repo fixture
->   `corpus/gap-suites/src/bin/tflike.rs`.
+>   `crates/standout-test/tests/contract_surfaces.rs`).
 > - `ctx.output_mode()` in the examples does not exist; `ctx.stream().is_live()`
 >   is the one mode predicate a handler has. `DiagnosticKind` has one name beyond
 >   D1's list, `framework`, the kind of a warning entry.
@@ -34,17 +27,13 @@
 >   [ADR-0041](../../adr/0041-hand-the-handler-a-typed-results-sink.md).
 
 First epic of the capability-parity program to execute. The program's order is PAR02,
-then PAR01 (config layering) and PAR04 (corpus runner) side by side, then the
+then PAR01 (config layering), then the
 terminal-behavior epic that `docs/spec/implemented/typed-command-output.md` has since replaced, then
 PAR05 (named configuration sets). PAR02 depends on nothing
 unfinished: the composition-contracts work (ADRs 0025 to 0035) already put every
 failure through one function, `emit_run_result` in
 `crates/standout/src/cli/builder/execution.rs`, and already scans raw argv for
-`--output` (`last_unparsed_flag_value` in `crates/standout/src/cli/builder/mod.rs`). Its
-executable exit criterion is the `tflike/diagnostic` gap suite
-(`corpus/gap-suites/tests/tflike_diagnostic.rs`, seven tests) plus brewlike's two
-`schema-version` cases turning green, with their `expect_gap` wrappers removed and
-`corpus/gap-suites/gaps.toml` flipped in the same change.
+`--output` (`last_unparsed_flag_value` in `crates/standout/src/cli/builder/mod.rs`).
 
 ## Problem
 
@@ -66,7 +55,7 @@ issue #430 for the same reason.
 the only function that pages, emits, flushes warnings and sets the exit status, and it
 ends in `process::exit`. `run_with` returns before any of that. dodot
 (`crates/dodot-cli/src/main.rs:146-203`), rustloc (`crates/rustloc/src/main.rs:892-937`)
-and the gitlike and systemdlike corpus apps all reimplement the edge by hand, and
+both reimplement the edge by hand, and
 rustloc's copy exits 2 for every failure, including handler failures. comitia filed
 issue #458.
 
@@ -257,7 +246,7 @@ versioned here.
 `run_emitted(cmd, args) -> ProcessOutcome { handled, status }`, which does everything
 `run` does today except `process::exit`, and `run` calls it. This lands as the first
 PR because D1 and D2 change the function it extracts, and because it is what dodot,
-rustloc and the corpus apps replace their hand-written edges with.
+and rustloc replace their hand-written edges with.
 
 ## Workstreams
 
@@ -301,12 +290,6 @@ WS02, WS03 and WS04 start after WS01 merges and can run in parallel.
 
 ## Exit criteria
 
-- `corpus/gap-suites/tests/tflike_diagnostic.rs`: all seven tests pass with their
-  `expect_gap` wrappers removed, `gaps.toml` reads `status = "closed"`, `armed = 0`
-  for `tflike/diagnostic`.
-- `corpus/archetypes/brewlike/acceptance.toml`: `list-json-payload-carries-the-schema-version`
-  and `machine-help-is-a-versioned-document` pass; their `expected = "fail"` and `gap`
-  lines are removed in the same change.
 - The exit-code table test in `standout-test` covers success, app-declared success
   status, usage error and failure under `text`, `json` and `ndjson`.
 - A release on the 10.0 line, since D4 and D7 are breaking.

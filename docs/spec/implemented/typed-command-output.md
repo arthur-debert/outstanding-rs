@@ -12,11 +12,6 @@
 >   event, then the returned summary. No spinner, counter or transient line is
 >   derived from the events, and no setting asks for one; that feature is still
 >   the separate spec the Non-goals name.
-> - The corpus `systemdlike` member asks for color with `--color never` and
->   `--color always` in place of the retired `--output text` and `--output
->   term`. Its produced binary predates the change, so it leaves the per-PR
->   corpus subset until #519 re-accepts it from a fresh blind run; an empty
->   subset passes that workflow rather than failing it.
 > - The harness reads a run's values with `TestResult::results()`, every
 >   recorded value in order, and `TestResult::result()`, the last one — the
 >   summary for a command that returns one. ADR-0041's typed
@@ -30,10 +25,10 @@
 >   `post_output` hook returns its `RenderedOutput` at run time, so that one
 >   seam keeps the runtime refusal.
 > - WS08 (#519) has not run in full. The documentation, the help text and this
->   Spec's filing as implemented are done; what it still owes is the adopter half — the corpus
->   applications replacing their own `--no-pager` flag and `PAGER` reading with
->   the framework's, one compiled reference command covering the batch and
->   incremental combinations, and the blind run that re-accepts `systemdlike`.
+>   Spec's filing as implemented are done; what it still owes is the adopter half:
+>   downstream applications replacing their own `--no-pager` flag and `PAGER`
+>   reading with the framework's, and one compiled reference command covering the
+>   batch and incremental combinations.
 
 ## Problem
 
@@ -60,7 +55,7 @@ encodings of the handler's value. `term` versus `text` is the only way a CLI use
 for or refuse color, so color cannot be requested without also naming a format. The one
 pager Standout runs is the help pager: a `log` command that wants its rendered output paged
 on a terminal spawns the pager, reads `PAGER` and parses `--no-pager` itself, which is the
-workaround the blind corpus runs recorded more than any other.
+workaround the blind adopter runs recorded more than any other.
 
 ## Proposed behavior
 

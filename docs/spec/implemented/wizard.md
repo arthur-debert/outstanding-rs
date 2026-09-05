@@ -3,7 +3,7 @@
 ## Status
 
 Implemented by WIZ01. This document records the shipped first-release scope;
-the recovered decision record is [ADR 0001](../adr/0001-wizard.md).
+the recovered decision record is [ADR 0001](../../adr/0001-wizard.md).
 
 ## Overview
 

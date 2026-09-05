@@ -1,11 +1,9 @@
 # Robustness: One Blessed Surface
 
 Fifth epic of the **Robustness program** (ROB05). Depends on composition contracts
-(ROB04, merged as #394) for the final shapes and on the corpus pilot (ROB03) for the
-observed-friction input: the [pilot scorecard](../../../corpus/pilot/scorecard.md) and its
-findings #349–#361. Runs in parallel with the adopter-seams epic (ROB06,
-`robustness-adopter-seams.md`); both precede corpus completion (ROB07), which re-runs the
-archetypes against the surface this epic ships.
+(ROB04, merged as #394) for the final shapes and, for the observed-friction input, on
+the blind-adopter pilot's findings #349–#361. Runs in parallel with the adopter-seams
+epic (ROB06, `robustness-adopter-seams.md`).
 
 ## Context
 
@@ -60,8 +58,7 @@ replaces the audit's numbers as this epic's baseline.
   nowhere. No topic exists at all for ListView, seeker, passthrough, or `#[command]`.
 - **No stability statement** exists anywhere in the repo.
 
-The corpus pilot (four blind runs, scorecard themes 1, 3 and 5, all 4/4 or 2/4 in
-frequency) confirmed the audit from the adopter side: every run hit a place where two
+The pilot's four blind runs confirmed the audit from the adopter side: every run hit a place where two
 documented paths disagree with each other or with the macro. The findings still open on
 `main` that belong to this epic, verified 2026-08-30:
 
@@ -143,8 +140,7 @@ documentation.
   exists starts here.
 - **The program's compatibility break ships as one major version**, with every
   `CHANGELOG/unreleased-*.md` fragment from ROB01–ROB05 consolidated into its migration
-  notes. Corpus completion depends on this release: the runner pins crates.io versions
-  by design (ADR-0023).
+  notes.
 
 ## Non-Goals
 
@@ -154,8 +150,7 @@ documentation.
   tabular wording, #357's diagnostic framing), the docs state the behavior that epic
   ships, and the two epics coordinate the wording in review.
 - Machine-output schema versioning (parity: machine contract).
-- Corpus completion, and porting the real downstreams (they are on 7.x; see
-  `robustness-corpus-completion.md`).
+- Porting the real downstreams (they are on 7.x).
 - Preserving source compatibility for deleted paths.
 
 ## Proposed Shape
@@ -181,8 +176,7 @@ missing references; complete `SUMMARY.md`; the stability statement; the README l
 with the strongest verified pitch (testability: handlers return data, demonstrated by
 the testing guide against the post-ROB04 harness).
 
-**4. The release.** Consolidated migration notes; version bump; publish. The corpus
-completion epic's first act is a re-run against this published version.
+**4. The release.** Consolidated migration notes; version bump; publish.
 
 ## User / Agent Stories
 
@@ -220,8 +214,8 @@ completion epic's first act is a re-run against this published version.
   version with consolidated migration notes.
 - CI gains doc-example compile checks and an mdbook link check so doc truth is enforced,
   not audited.
-- The two friendly downstreams and the corpus archetypes are the acceptance environment:
-  the corpus re-run (ROB07) and the lookma port measure the migration cost.
+- The two friendly downstreams are the acceptance environment: the lookma port
+  measures the migration cost.
 
 ## Testing / Verification
 
@@ -242,7 +236,7 @@ SUMMARY + README; (5) release consolidation. (3) and (4) parallelize after (2); 
 
 ## Out Of Scope
 
-New features, schema versioning, corpus construction, crate reorganization, downstream
+New features, schema versioning, crate reorganization, downstream
 porting, the adopter-seams findings.
 
 ## Further Notes
@@ -255,6 +249,6 @@ capability → surviving-item map, and the adopter-seams additions blessed on ar
 (the stability statement and where it lives); and
 [handle help by default](../../adr/0034-handle-help-by-default.md).
 Inputs: the census in Context (supersedes the 8.1.0 DX audit
-numbers), the [pilot scorecard](../../../corpus/pilot/scorecard.md), issues #349–#361. The
+numbers), issues #349–#361. The
 audit's redundancy catalogue lived only in the 2026-08-15/16 session record; the census
 here is its in-repo replacement and the ADR round should not need the original.

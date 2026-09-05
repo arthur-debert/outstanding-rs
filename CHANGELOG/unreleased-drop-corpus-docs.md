@@ -1,0 +1,1 @@
+- The corpus ADRs, specs and cross-references are gone from the documentation; the blind-adopter pilot findings (#349–#361) stay cited by issue number.
