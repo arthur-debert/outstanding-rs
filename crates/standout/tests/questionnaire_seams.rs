@@ -243,3 +243,81 @@ fn a_disabled_gate_runs_without_an_attended_terminal() {
     result.assert_success();
     assert_eq!(result.stdout(), "ada/eu");
 }
+
+#[test]
+fn a_parent_global_yes_collides_with_the_injected_questionnaire_flag() {
+    let cmd = Command::new("formlike")
+        .subcommand_required(true)
+        .arg(
+            clap::Arg::new("yes")
+                .long("yes")
+                .global(true)
+                .action(clap::ArgAction::SetTrue),
+        )
+        .subcommand(Command::new("entry"));
+
+    let error = spec_sheet_app()
+        .verify_command(&cmd)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("declares reserved name(s): --yes"),
+        "{error}"
+    );
+}
+
+#[test]
+#[serial(questionnaire)]
+#[should_panic(expected = "Long option names must be unique")]
+fn running_a_parent_global_yes_panics_today_instead_of_reporting_the_reserved_name() {
+    let cmd = Command::new("formlike")
+        .subcommand_required(true)
+        .arg(
+            clap::Arg::new("yes")
+                .long("yes")
+                .global(true)
+                .action(clap::ArgAction::SetTrue),
+        )
+        .subcommand(Command::new("entry"));
+
+    TestHarness::new().fixture("answers.txt", SPEC_SHEET).run(
+        &spec_sheet_app(),
+        cmd,
+        ["formlike", "entry", "--answers", "answers.txt", "--yes"],
+    );
+}
+
+#[test]
+#[serial(questionnaire)]
+fn a_questionnaire_arg_shadowing_an_ancestor_global_runs_and_verifies_clean() {
+    let cmd = Command::new("formlike")
+        .subcommand_required(true)
+        .arg(
+            clap::Arg::new("yes")
+                .long("yes")
+                .global(true)
+                .action(clap::ArgAction::SetTrue),
+        )
+        .subcommand(
+            Command::new("entry").arg(
+                clap::Arg::new("yes")
+                    .long("confirm")
+                    .action(clap::ArgAction::SetTrue),
+            ),
+        );
+
+    assert!(spec_sheet_app().verify_command(&cmd).is_ok());
+
+    let mut clap_built = cmd.clone();
+    clap_built.build();
+    assert!(spec_sheet_app().verify_command(&clap_built).is_ok());
+
+    let result = TestHarness::new().fixture("answers.txt", SPEC_SHEET).run(
+        &spec_sheet_app(),
+        cmd,
+        ["formlike", "entry", "--answers", "answers.txt", "--yes"],
+    );
+
+    result.assert_success();
+    assert_eq!(result.stdout(), "ada/eu");
+}
