@@ -1107,8 +1107,8 @@ mod tests {
             "the sequence is not escaped: {truncated:?}"
         );
         let sequences_are_whole = |text: &str| {
-            console::AnsiCodeIterator::new(text)
-                .all(|(unit, is_ansi)| !is_ansi || unit.ends_with('m'))
+            standout_bbparser::ansi::ansi_units(text)
+                .all(|unit| !unit.is_escape || unit.text.ends_with('m'))
         };
         assert!(
             sequences_are_whole(&truncated),

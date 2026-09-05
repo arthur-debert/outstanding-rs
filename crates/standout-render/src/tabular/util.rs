@@ -1,6 +1,6 @@
 use crate::width::VisibleTruncateAt;
 use crate::{AmbiguousWidth, WidthCalculator};
-use console::AnsiCodeIterator;
+use standout_bbparser::ansi::ansi_units;
 use standout_bbparser::StyledText;
 use std::ops::Range;
 
@@ -515,13 +515,13 @@ fn take_prefix_to_display_width(
 
     let mut result = String::new();
     let mut current_width = 0;
-    'units: for (unit, is_ansi) in AnsiCodeIterator::new(s) {
-        if is_ansi {
-            result.push_str(unit);
+    'units: for unit in ansi_units(s) {
+        if unit.is_escape {
+            result.push_str(unit.text);
             continue;
         }
 
-        for character in unit.chars() {
+        for character in unit.text.chars() {
             let char_width = calculator.char_width(character);
             if current_width + char_width > max_width {
                 break 'units;
@@ -549,24 +549,21 @@ fn find_suffix_with_width(s: &str, max_width: usize, calculator: WidthCalculator
 
     let mut current_width = 0;
     let mut byte_offset = 0;
-    let mut source_offset = 0;
 
-    'units: for (unit, is_ansi) in AnsiCodeIterator::new(s) {
-        if is_ansi {
-            byte_offset = source_offset + unit.len();
-            source_offset += unit.len();
+    'units: for unit in ansi_units(s) {
+        if unit.is_escape {
+            byte_offset = unit.offset + unit.text.len();
             continue;
         }
 
-        for (unit_offset, character) in unit.char_indices() {
+        for (unit_offset, character) in unit.text.char_indices() {
             current_width += calculator.char_width(character);
-            byte_offset = source_offset + unit_offset + character.len_utf8();
+            byte_offset = unit.offset + unit_offset + character.len_utf8();
 
             if current_width >= skip_width {
                 break 'units;
             }
         }
-        source_offset += unit.len();
     }
 
     s[byte_offset..].to_string()

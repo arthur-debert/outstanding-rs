@@ -44,7 +44,7 @@ use crate::cli::builder::TemplateRef;
 use crate::cli::handler::{Artifact, Diagnostic, Extensions, Output, RunError, RunErrorKind};
 use crate::setup::SetupError;
 use crate::Representation;
-use standout_render::ColorPolicy;
+use standout_render::{escape_style_tags, ColorPolicy};
 
 pub(crate) const CONFIG_COMMAND: &str = "config";
 
@@ -162,7 +162,7 @@ pub(crate) fn config_result_output(
     let data = if output_mode.is_structured() {
         structured
     } else {
-        json!({ "line": escape_style_tags(&line) })
+        json!({ "line": escape_style_tags(line.into()).into_owned() })
     };
     (
         Output::Render(data),
@@ -187,10 +187,6 @@ fn typed_value(value: &Value) -> serde_json::Value {
                 .collect(),
         ),
     }
-}
-
-fn escape_style_tags(text: &str) -> String {
-    text.replace('[', "\\[").replace(']', "\\]")
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, clapfig::Schema)]

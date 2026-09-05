@@ -188,6 +188,14 @@ fn failure_kind(error: &EmitError) -> RunErrorKind {
     }
 }
 
+// Rebuilt, not moved: `record_failure` borrows an error it must also return, and `io::Error` does not clone.
+fn rebuilt(error: &std::io::Error) -> std::io::Error {
+    error.raw_os_error().map_or_else(
+        || std::io::Error::new(error.kind(), error.to_string()),
+        std::io::Error::from_raw_os_error,
+    )
+}
+
 impl EventSink for EventDestination {
     fn deliver(&self, event: &serde_json::Value) -> Result<(), EmitError> {
         let Err(error) = self.write(event) else {
@@ -204,7 +212,11 @@ impl EventSink for EventDestination {
     fn record_failure(&self, error: &EmitError) {
         let mut failure = self.failure.borrow_mut();
         if failure.is_none() {
-            *failure = Some(RunError::new(error.to_string(), failure_kind(error)));
+            let recorded = RunError::new(error.to_string(), failure_kind(error));
+            *failure = Some(match error {
+                EmitError::Write(io) => recorded.with_source(rebuilt(io)),
+                EmitError::Serialize(_) | EmitError::Render(_) => recorded,
+            });
         }
     }
 }

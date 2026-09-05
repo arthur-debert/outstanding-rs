@@ -15,7 +15,10 @@
 //! assert_eq!(parser.parse("[bold]hello[/bold]"), "hello");
 //! ```
 
-use console::{AnsiCodeIterator, Style};
+pub mod ansi;
+
+use ansi::{ansi_units, AnsiBalance};
+use console::Style;
 use std::collections::HashMap;
 use std::ops::Range;
 
@@ -234,8 +237,10 @@ impl<'a> StyledText<'a> {
         let mut result = String::new();
         let mut source_stack: Vec<&str> = Vec::new();
         let mut output_stack: Vec<&str> = Vec::new();
+        let mut ansi = AnsiBalance::default();
         let mut visible_index = 0;
         let mut started = false;
+        let mut cut = false;
 
         for event in &self.events {
             match event {
@@ -272,8 +277,15 @@ impl<'a> StyledText<'a> {
                                     started = true;
                                 }
                                 result.push_str(raw);
+                                ansi.observe(raw);
                             }
                             return;
+                        }
+                        // A range covering the whole text never reaches here, so
+                        // untruncated source passes through unbalanced.
+                        if started && !cut && visible_index >= range.end {
+                            result.push_str(ansi.closing());
+                            cut = true;
                         }
                         if visible_index >= range.start && visible_index < range.end {
                             if !started {
@@ -315,11 +327,11 @@ fn visit_text_units<'a>(
     unescape_brackets: bool,
     mut visitor: impl FnMut(Option<char>, &'a str),
 ) {
-    for (unit, is_ansi) in AnsiCodeIterator::new(source) {
-        if is_ansi {
-            visitor(None, unit);
+    for unit in ansi_units(source) {
+        if unit.is_escape {
+            visitor(None, unit.text);
         } else {
-            visit_plain_text_units(unit, unescape_brackets, &mut visitor);
+            visit_plain_text_units(unit.text, unescape_brackets, &mut visitor);
         }
     }
 }
@@ -667,26 +679,25 @@ fn compute_valid_tags(tokens: &[Token<'_>]) -> std::collections::HashSet<usize> 
 // ANSI controls are skipped as terminal syntax. Byte-level scanning is safe
 // here: `\`, `[`, `]` are ASCII and cannot be UTF-8 continuation bytes.
 fn find_unescaped_bracket(s: &str) -> Option<usize> {
-    let mut source_offset = 0;
-    for (unit, is_ansi) in AnsiCodeIterator::new(s) {
-        if !is_ansi {
-            let bytes = unit.as_bytes();
-            let mut i = 0;
-            while i < bytes.len() {
-                if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                    let next = bytes[i + 1];
-                    if next == b'[' || next == b']' {
-                        i += 2;
-                        continue;
-                    }
-                }
-                if bytes[i] == b'[' {
-                    return Some(source_offset + i);
-                }
-                i += 1;
-            }
+    for unit in ansi_units(s) {
+        if unit.is_escape {
+            continue;
         }
-        source_offset += unit.len();
+        let bytes = unit.text.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                let next = bytes[i + 1];
+                if next == b'[' || next == b']' {
+                    i += 2;
+                    continue;
+                }
+            }
+            if bytes[i] == b'[' {
+                return Some(unit.offset + i);
+            }
+            i += 1;
+        }
     }
     None
 }
@@ -944,6 +955,61 @@ mod tests {
 
             assert_eq!(visible, "hello");
             assert_eq!(text.select_range(0..5), input);
+        }
+
+        #[test]
+        fn a_cut_closes_the_ansi_style_it_leaves_open() {
+            let text = StyledText::parse("\x1b[31malpha beta gamma\x1b[0m");
+            assert_eq!(text.select_range(0..7), "\x1b[31malpha b\x1b[0m");
+
+            let tagged = StyledText::parse("[row]\x1b[31malpha beta gamma\x1b[0m[/row]");
+            assert_eq!(
+                tagged.select_range(0..7),
+                "[row]\x1b[31malpha b\x1b[0m[/row]"
+            );
+        }
+
+        #[test]
+        fn a_cut_that_leaves_nothing_open_adds_no_reset() {
+            let text = StyledText::parse("\x1b[31mred\x1b[0m and plain");
+            assert_eq!(text.select_range(0..5), "\x1b[31mred\x1b[0m a");
+
+            let plain = StyledText::parse("alpha beta");
+            assert_eq!(plain.select_range(0..5), "alpha");
+        }
+
+        #[test]
+        fn a_cut_closes_the_less_common_sgr_groups_too() {
+            for opener in [
+                "\x1b[26m", "\x1b[51m", "\x1b[53m", "\x1b[60m", "\x1b[64m", "\x1b[73m", "\x1b[74m",
+            ] {
+                let source = format!("{opener}alpha beta");
+                let text = StyledText::parse(&source);
+                assert_eq!(
+                    text.select_range(0..5),
+                    format!("{opener}alpha\x1b[0m"),
+                    "{opener:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn a_cut_falling_on_a_tag_boundary_closes_the_ansi_after_the_tag() {
+            let text = StyledText::parse("[row]\x1b[31mabc[/row]def");
+            assert_eq!(text.select_range(0..3), "[row]\x1b[31mabc[/row]\x1b[0m");
+        }
+
+        #[test]
+        fn a_range_covering_the_whole_text_leaves_unbalanced_source_alone() {
+            let input = "[outer]hello[/outer]\x1b[31m";
+            let text = StyledText::parse(input);
+            assert_eq!(text.select_range(0..5), input);
+        }
+
+        #[test]
+        fn a_suffix_range_carries_no_opener_and_mints_no_reset() {
+            let text = StyledText::parse("\x1b[31malpha beta\x1b[0m");
+            assert_eq!(text.select_range(6..10), "beta\x1b[0m");
         }
 
         #[test]

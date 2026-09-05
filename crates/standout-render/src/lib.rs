@@ -72,7 +72,7 @@ pub use document::{
 };
 
 pub use util::{
-    csv_records, rgb_to_ansi256, rgb_to_truecolor, truncate_to_width,
+    csv_records, escape_style_tags, rgb_to_ansi256, rgb_to_truecolor, truncate_to_width,
     truncate_to_width_with_policy, write_csv,
 };
 
