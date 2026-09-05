@@ -59,6 +59,7 @@ pub fn emit_run_result<W: Write + ?Sized, E: Write + ?Sized>(
                     format!("Error writing binary stdout: {}", error),
                     RunErrorKind::FinalWrite(OutputKind::Binary),
                 )
+                .with_source(error)
             }),
         DispatchResult::Artifact(run) => emit_artifact(run, stdout, stderr),
         DispatchResult::Silent => None,
@@ -90,10 +91,13 @@ fn emit_failure<W: Write + ?Sized, E: Write + ?Sized>(
         writeln!(stderr, "{}", error)
     };
     if let Err(write_error) = stderr_prose.and_then(|()| stderr.flush()) {
-        return Some(RunError::new(
-            format!("Error writing stderr: {}", write_error),
-            RunErrorKind::FinalWrite(OutputKind::Text),
-        ));
+        return Some(
+            RunError::new(
+                format!("Error writing stderr: {}", write_error),
+                RunErrorKind::FinalWrite(OutputKind::Text),
+            )
+            .with_source(write_error),
+        );
     }
     if !carries_diagnostic_document(output_mode) {
         return None;
@@ -284,10 +288,13 @@ fn emit_artifact<W: Write + ?Sized, E: Write + ?Sized>(
 
     if to_stdout {
         if let Err(error) = stdout.write_all(run.bytes()).and_then(|()| stdout.flush()) {
-            return Some(RunError::new(
-                format!("Error writing artifact stdout: {}", error),
-                RunErrorKind::FinalWrite(OutputKind::Artifact),
-            ));
+            return Some(
+                RunError::new(
+                    format!("Error writing artifact stdout: {}", error),
+                    RunErrorKind::FinalWrite(OutputKind::Artifact),
+                )
+                .with_source(error),
+            );
         }
     }
 
@@ -304,6 +311,7 @@ fn emit_artifact<W: Write + ?Sized, E: Write + ?Sized>(
             format!("Error writing artifact report: {}", error),
             RunErrorKind::FinalWrite(OutputKind::Artifact),
         )
+        .with_source(error)
     })
 }
 
@@ -314,10 +322,13 @@ fn final_write_error_unless_broken_pipe(
     if kind == OutputKind::Text && error.kind() == std::io::ErrorKind::BrokenPipe {
         None
     } else {
-        Some(RunError::new(
-            format!("Error writing stdout: {}", error),
-            RunErrorKind::FinalWrite(kind),
-        ))
+        Some(
+            RunError::new(
+                format!("Error writing stdout: {}", error),
+                RunErrorKind::FinalWrite(kind),
+            )
+            .with_source(error),
+        )
     }
 }
 
@@ -726,6 +737,96 @@ mod tests {
         assert_eq!(
             stdout_report_failure.kind(),
             RunErrorKind::FinalWrite(OutputKind::Artifact)
+        );
+    }
+
+    #[test]
+    fn every_final_write_failure_carries_the_io_error_a_caller_can_inspect() {
+        fn io_kind(failure: &RunError, label: &str) -> std::io::ErrorKind {
+            std::error::Error::source(failure)
+                .and_then(|source| source.downcast_ref::<std::io::Error>())
+                .unwrap_or_else(|| panic!("{label} formats an io::Error but drops it"))
+                .kind()
+        }
+
+        let stdout_document = emit_run_result(
+            &DispatchResult::Handled(RunOutput::command("hello")),
+            Representation::Human,
+            &mut ClosedWriter,
+            &mut Vec::new(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            io_kind(&stdout_document, "text stdout"),
+            std::io::ErrorKind::Other
+        );
+
+        let binary = emit_run_result(
+            &DispatchResult::Binary(vec![0, 1], "data.bin".into()),
+            Representation::Human,
+            &mut FailingWriter,
+            &mut Vec::new(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            io_kind(&binary, "binary stdout"),
+            std::io::ErrorKind::BrokenPipe,
+            "the kind the write failed with survives, not just its prose"
+        );
+
+        let stderr = emit_run_result(
+            &DispatchResult::Error(RunError::new("Error: boom", RunErrorKind::Handler)),
+            Representation::Human,
+            &mut Vec::new(),
+            &mut ClosedWriter,
+        )
+        .unwrap_err();
+        assert_eq!(io_kind(&stderr, "stderr prose"), std::io::ErrorKind::Other);
+
+        let artifact_stdout = emit_run_result(
+            &DispatchResult::Artifact(ArtifactRun::new(
+                vec![0, 1],
+                None,
+                ArtifactReceipt::new(ArtifactDestination::Stdout, 2),
+                None,
+            )),
+            Representation::Human,
+            &mut ClosedWriter,
+            &mut Vec::new(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            io_kind(&artifact_stdout, "artifact stdout"),
+            std::io::ErrorKind::Other
+        );
+
+        let artifact_report = emit_run_result(
+            &DispatchResult::Artifact(ArtifactRun::new(
+                vec![0, 1],
+                None,
+                ArtifactReceipt::new(ArtifactDestination::File("out.bin".into()), 2),
+                Some("wrote out.bin".into()),
+            )),
+            Representation::Human,
+            &mut ClosedWriter,
+            &mut Vec::new(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            io_kind(&artifact_report, "artifact report"),
+            std::io::ErrorKind::Other
+        );
+
+        let warning_entries = emit_warning_entries(
+            &DispatchResult::Handled(RunOutput::command("hello")),
+            &["careful".to_string()],
+            Representation::Ndjson,
+            &mut ClosedWriter,
+        )
+        .unwrap_err();
+        assert_eq!(
+            io_kind(&warning_entries, "warning entries"),
+            std::io::ErrorKind::Other
         );
     }
 }

@@ -482,6 +482,7 @@ impl App {
                         format!("Error writing output: {}", e),
                         RunErrorKind::FinalWrite(OutputKind::Text),
                     )
+                    .with_source(e)
                 })?;
                 sink.redirect(file);
             } else {
@@ -634,28 +635,37 @@ impl App {
                         .and_then(|()| file.flush())
                     });
                     if let Err(e) = written {
-                        return DispatchResult::Error(RunError::new(
-                            format!("Error writing output: {}", e),
-                            RunErrorKind::FinalWrite(OutputKind::Text),
-                        ));
+                        return DispatchResult::Error(
+                            RunError::new(
+                                format!("Error writing output: {}", e),
+                                RunErrorKind::FinalWrite(OutputKind::Text),
+                            )
+                            .with_source(e),
+                        );
                     }
                     final_output = RenderedOutput::Silent;
                 }
                 RenderedOutput::Text(t) => {
                     if let Err(e) = write_output(&t.formatted, &dest) {
-                        return DispatchResult::Error(RunError::new(
-                            format!("Error writing output: {}", e),
-                            RunErrorKind::FinalWrite(OutputKind::Text),
-                        ));
+                        return DispatchResult::Error(
+                            RunError::new(
+                                format!("Error writing output: {}", e),
+                                RunErrorKind::FinalWrite(OutputKind::Text),
+                            )
+                            .with_source(e),
+                        );
                     }
                     final_output = RenderedOutput::Silent;
                 }
                 RenderedOutput::Binary(b, _) => {
                     if let Err(e) = write_binary_output(b, &dest) {
-                        return DispatchResult::Error(RunError::new(
-                            format!("Error writing output: {}", e),
-                            RunErrorKind::FinalWrite(OutputKind::Binary),
-                        ));
+                        return DispatchResult::Error(
+                            RunError::new(
+                                format!("Error writing output: {}", e),
+                                RunErrorKind::FinalWrite(OutputKind::Binary),
+                            )
+                            .with_source(e),
+                        );
                     }
                     final_output = RenderedOutput::Silent;
                 }
@@ -1076,6 +1086,7 @@ impl App {
                             format!("Error writing output: {}", error),
                             RunErrorKind::FinalWrite(OutputKind::Text),
                         )
+                        .with_source(error)
                     })
             });
         let paged = help_to_file.is_none() && self.page_delivery(&result);
@@ -1612,10 +1623,13 @@ impl App {
         if let ArtifactDestination::File(path) = &destination {
             let dest = OutputDestination::File(path.clone());
             if let Err(e) = write_binary_output(&artifact.bytes, &dest) {
-                return DispatchResult::Error(RunError::new(
-                    format!("Error writing artifact: {}", e),
-                    RunErrorKind::FinalWrite(OutputKind::Artifact),
-                ));
+                return DispatchResult::Error(
+                    RunError::new(
+                        format!("Error writing artifact: {}", e),
+                        RunErrorKind::FinalWrite(OutputKind::Artifact),
+                    )
+                    .with_source(e),
+                );
             }
         }
 

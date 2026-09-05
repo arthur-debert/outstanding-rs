@@ -512,10 +512,13 @@ pub(crate) fn render_questions_result(
     let sub_matches = get_deepest_matches(matches);
     if let Some(path) = sub_matches.get_one::<String>(QUESTIONS_FILE_ARG_ID) {
         if let Err(error) = std::fs::write(path, sheet) {
-            return crate::cli::handler::DispatchResult::Error(RunError::new(
-                format!("Error writing questionnaire answer sheet: {error}"),
-                RunErrorKind::FinalWrite(crate::cli::handler::OutputKind::Text),
-            ));
+            return crate::cli::handler::DispatchResult::Error(
+                RunError::new(
+                    format!("Error writing questionnaire answer sheet: {error}"),
+                    RunErrorKind::FinalWrite(crate::cli::handler::OutputKind::Text),
+                )
+                .with_source(error),
+            );
         }
         crate::cli::handler::DispatchResult::Handled(crate::cli::handler::RunOutput::command(
             String::new(),

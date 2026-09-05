@@ -383,6 +383,9 @@ struct EmittedRun {
     handled: bool,
     status: u8,
     failure: String,
+    /// The `ErrorKind` of the `io::Error` beneath the failure, `none` when the
+    /// failure carries no source and `not-io` when it carries something else.
+    source: String,
 }
 
 /// The fixture writes the outcome it was handed to a file and exits with the reported status.
@@ -412,15 +415,17 @@ fn run_emitted(
     let outcome = std::fs::read_to_string(&outcome_path)
         .expect("run_emitted returned, so the caller's post-emission write happened");
     let (reported, failure) = outcome.split_once("\nfailure=").unwrap();
-    let (handled, status) = reported
+    let (handled, rest) = reported
         .strip_prefix("handled=")
         .and_then(|rest| rest.split_once(" status="))
         .unwrap();
+    let (status, source) = rest.split_once(" source=").unwrap();
     EmittedRun {
         output,
         handled: handled.parse().unwrap(),
         status: status.parse().unwrap(),
         failure: failure.to_string(),
+        source: source.to_string(),
     }
 }
 
@@ -621,6 +626,12 @@ fn emitted_edge_hands_the_caller_the_final_write_failure_it_computed() {
         "the caller sees the cause beneath it, got {:?}",
         broken.failure
     );
+    assert_eq!(
+        broken.source, "BrokenPipe",
+        "the caller downcasts `source()` to `io::Error` and branches on its kind \
+         rather than matching prose, got {:?}",
+        broken.source
+    );
 
     let handler_failure = run_emitted(&binary, &["fail"], None, false);
     assert_eq!(handler_failure.status, 1);
@@ -628,8 +639,10 @@ fn emitted_edge_hands_the_caller_the_final_write_failure_it_computed() {
         handler_failure.failure, "",
         "an ordinary status-1 exit carries no final-write failure"
     );
+    assert_eq!(handler_failure.source, "none");
 
     let success = run_emitted(&binary, &["ok"], None, false);
     assert_eq!(success.status, 0);
     assert_eq!(success.failure, "");
+    assert_eq!(success.source, "none");
 }

@@ -238,12 +238,25 @@ fn main() {
             .map_or_else(String::new, |error| {
                 format!("{:?}: {}", error.kind(), error)
             });
+        let source = outcome
+            .final_write_failure
+            .as_ref()
+            .and_then(std::error::Error::source)
+            .map_or_else(
+                || "none".to_string(),
+                |source| {
+                    source
+                        .downcast_ref::<std::io::Error>()
+                        .map_or_else(|| "not-io".to_string(), |io| format!("{:?}", io.kind()))
+                },
+            );
         std::fs::write(
             std::env::var_os(OUTCOME_PATH_ENV).unwrap(),
             format!(
-                "handled={} status={}\nfailure={}",
+                "handled={} status={} source={}\nfailure={}",
                 outcome.handled,
                 outcome.status.code(),
+                source,
                 failure
             ),
         )
