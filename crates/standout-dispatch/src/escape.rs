@@ -1,11 +1,14 @@
+use std::fmt::Write;
+
 pub(crate) fn escape_control_characters(text: String) -> String {
-    if !text.chars().any(needs_escape) {
+    let Some(first) = text.find(needs_escape) else {
         return text;
-    }
+    };
     let mut escaped = String::with_capacity(text.len());
-    for character in text.chars() {
+    escaped.push_str(&text[..first]);
+    for character in text[first..].chars() {
         if needs_escape(character) {
-            escaped.push_str(&format!("\\u{{{:x}}}", character as u32));
+            let _ = write!(escaped, "\\u{{{:x}}}", character as u32);
         } else {
             escaped.push(character);
         }
@@ -45,5 +48,22 @@ mod tests {
         );
         let plain = "nothing to escape — même en unicode";
         assert_eq!(escape_control_characters(plain.to_string()), plain);
+    }
+
+    #[test]
+    fn text_with_nothing_to_escape_comes_back_as_the_same_allocation() {
+        let untouched = "first\nsecond\tthird — même en unicode".to_string();
+        let address = untouched.as_ptr();
+        let returned = escape_control_characters(untouched);
+        assert_eq!(returned, "first\nsecond\tthird — même en unicode");
+        assert_eq!(returned.as_ptr(), address);
+    }
+
+    #[test]
+    fn multibyte_text_before_the_first_escape_survives() {
+        assert_eq!(
+            escape_control_characters("même\u{1b}]0;pwned\u{7}après".to_string()),
+            "même\\u{1b}]0;pwned\\u{7}après"
+        );
     }
 }
