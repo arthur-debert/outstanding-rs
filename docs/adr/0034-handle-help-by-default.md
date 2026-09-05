@@ -21,7 +21,7 @@ The three "requires `.help_handling(true)`" errors — for `command_groups`, `to
 
 **Leaving the default off and documenting it better.** This is the state the census measured. Every guide would have to teach a call that every application makes, the wizard would have to emit it, and the framework's own examples would still be the place a reader learns that its flagship feature is optional.
 
-**Removing `help_handling` entirely, so help is always Standout's.** It strands the application that cannot rename a `help` command it already ships, and the application whose help page must stay byte-compatible with a tool it replaces — the `gitlike` and `ghlike` shapes from the corpus. It also converts today's loud, actionable build failure into an unfixable one. Under ADR-0032's rule the opt-out survives because it names a capability nothing else covers.
+**Removing `help_handling` entirely, so help is always Standout's.** It strands the application that cannot rename a `help` command it already ships, and the application whose help page must stay byte-compatible with a tool it replaces — the `gitlike` and `ghlike` shapes from the blind-adopter pilot. It also converts today's loud, actionable build failure into an unfixable one. Under ADR-0032's rule the opt-out survives because it names a capability nothing else covers.
 
 **Detecting a collision and falling back to clap's help silently.** It removes the migration's only sharp edge by reintroducing exactly the class this epic exists to delete: two documented paths, one silently chosen, and an adopter who cannot tell which they got. The `SetupError` is the feature.
 

@@ -10,15 +10,9 @@ own dependencies; where any statement disagrees with this graph, this graph wins
 ```text
 test net
 ├── loud failures
-├── corpus PILOT ────────────────────────────┐   (3–4 in-capability archetypes;
-│   └── gap-spec suites ───────────────┐     │    also authors the red gap-spec suites)
+├── blind-adopter PILOT ─────────────────────┐   (3–4 in-capability archetypes)
 └── composition contracts              │     │
-    ├── one blessed surface ◄──────────│─────┘   (consumes the pilot's scorecard)
-    │   └── corpus COMPLETION          │         (ROB07; the re-run, produced apps, CI gate
-    │                                  │          and lookma port wait for BOTH blessed
-    │                                  │          surface — as a published release — and
-    │                                  │          adopter seams; the validity run and
-    │                                  │          spec-only archetype authoring may go first)
+    ├── one blessed surface ◄──────────│─────┘   (consumes the pilot's findings)
     ├── adopter seams                  │         (ROB06; minted 2026-08-30 from the pilot's
     │                                  │          escape-hatch findings, parallel to ROB05)
     └── parity: config layering        │
@@ -29,17 +23,8 @@ test net
                                                   event model its incremental results ride)
 ```
 
-The corpus is deliberately split. Its **pilot** runs early (immediately after the test net,
-alongside loud failures and composition contracts) so its findings reach the
-blessed-surface decisions, and it also authors the **gap-spec acceptance suites**
-(`tflike`, `jjlike`) as expected-fail — those are black-box assertions on a produced
-binary's stdout and exit codes, so they neither wait on the blessed idioms nor on the
-capabilities they describe, and each parity epic must have its executable
-definition-of-done in hand before it starts. Corpus **completion** — the full archetype
-roster implemented on the blessed idioms, the CI gate, real downstreams joined — lands
-after the blessed surface, since corpus apps pin idioms that epic deliberately breaks;
-only its validity run and its spec-only archetype authoring, which produce no app, may
-start before the release.
+The blind-adopter **pilot** runs early (immediately after the test net, alongside loud
+failures and composition contracts) so its findings reach the blessed-surface decisions.
 Typed command output (`docs/spec/implemented/typed-command-output.md`) depends on machine contract,
 not merely on config layering: its incremental result events ride the model that epic
 defines. Ordering is by
@@ -128,7 +113,6 @@ distinguished from a regression.
   postcondition fix — may ride along where separating them would be artificial.)
 - Redesigning the test suite wholesale or migrating existing passing tests to the new
   style. New oracles are added beside what exists.
-- Building the downstream corpus (own Spec).
 - De-serializing the `#[serial]` test suite — that requires removing the process globals,
   which is composition-contracts work.
 
@@ -219,7 +203,7 @@ postconditions + env-convention pins. (2) and (3) parallelize after (1).
 ## Out Of Scope
 
 Behavioral fixes (loud-failures Spec), pipeline consolidation (composition-contracts
-Spec), corpus construction (`docs/spec/implemented/robustness-corpus.md`), test de-serialization.
+Spec), test de-serialization.
 
 ## Further Notes
 

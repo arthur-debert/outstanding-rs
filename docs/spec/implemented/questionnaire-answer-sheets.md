@@ -202,4 +202,4 @@ These are planning hints only; issue decomposition happens after the Spec and AD
 
 ## Further Notes
 
-- [ADR-0014: Adopt prose answer sheets with stable identities](../adr/0014-adopt-prose-answer-sheets-with-stable-identities.md)
+- [ADR-0014: Adopt prose answer sheets with stable identities](../../adr/0014-adopt-prose-answer-sheets-with-stable-identities.md)

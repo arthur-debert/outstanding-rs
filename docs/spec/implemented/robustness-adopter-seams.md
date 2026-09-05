@@ -1,11 +1,9 @@
 # Robustness: Adopter Seams
 
-Sixth epic of the **Robustness program** (ROB06), minted 2026-08-30 from the corpus pilot's
-fallout. Depends on composition contracts (ROB04) — every item below sits on a seam that
+Sixth epic of the **Robustness program** (ROB06), minted 2026-08-30 from the blind-adopter
+pilot's fallout. Depends on composition contracts (ROB04) — every item below sits on a seam that
 epic defined. Runs in parallel with the blessed surface (ROB05), which reads this Spec
-before pruning so the two do not fight over `AppBuilder` and `Output`. Precedes corpus
-completion: the re-run's DX metric only moves if the workarounds the pilot recorded are
-no longer needed.
+before pruning so the two do not fight over `AppBuilder` and `Output`.
 
 ## Context
 
@@ -14,9 +12,8 @@ exit statuses require application-owned escape paths*. Every adopter reached a p
 where the framework owned a decision (exit status, stderr bytes, output mode, the
 confirmation prompt, the answer-sheet format, column widths) and exposed no way to
 make it, so the app rewrote argv, set `CLICOLOR_FORCE`, wrote its own bytes outside
-dispatch, or used `ExternalFailure` against its documented purpose. The
-[ROB03 Spec](implemented/robustness-corpus.md) said findings would flow through normal
-triage; two epics later, none has. This Spec is the home. Everything in it is a filed,
+dispatch, or used `ExternalFailure` against its documented purpose. The pilot said
+findings would flow through normal triage; two epics later, none has. This Spec is the home. Everything in it is a filed,
 transcript-anchored finding re-verified on `main` at 1642d4e (2026-08-31, the 9.0.0
 release commit — the anchors below survived the ROB05 prune); there is no design
 ambiguity in *what* is wrong, only small choices in *how* to expose each seam.
@@ -93,8 +90,8 @@ concept beyond the seam itself.
 - The machine-mode error envelope, ANSI presentation, the pager, incremental results and
   operational verbosity (the parity program, `docs/spec/implemented/typed-command-output.md`). #356
   gives the *app* a mode setter; the *user*-facing presentation setting is that Spec's.
-- Fixing the corpus archetype implementations produced by the pilot (they are not
-  committed) or re-running the pilot (corpus completion).
+- Fixing the implementations the pilot produced (they are not committed) or re-running
+  the pilot.
 - #408/#409 (XML serializer) and #336 (lint hook) — ordinary maintenance, not adopter
   seams.
 
@@ -135,9 +132,7 @@ failing invocation and asserts the specified bytes/status.
 Per finding: a regression test at the crate that owns the seam, plus one `TestHarness`
 test in `standout` that replays the pilot invocation from the transcript link in the
 issue. #334's fix deletes an allowlist entry in the clap-parity differential, which is
-the proof. The systemdlike and formlike archetype suites (`corpus/archetypes/*/acceptance.toml`)
-are unchanged — they are black-box and already assert the behavior these seams enable;
-the corpus completion re-run is the end-to-end check.
+the proof.
 
 ## Workstream Hints
 
@@ -151,7 +146,7 @@ the doc sweep and will pick up these paragraphs in its truth pass).
 
 ## Further Notes
 
-Source: the [pilot scorecard](../../corpus/pilot/scorecard.md) theme 2, and
+Source: the pilot's second friction theme, and
 issues #351, #352, #353, #354, #356, #357, #359, #334, each verified against `main`
 on 2026-08-30. No grill round is planned: each item is a review outcome with a filed
 mechanism. One ADR is expected — the app-owned status/diagnostic seam (#357), because it
