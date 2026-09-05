@@ -1121,7 +1121,7 @@ impl App {
         }
         drop(stderr);
 
-        if !crate::cli::warnings_delivered_on_stdout(result.outcome(), output_mode) {
+        if !crate::cli::emit::warnings_delivered_on_stdout(result.outcome(), output_mode) {
             standout_render::warnings::flush_to_stderr(
                 &self.theme,
                 result.color_policy(),

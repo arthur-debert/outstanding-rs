@@ -8,7 +8,10 @@ use standout::ColorPolicy;
 use standout::EmbeddedTemplates;
 use standout::Theme;
 use standout_render::Representation;
-use standout_test::{assert_page_snapshot, SnapshotCase, TestHarness};
+use standout_test::TestHarness;
+
+mod common;
+use common::{assert_page_snapshot, SnapshotCase};
 
 const TEMPLATES: &[(&str, &str)] = &[
     (

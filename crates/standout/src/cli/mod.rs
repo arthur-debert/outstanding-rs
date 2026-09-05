@@ -64,10 +64,11 @@ pub use handler::{
 
 pub use help::{HelpArg, HelpDocument, HelpSubcommand};
 
+#[cfg(feature = "test-support")]
+pub use emit::warnings_delivered_on_stdout;
 pub use emit::{
     carries_diagnostic_document, carries_warning_entries, emit_run_result, emit_warning_entries,
-    parse_diagnostic, render_diagnostic, warning_records, warnings_delivered_on_stdout,
-    DiagnosticDocumentError,
+    parse_diagnostic, render_diagnostic, warning_records, DiagnosticDocumentError,
 };
 
 pub use hooks::{ArtifactOutput, HookError, HookPhase, Hooks, RenderedOutput};

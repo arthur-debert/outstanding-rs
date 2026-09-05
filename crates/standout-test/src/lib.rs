@@ -9,8 +9,7 @@
 //! result values as data ([`TestResult::result`]), the rendered bytes
 //! ([`TestResult::stdout`]) and the delivery decision
 //! ([`TestResult::delivery`]) separately, plus structured facts like style-tag
-//! resolutions that a text search can't get at; [`assert_page_snapshot!`]
-//! and [`matrix`] pin a rendered page across representation/color/theme cells.
+//! resolutions that a text search can't get at.
 //!
 //! There is no in-process TTY simulation: [`TestHarness::run_process`]
 //! spawns the real binary and [`TestHarness::run_pty`] (Unix) gives it a
@@ -33,16 +32,12 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tempfile::TempDir;
-mod matrix;
 mod process;
 #[cfg(unix)]
-pub mod pty;
+mod pty;
 mod schema;
-mod snapshot;
-pub use matrix::{matrix, MatrixCell};
 pub use process::ProcessResult;
 pub use serial_test::serial;
-pub use snapshot::SnapshotCase;
 pub use standout_render::TagResolution;
 #[derive(Debug, Clone)]
 enum StdinMode {
