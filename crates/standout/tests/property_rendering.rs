@@ -169,15 +169,29 @@ fn assert_styling_preserves_layout_in_pages(styled_stripped: &str, plain: &str) 
     if styled_stripped == plain {
         return;
     }
-    let mismatch = styled_stripped
-        .lines()
-        .zip(plain.lines())
-        .position(|(l, r)| l != r)
-        .map(|index| index + 1);
+    let mut styled_lines = styled_stripped.lines();
+    let mut plain_lines = plain.lines();
+    let mut line_number = 0;
+    let detail = loop {
+        line_number += 1;
+        match (styled_lines.next(), plain_lines.next()) {
+            (None, None) => {
+                break "every line matches; the pages differ only in trailing line endings"
+                    .to_string();
+            }
+            (l, r) if l != r => {
+                break format!(
+                    "first difference at line {line_number}:\n  styled (stripped): {:?}\n  plain            : {:?}",
+                    l.unwrap_or("<end of page>"),
+                    r.unwrap_or("<end of page>")
+                );
+            }
+            _ => {}
+        }
+    };
     panic!(
-        "styling changed the page beyond color; first difference at line {:?}\n\
-         --- styled (stripped) ---\n{}\n--- plain ---\n{}\n-------------",
-        mismatch, styled_stripped, plain
+        "styling changed the page beyond color; {detail}\n\
+         --- styled (stripped) ---\n{styled_stripped}\n--- plain ---\n{plain}\n-------------"
     );
 }
 

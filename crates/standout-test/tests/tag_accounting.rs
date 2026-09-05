@@ -5,6 +5,7 @@ use serial_test::serial;
 use standout::cli::FnHandler;
 use standout::cli::{App, DispatchResult, Output};
 use standout::EmbeddedTemplates;
+use standout::{AmbiguousWidth, ColorMode, IconMode, TargetProperties};
 use standout::Theme;
 use standout_fixtures::downstream;
 use standout_render::{Representation, TagResolution};
@@ -23,6 +24,18 @@ fn fixture_help(mode: Representation) -> TestResult {
         .stdout_is_terminal(false)
         .output_mode(mode)
         .run(fixture.app(), fixture.command(), ["lookma", "--help"])
+}
+fn piped_target() -> TargetProperties {
+    TargetProperties {
+        width: Some(80),
+        stdout_is_terminal: false,
+        stderr_is_terminal: false,
+        stdout_color_capability: false,
+        stderr_color_capability: false,
+        color_scheme: ColorMode::Dark,
+        icon_mode: IconMode::Classic,
+        ambiguous_width: AmbiguousWidth::Narrow,
+    }
 }
 fn undefined_tag_app() -> App {
     App::builder()
@@ -140,7 +153,7 @@ fn nesting_app() -> App {
                 let inner = embedded_app().run_with(
                     Command::new("inner").subcommand(Command::new("emit")),
                     ["inner", "emit"],
-                    standout::TargetProperties::detect(),
+                    piped_target(),
                     standout::InputSources::from_process(),
                 );
                 let embedded = match inner.outcome() {
@@ -196,7 +209,7 @@ fn discarding_app() -> App {
                 let discarded = embedded_app().run_with(
                     Command::new("inner").subcommand(Command::new("emit")),
                     ["inner", "emit"],
-                    standout::TargetProperties::detect(),
+                    piped_target(),
                     standout::InputSources::from_process(),
                 );
                 assert!(
