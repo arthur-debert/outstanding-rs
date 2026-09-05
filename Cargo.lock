@@ -1898,7 +1898,7 @@ dependencies = [
 
 [[package]]
 name = "standout"
-version = "12.0.0"
+version = "12.0.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1931,7 +1931,7 @@ dependencies = [
 
 [[package]]
 name = "standout-bbparser"
-version = "12.0.0"
+version = "12.0.1"
 dependencies = [
  "console",
  "proptest",
@@ -1939,7 +1939,7 @@ dependencies = [
 
 [[package]]
 name = "standout-dispatch"
-version = "12.0.0"
+version = "12.0.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1951,7 +1951,7 @@ dependencies = [
 
 [[package]]
 name = "standout-docs"
-version = "12.0.0"
+version = "12.0.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1962,7 +1962,7 @@ dependencies = [
 
 [[package]]
 name = "standout-fixtures"
-version = "12.0.0"
+version = "12.0.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1974,7 +1974,7 @@ dependencies = [
 
 [[package]]
 name = "standout-input"
-version = "12.0.0"
+version = "12.0.1"
 dependencies = [
  "clap",
  "inquire",
@@ -1987,7 +1987,7 @@ dependencies = [
 
 [[package]]
 name = "standout-macros"
-version = "12.0.0"
+version = "12.0.1"
 dependencies = [
  "heck",
  "proc-macro-crate 3.5.0",
@@ -2005,7 +2005,7 @@ dependencies = [
 
 [[package]]
 name = "standout-pipe"
-version = "12.0.0"
+version = "12.0.1"
 dependencies = [
  "tempfile",
  "thiserror 2.0.20",
@@ -2014,7 +2014,7 @@ dependencies = [
 
 [[package]]
 name = "standout-render"
-version = "12.0.0"
+version = "12.0.1"
 dependencies = [
  "console",
  "cssparser",
@@ -2038,7 +2038,7 @@ dependencies = [
 
 [[package]]
 name = "standout-seeker"
-version = "12.0.0"
+version = "12.0.1"
 dependencies = [
  "proptest",
  "regex",
@@ -2047,7 +2047,7 @@ dependencies = [
 
 [[package]]
 name = "standout-test"
-version = "12.0.0"
+version = "12.0.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2136,7 +2136,7 @@ checksum = "c3a6bfce3d99adfa72d24750a61f782f3036a81e7f86d8841ee1326deaebd171"
 
 [[package]]
 name = "tdoo"
-version = "12.0.0"
+version = "12.0.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2241,7 +2241,7 @@ dependencies = [
 
 [[package]]
 name = "todo-core"
-version = "12.0.0"
+version = "12.0.1"
 dependencies = [
  "anyhow",
  "serde",

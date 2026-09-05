@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+## 12.0.1 - 2026-09-05
+
+- The corpus ADRs, specs and cross-references are gone from the documentation; the blind-adopter pilot findings (#349–#361) stay cited by issue number.
+- The corpus runner, the archetype roster, the gap suites and the committed run evidence moved verbatim to [arthur-debert/standout-corpus](https://github.com/arthur-debert/standout-corpus); the per-PR `corpus` workflow is gone from this repository.
+
 ## 12.0.0 - 2026-09-04
 
 - **Breaking:** `--output` names a structured encoding only: `json`, `yaml`, `csv`, `ndjson`, plus the diagnostic `term-debug`. `term`, `text` and `auto` are gone from the flag and from `[term] output`; passing one is a clap usage error, exit `2`. With no `--output` the run renders the human template, which has no flag value. `OutputMode` is replaced by `Representation` (what the run produces) and `StyleMode` (whether human text carries ANSI), so no public type combines the two. See [Output Modes](docs/topics/output-modes.md) (for #511, #513).
