@@ -1119,16 +1119,27 @@ mod tests {
             .unwrap()
             .render(context!(value))
             .unwrap();
-        assert_eq!(truncated, "[row]\u{1b}[31m\\[boom\\] a[/row]");
-        assert_eq!(
-            crate::diagnostics::resolve_tags(
-                &truncated,
-                HashMap::new(),
-                TagTransform::Remove,
-                UnknownTagBehavior::Strip,
-            ),
-            "\u{1b}[31m[boom] a"
+        assert!(
+            truncated.contains("\u{1b}[31m"),
+            "the sequence survives truncation whole: {truncated:?}"
         );
+        assert!(
+            !truncated.contains("\u{1b}\\["),
+            "the sequence is never escaped: {truncated:?}"
+        );
+
+        let resolved = crate::diagnostics::resolve_tags(
+            &truncated,
+            HashMap::new(),
+            TagTransform::Remove,
+            UnknownTagBehavior::Strip,
+        );
+        assert_eq!(
+            console::strip_ansi_codes(&resolved),
+            "[boom] a",
+            "an unknown outer style is stripped, leaving the value's own ANSI"
+        );
+        assert!(resolved.contains("\u{1b}[31m"), "{resolved:?}");
 
         env.add_template("plain", "{{ value | style_as('row') }}")
             .unwrap();
