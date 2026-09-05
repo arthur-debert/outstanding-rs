@@ -1,5 +1,5 @@
 use crate::setup::SetupError;
-use clap::Command;
+use clap::{Arg, Command};
 use standout_dispatch::verify::{verify_handler_args, ExpectedArg};
 use std::collections::HashMap;
 
@@ -35,21 +35,33 @@ pub(crate) fn find_canonical_subcommand_recursive<'a>(
     Some(current)
 }
 
-pub(crate) fn declared_surfaces_built(cmd: &Command) -> Command {
-    let mut built = cmd.clone();
-    suppress_generated_surfaces(&mut built);
-    built.build();
-    built
+pub(crate) fn with_globals_propagated(cmd: &Command) -> Command {
+    let mut propagated = cmd.clone();
+    propagate_globals(&mut propagated);
+    propagated
 }
 
-fn suppress_generated_surfaces(cmd: &mut Command) {
-    let declared = std::mem::take(cmd);
-    *cmd = declared
-        .disable_help_flag(true)
-        .disable_version_flag(true)
-        .disable_help_subcommand(true);
+fn propagate_globals(cmd: &mut Command) {
+    let globals: Vec<Arg> = cmd
+        .get_arguments()
+        .filter(|arg| arg.is_global_set())
+        .cloned()
+        .collect();
+
     for sub in cmd.get_subcommands_mut() {
-        suppress_generated_surfaces(sub);
+        let inherited: Vec<Arg> = globals
+            .iter()
+            .filter(|global| {
+                !sub.get_arguments()
+                    .any(|declared| declared.get_id() == global.get_id())
+            })
+            .cloned()
+            .collect();
+        if !inherited.is_empty() {
+            let declared = std::mem::take(sub);
+            *sub = declared.args(inherited);
+        }
+        propagate_globals(sub);
     }
 }
 

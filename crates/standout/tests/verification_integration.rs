@@ -54,9 +54,8 @@ fn test_verification_failure_missing_arg() {
 
 #[test]
 fn test_verification_failure_wrong_type() {
-    let cmd_def = Command::new("app").subcommand(
-        Command::new("test").arg(Arg::new("foo").long("foo").action(ArgAction::SetTrue)),
-    );
+    let cmd_def = Command::new("app")
+        .subcommand(Command::new("test").arg(Arg::new("foo").action(clap::ArgAction::SetTrue)));
 
     let app = App::builder()
         .command_with("test", my_verified_handler_Handler, |config| {
@@ -156,11 +155,9 @@ fn scoped_handler(
 
 #[test]
 fn test_verification_reads_a_parent_global_arg() {
-    let cmd_def = Command::new("app").subcommand(
-        Command::new("config")
-            .arg(Arg::new("scope").long("scope").global(true))
-            .subcommand(Command::new("list")),
-    );
+    let cmd_def = Command::new("app")
+        .arg(Arg::new("scope").long("scope").global(true))
+        .subcommand(Command::new("config").subcommand(Command::new("list")));
 
     let app = App::builder()
         .command_with("config.list", scoped_handler_Handler, |config| {
@@ -221,4 +218,22 @@ fn test_verification_rejects_handler_args_named_after_claps_generated_flags() {
     assert!(msg.contains("verification failed"), "{msg}");
     assert!(msg.contains("`help`"), "{msg}");
     assert!(msg.contains("`version`"), "{msg}");
+}
+
+#[test]
+fn test_verification_reads_a_parent_global_arg_on_a_prebuilt_command() {
+    let mut cmd_def = Command::new("app")
+        .arg(Arg::new("scope").long("scope").global(true))
+        .subcommand(Command::new("config").subcommand(Command::new("list")));
+    cmd_def.build();
+
+    let app = App::builder()
+        .command_with("config.list", scoped_handler_Handler, |config| {
+            config.structured_only()
+        })
+        .unwrap()
+        .build()
+        .unwrap();
+
+    assert!(app.verify_command(&cmd_def).is_ok());
 }
