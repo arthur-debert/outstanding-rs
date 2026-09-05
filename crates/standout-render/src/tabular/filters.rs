@@ -189,8 +189,7 @@ pub(crate) fn register_tabular_filters_with_source(
     });
 
     env.add_filter("style_as", |value: Value, style: String| -> String {
-        let stringified = stringify(&value);
-        let text = escape_style_tags(&stringified);
+        let text = escape_style_tags(stringify(&value));
         if style.is_empty() {
             text.into_owned()
         } else {
@@ -1121,11 +1120,15 @@ mod tests {
             .unwrap();
         assert!(
             truncated.contains("\u{1b}[31m"),
-            "the sequence survives truncation whole: {truncated:?}"
+            "the sequence is not escaped: {truncated:?}"
         );
+        let sequences_are_whole = |text: &str| {
+            console::AnsiCodeIterator::new(text)
+                .all(|(unit, is_ansi)| !is_ansi || unit.ends_with('m'))
+        };
         assert!(
-            !truncated.contains("\u{1b}\\["),
-            "the sequence is never escaped: {truncated:?}"
+            sequences_are_whole(&truncated),
+            "truncation split a sequence: {truncated:?}"
         );
 
         let resolved = crate::diagnostics::resolve_tags(
@@ -1139,7 +1142,10 @@ mod tests {
             "[boom] a",
             "an unknown outer style is stripped, leaving the value's own ANSI"
         );
-        assert!(resolved.contains("\u{1b}[31m"), "{resolved:?}");
+        assert!(
+            sequences_are_whole(&resolved),
+            "tag resolution split a sequence: {resolved:?}"
+        );
 
         env.add_template("plain", "{{ value | style_as('row') }}")
             .unwrap();
