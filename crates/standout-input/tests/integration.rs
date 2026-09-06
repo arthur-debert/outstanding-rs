@@ -415,8 +415,6 @@ fn config_source_without_value_is_skipped() {
     assert_eq!(result.source, InputSourceKind::Default);
 }
 
-/// A command that reads stdin only on request: `--stdin` decides availability,
-/// `bind_sources` decides which stdin gets read.
 struct RequestedStdin {
     inner: StdinSource,
 }
@@ -487,4 +485,46 @@ fn wrapped_stdin_is_skipped_when_not_requested() {
     let result = chain.resolve_from_with_source(&matches, &sources).unwrap();
     assert_eq!(result.value, "from default");
     assert_eq!(result.source, InputSourceKind::Default);
+}
+
+struct UnboundStdin {
+    inner: StdinSource,
+}
+
+impl InputCollector<String> for UnboundStdin {
+    fn name(&self) -> &'static str {
+        "stdin"
+    }
+
+    fn is_available(&self, matches: &ArgMatches) -> bool {
+        self.inner.is_available(matches)
+    }
+
+    fn collect(&self, matches: &ArgMatches) -> Result<Option<String>, InputError> {
+        self.inner.collect(matches)
+    }
+
+    fn bind_sources(&self, _sources: &InputSources) -> Option<Box<dyn InputCollector<String>>> {
+        None
+    }
+}
+
+#[test]
+fn a_wrapper_that_returns_none_from_bind_sources_fails_naming_it() {
+    let matches = create_test_command()
+        .try_get_matches_from(["test"])
+        .unwrap();
+    let sources = InputSources::from_process().with_stdin(MockStdin::piped("piped payload"));
+
+    let chain = InputChain::<String>::new()
+        .try_source(UnboundStdin {
+            inner: StdinSource::new(),
+        })
+        .default("from default".to_string());
+
+    let err = chain
+        .resolve_from_with_source(&matches, &sources)
+        .unwrap_err();
+    assert!(matches!(err, InputError::StdinNotBound));
+    assert!(err.to_string().contains("bind_sources"));
 }

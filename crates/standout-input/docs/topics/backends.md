@@ -44,7 +44,7 @@ pub trait InputCollector<T>: Send + Sync {
 
 The chain calls `bind_sources()` first, handing it the [`InputSources`](input-sources.md) the run was given, and works with the returned collector when there is one. Then it calls `is_available()`; if that returns `false`, the source is skipped. Otherwise `collect()` is called. If validation fails and `can_retry()` is `true`, the source is retried (for interactive sources).
 
-`bind_sources` has no default: every collector states what it does with the run's sources, so a collector that reads stdin, the clipboard or a prompt cannot silently keep reading the process's own. A collector whose value does not come from any of the three — an argument, an environment variable, a config value, a default — returns `None`. A collector that wraps another one returns a rebuilt copy of itself holding the bound inner collector; returning `None` there leaves the inner collector on the process's streams, which under a `TestHarness` means blocking on the test binary's stdin.
+`bind_sources` has no default: every collector states what it does with the run's sources, so a collector that reads stdin, the clipboard or a prompt cannot silently keep reading the process's own. A collector whose value does not come from any of the three — an argument, an environment variable, a config value, a default — returns `None`. A collector that wraps another one returns a rebuilt copy of itself holding the bound inner collector; returning `None` there leaves a wrapped `StdinSource` with no reader, and collecting from it fails with `InputError::StdinNotBound`, a message that names `bind_sources`.
 
 Upgrading a collector written against an earlier release: add `bind_sources` returning `None`, unless it wraps or holds one of the built-in stdin, clipboard or prompt sources, in which case rebuild it over `sources`.
 
@@ -98,10 +98,12 @@ let source = StdinSource::new();
 let source = StdinSource::new().trim(false);  // Don't trim whitespace
 ```
 
+`StdinSource::new()` carries no reader; the chain gives it one through `bind_sources`, from the `InputSources` the run was handed. A source that never reaches that call — used outside a chain, or held by a wrapping collector whose `bind_sources` returns `None` — fails rather than falling back to the process's own stdin. `with_reader` and `with_shared_reader` supply a reader directly, and the chain leaves such a source alone.
+
 **Behavior:**
 
-- `is_available()`: Returns `true` if stdin is piped (not a terminal)
-- `collect()`: Reads all stdin content, returns `None` if empty
+- `is_available()`: Returns `true` if stdin is piped (not a terminal). A source with no reader also reports `true`, so the chain reaches `collect()` and reports the missing binding instead of skipping past it
+- `collect()`: Reads all stdin content, returns `None` if empty; fails with `InputError::StdinNotBound` when no reader is bound
 - `trim`: Whether to trim leading/trailing whitespace (default: `true`)
 - Type: `String`
 

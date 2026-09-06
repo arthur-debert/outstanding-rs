@@ -3,7 +3,7 @@ use std::sync::Arc;
 use clap::ArgMatches;
 
 use crate::collector::InputCollector;
-use crate::env::{RealStdin, StdinReader};
+use crate::env::StdinReader;
 use crate::InputError;
 use crate::InputSources;
 
@@ -40,10 +40,8 @@ impl StdinSource {
         self
     }
 
-    fn reader(&self) -> &dyn StdinReader {
-        self.reader
-            .as_deref()
-            .unwrap_or(&RealStdin as &dyn StdinReader)
+    fn bound_reader(&self) -> Result<&dyn StdinReader, InputError> {
+        self.reader.as_deref().ok_or(InputError::StdinNotBound)
     }
 }
 
@@ -59,18 +57,19 @@ impl InputCollector<String> for StdinSource {
     }
 
     fn is_available(&self, _matches: &ArgMatches) -> bool {
-        !self.reader().is_terminal()
+        match self.bound_reader() {
+            Ok(reader) => !reader.is_terminal(),
+            Err(_) => true,
+        }
     }
 
     fn collect(&self, _matches: &ArgMatches) -> Result<Option<String>, InputError> {
-        if self.reader().is_terminal() {
+        let reader = self.bound_reader()?;
+        if reader.is_terminal() {
             return Ok(None);
         }
 
-        let content = self
-            .reader()
-            .read_to_string()
-            .map_err(InputError::StdinFailed)?;
+        let content = reader.read_to_string().map_err(InputError::StdinFailed)?;
 
         if content.is_empty() {
             return Ok(None);
@@ -181,6 +180,20 @@ mod tests {
         let source = StdinSource::with_reader(MockStdin::terminal());
         let result = source.collect(&empty_matches()).unwrap();
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn unbound_stdin_collect_names_the_missing_binding() {
+        let source = StdinSource::new();
+        let err = source.collect(&empty_matches()).unwrap_err();
+        assert!(matches!(err, InputError::StdinNotBound));
+        assert!(err.to_string().contains("bind_sources"));
+    }
+
+    #[test]
+    fn unbound_stdin_stays_available_so_collect_reports_it() {
+        let source = StdinSource::new();
+        assert!(source.is_available(&empty_matches()));
     }
 
     #[test]
