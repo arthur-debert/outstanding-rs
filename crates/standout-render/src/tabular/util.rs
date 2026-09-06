@@ -575,6 +575,24 @@ mod tests {
     use console::strip_ansi_codes;
 
     #[test]
+    fn wrapping_a_styled_value_reads_the_same_across_the_line_break() {
+        let styled = "\u{1b}[31mabcdefghijklmno\u{1b}[0m";
+
+        assert_eq!(
+            wrap(styled, 6),
+            ["\u{1b}[31mabcde…", "fghij…", "klmno\u{1b}[0m"]
+        );
+        assert_eq!(
+            wrap_indent(styled, 6, 2),
+            ["\u{1b}[31mabcde…", "  fgh…", "  ijk…", "  lmno\u{1b}[0m"]
+        );
+        assert_eq!(
+            wrap("\u{1b}[31malpha beta gamma delta\u{1b}[0m", 11),
+            ["\u{1b}[31malpha beta", "gamma delta\u{1b}[0m"]
+        );
+    }
+
+    #[test]
     fn display_width_ascii() {
         assert_eq!(display_width("hello"), 5);
         assert_eq!(display_width(""), 0);
