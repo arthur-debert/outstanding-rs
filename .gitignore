@@ -11,5 +11,3 @@ site/
 book/
 .claude/settings.local.json
 /.quality-tools
-
-/bin/doppler
