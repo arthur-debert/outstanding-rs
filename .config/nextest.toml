@@ -15,7 +15,7 @@ trybuild = { max-threads = 1 }
 process-fixture = { max-threads = 1 }
 
 [[profile.default.overrides]]
-filter = 'binary(app_builder_gate) or binary(dispatch_derive_rejections) or test(=compile_failures_cover_attribute_misuse)'
+filter = 'binary(app_builder_gate) or binary(collector_gate) or binary(dispatch_derive_rejections) or test(=compile_failures_cover_attribute_misuse)'
 test-group = 'trybuild'
 
 [[profile.default.overrides]]

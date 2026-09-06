@@ -5,6 +5,7 @@ use clap::ArgMatches;
 use crate::collector::InputCollector;
 use crate::env::{EnvReader, RealEnv};
 use crate::InputError;
+use crate::InputSources;
 
 #[derive(Clone)]
 pub struct EnvSource<R: EnvReader = RealEnv> {
@@ -51,6 +52,10 @@ impl<R: EnvReader + 'static> InputCollector<String> for EnvSource<R> {
             Some(value) if !value.is_empty() => Ok(Some(value)),
             _ => Ok(None),
         }
+    }
+
+    fn bind_sources(&self, _sources: &InputSources) -> Option<Box<dyn InputCollector<String>>> {
+        None
     }
 }
 

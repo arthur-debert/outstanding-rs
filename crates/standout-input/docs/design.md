@@ -71,6 +71,10 @@ pub trait InputCollector<T>: Send + Sync {
     /// - Err(_) on failure (abort the chain)
     fn collect(&self, matches: &ArgMatches) -> Result<Option<T>, InputError>;
 
+    /// Rebuild this collector over the run's stdin, clipboard and responder.
+    /// Returns None when the collector reads none of them.
+    fn bind_sources(&self, sources: &InputSources) -> Option<Box<dyn InputCollector<T>>>;
+
     /// Validate collected value. Called after successful collect().
     /// Default implementation accepts all values.
     fn validate(&self, _value: &T) -> Result<(), String> {

@@ -3,6 +3,7 @@ use clap::ArgMatches;
 
 use crate::collector::{InputCollector, InputSourceKind, ResolvedInput};
 use crate::InputError;
+use crate::InputSources;
 
 #[derive(Debug, Clone)]
 pub struct ArgSource {
@@ -30,6 +31,10 @@ impl InputCollector<String> for ArgSource {
 
     fn collect(&self, matches: &ArgMatches) -> Result<Option<String>, InputError> {
         Ok(matches.get_one::<String>(&self.name).cloned())
+    }
+
+    fn bind_sources(&self, _sources: &InputSources) -> Option<Box<dyn InputCollector<String>>> {
+        None
     }
 }
 
@@ -68,6 +73,10 @@ impl InputCollector<bool> for FlagSource {
 
     fn collect(&self, matches: &ArgMatches) -> Result<Option<bool>, InputError> {
         Ok(self.typed(matches))
+    }
+
+    fn bind_sources(&self, _sources: &InputSources) -> Option<Box<dyn InputCollector<bool>>> {
+        None
     }
 }
 

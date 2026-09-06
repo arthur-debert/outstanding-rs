@@ -1982,6 +1982,7 @@ dependencies = [
  "shell-words",
  "tempfile",
  "thiserror 2.0.20",
+ "trybuild",
  "which",
 ]
 

@@ -10,9 +10,7 @@ pub trait InputCollector<T>: Send + Sync {
 
     fn collect(&self, matches: &ArgMatches) -> Result<Option<T>, InputError>;
 
-    fn bind_sources(&self, _sources: &InputSources) -> Option<Box<dyn InputCollector<T>>> {
-        None
-    }
+    fn bind_sources(&self, sources: &InputSources) -> Option<Box<dyn InputCollector<T>>>;
 
     fn validate(&self, _value: &T) -> Result<(), String> {
         Ok(())

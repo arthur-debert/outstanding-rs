@@ -1585,6 +1585,13 @@ impl standout::input::InputCollector<String> for FileSource {
             .map(Some)
             .map_err(|error| standout::input::InputError::file(path.display().to_string(), error))
     }
+
+    fn bind_sources(
+        &self,
+        _sources: &standout::input::InputSources,
+    ) -> Option<Box<dyn standout::input::InputCollector<String>>> {
+        None
+    }
 }"#
     .to_string()
 }

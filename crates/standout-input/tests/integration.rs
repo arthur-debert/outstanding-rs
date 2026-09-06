@@ -1,7 +1,7 @@
-use clap::{Arg, Command};
+use clap::{Arg, ArgMatches, Command};
 use standout_input::{
-    ArgSource, ClipboardSource, ConfigSource, EnvSource, FlagSource, InputChain, InputError,
-    InputSourceKind, MockClipboard, MockEnv, MockStdin, StdinSource,
+    ArgSource, ClipboardSource, ConfigSource, EnvSource, FlagSource, InputChain, InputCollector,
+    InputError, InputSourceKind, InputSources, MockClipboard, MockEnv, MockStdin, StdinSource,
 };
 
 fn create_test_command() -> Command {
@@ -413,4 +413,118 @@ fn config_source_without_value_is_skipped() {
     let result = chain.resolve_with_source(&matches).unwrap();
     assert_eq!(result.value, "from default");
     assert_eq!(result.source, InputSourceKind::Default);
+}
+
+struct RequestedStdin {
+    inner: StdinSource,
+}
+
+impl RequestedStdin {
+    fn new() -> Self {
+        Self {
+            inner: StdinSource::new(),
+        }
+    }
+}
+
+impl InputCollector<String> for RequestedStdin {
+    fn name(&self) -> &'static str {
+        "stdin"
+    }
+
+    fn is_available(&self, matches: &ArgMatches) -> bool {
+        matches.get_flag("stdin") && self.inner.is_available(matches)
+    }
+
+    fn collect(&self, matches: &ArgMatches) -> Result<Option<String>, InputError> {
+        self.inner.collect(matches)
+    }
+
+    fn bind_sources(&self, sources: &InputSources) -> Option<Box<dyn InputCollector<String>>> {
+        Some(Box::new(Self {
+            inner: StdinSource::with_shared_reader(sources.stdin_arc()),
+        }))
+    }
+}
+
+fn requesting_stdin_command() -> Command {
+    Command::new("test").arg(
+        Arg::new("stdin")
+            .long("stdin")
+            .action(clap::ArgAction::SetTrue),
+    )
+}
+
+#[test]
+fn wrapped_stdin_reads_the_invocations_stdin_when_requested() {
+    let matches = requesting_stdin_command()
+        .try_get_matches_from(["test", "--stdin"])
+        .unwrap();
+    let sources = InputSources::from_process().with_stdin(MockStdin::piped("piped payload"));
+
+    let chain = InputChain::<String>::new()
+        .try_source(RequestedStdin::new())
+        .default("from default".to_string());
+
+    let result = chain.resolve_from_with_source(&matches, &sources).unwrap();
+    assert_eq!(result.value, "piped payload");
+    assert_eq!(result.source, InputSourceKind::Stdin);
+}
+
+#[test]
+fn wrapped_stdin_is_skipped_when_not_requested() {
+    let matches = requesting_stdin_command()
+        .try_get_matches_from(["test"])
+        .unwrap();
+    let sources = InputSources::from_process().with_stdin(MockStdin::piped("piped payload"));
+
+    let chain = InputChain::<String>::new()
+        .try_source(RequestedStdin::new())
+        .default("from default".to_string());
+
+    let result = chain.resolve_from_with_source(&matches, &sources).unwrap();
+    assert_eq!(result.value, "from default");
+    assert_eq!(result.source, InputSourceKind::Default);
+}
+
+struct UnboundStdin {
+    inner: StdinSource,
+}
+
+impl InputCollector<String> for UnboundStdin {
+    fn name(&self) -> &'static str {
+        "stdin"
+    }
+
+    fn is_available(&self, matches: &ArgMatches) -> bool {
+        self.inner.is_available(matches)
+    }
+
+    fn collect(&self, matches: &ArgMatches) -> Result<Option<String>, InputError> {
+        self.inner.collect(matches)
+    }
+
+    fn bind_sources(&self, _sources: &InputSources) -> Option<Box<dyn InputCollector<String>>> {
+        None
+    }
+}
+
+#[test]
+fn a_wrapper_that_returns_none_from_bind_sources_fails_naming_it() {
+    let matches = create_test_command()
+        .try_get_matches_from(["test"])
+        .unwrap();
+    let sources = InputSources::from_process().with_stdin(MockStdin::piped("piped payload"));
+
+    let chain = InputChain::<String>::new()
+        .try_source(UnboundStdin {
+            inner: StdinSource::new(),
+        })
+        .default("from default".to_string());
+
+    let err = chain
+        .resolve_from_with_source(&matches, &sources)
+        .unwrap_err();
+    assert!(matches!(err, InputError::StdinNotBound));
+    assert!(err.to_string().contains("bind_sources"));
 }

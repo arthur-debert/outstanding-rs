@@ -2,6 +2,7 @@ use clap::ArgMatches;
 
 use crate::collector::InputCollector;
 use crate::InputError;
+use crate::InputSources;
 
 #[derive(Debug, Clone)]
 pub struct DefaultSource<T: Clone + Send + Sync> {
@@ -29,6 +30,10 @@ impl<T: Clone + Send + Sync + 'static> InputCollector<T> for DefaultSource<T> {
 
     fn collect(&self, _matches: &ArgMatches) -> Result<Option<T>, InputError> {
         Ok(Some(self.value.clone()))
+    }
+
+    fn bind_sources(&self, _sources: &InputSources) -> Option<Box<dyn InputCollector<T>>> {
+        None
     }
 }
 
