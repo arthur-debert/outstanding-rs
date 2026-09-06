@@ -30,7 +30,7 @@ for doc_dir in "${DOC_DIRS[@]}"; do
 		if [[ -n "$misspelled" ]]; then
 			found_errors=true
 			echo "  Errors found:"
-			echo "$misspelled" | sed 's/^/    - /'
+			sed 's/^/    - /' <<< "$misspelled"
 		else
 			echo "  No spelling errors found!"
 		fi
