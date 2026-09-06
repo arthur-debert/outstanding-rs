@@ -18,6 +18,10 @@ if [[ -z ${CI:-} && -r $standout_device_env ]]; then
   export WORKSPACES="${WORKSPACES:-$(. "$standout_device_env"; printf '%s' "$WORKSPACES")}"
 fi
 
+if [[ ${SCCACHE_CACHE_SIZE:-} =~ ^[0-9]+[kKmMgGtT][bB]$ ]]; then
+  export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE%?}"
+fi
+
 export WORKSPACES="${WORKSPACES:-/Volumes/workspace/trees}"
 export RUSTC_WRAPPER="${RUSTC_WRAPPER:-sccache}"
 export CARGO_INCREMENTAL=0

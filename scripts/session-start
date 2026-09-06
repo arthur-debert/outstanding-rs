@@ -3,6 +3,31 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 source scripts/agent-env
+if [[ ! -e .quality-tools && ! -L .quality-tools ]]; then
+  standout_tools_root="${XDG_CACHE_HOME:-$HOME/.cache}/standout/tools"
+  if [[ -d $WORKSPACES && -w $WORKSPACES ]]; then
+    standout_tools_root="$(cd "$WORKSPACES" && pwd -P)/.standout-tools"
+  fi
+  standout_tools="$standout_tools_root/$(scripts/install-quality-tools --cache-key)"
+  mkdir -p "$standout_tools_root"
+  if [[ ! -d $standout_tools ]]; then
+    standout_install=$(mktemp -d "$standout_tools_root/install-XXXXXX")
+    trap 'rm -rf "$standout_install"' EXIT
+    scripts/install-quality-tools "$standout_install" >&2
+    python3 - "$standout_install" "$standout_tools" <<'PY'
+import errno
+import os
+import sys
+
+try:
+    os.rename(sys.argv[1], sys.argv[2])
+except OSError as error:
+    if error.errno not in (errno.EEXIST, errno.ENOTEMPTY):
+        raise
+PY
+  fi
+  ln -s "$standout_tools" .quality-tools
+fi
 scripts/install-quality-tools >&2
 lefthook install >&2
 
