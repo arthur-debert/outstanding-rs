@@ -16,3 +16,13 @@ members = [
     "crates/todo-example/todo-core",
     "crates/todo-example/tdoo",
 ]
+
+[workspace.package]
+version = "13.0.0"
+
+[workspace.metadata.release]
+shared-version = true
+consolidate-commits = true
+tag-name = "v{{version}}"
+tag-prefix = ""
+pre-release-commit-message = "Release {{version}}"

@@ -1,0 +1,58 @@
+name: Publish crates
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version increment
+        required: true
+        default: patch
+        type: choice
+        options: [patch, minor, major]
+
+concurrency:
+  group: crates-io-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.rustup
+            ~/.cargo/registry
+            ~/.cargo/git
+            .quality-tools
+          key: release-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'scripts/tool-versions.env', 'scripts/install-release-tools', 'scripts/install-sccache') }}
+
+      - name: Install Rust and release tools
+        run: |
+          rustup show active-toolchain
+          scripts/install-sccache
+          scripts/install-release-tools
+
+      - uses: actions/cache@v5
+        with:
+          path: target
+          key: rust-release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ hashFiles('**/Cargo.toml', 'crates/**/*.rs') }}
+          restore-keys: |
+            rust-release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
+
+      - uses: dopplerhq/cli-action@v4
+
+      - name: Publish the workspace
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+          BUMP: ${{ inputs.bump }}
+        run: doppler run -- scripts/release/configure-git scripts/with-sccache scripts/release/publish "$BUMP" --execute --no-confirm

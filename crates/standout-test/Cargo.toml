@@ -1,6 +1,6 @@
 [package]
 name = "standout-test"
-version = "13.0.0"
+version.workspace = true
 edition = "2021"
 description = "In-process test harness for applications built with the standout CLI framework"
 license = "MIT"

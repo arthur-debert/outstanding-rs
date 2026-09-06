@@ -1,10 +1,9 @@
 [package]
 name = "todo-core"
-version = "13.0.0"
+version.workspace = true
 edition = "2021"
 description = "CLI-free todo domain and JSON persistence for the Standout worked example"
 license = "MIT"
-publish = false
 
 [dependencies]
 anyhow = "1"

@@ -1,6 +1,6 @@
 [package]
 name = "standout-docs"
-version = "13.0.0"
+version.workspace = true
 edition = "2021"
 publish = false
 description = "Compiles the book's Rust examples and checks the book's internal links."

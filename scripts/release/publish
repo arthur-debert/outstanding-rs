@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+cd "$repo"
+source scripts/agent-env
+source scripts/tool-versions.env
+if [[ "$(cargo release --version)" != "cargo-release $CARGO_RELEASE_VERSION" ]]; then
+  echo "Run scripts/install-release-tools before publishing." >&2
+  exit 1
+fi
+case "${1:-}" in
+  patch|minor|major) ;;
+  *) echo "Usage: scripts/release/publish patch|minor|major [cargo-release options]" >&2; exit 2 ;;
+esac
+exec cargo release --workspace "$@"

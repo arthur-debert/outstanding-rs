@@ -1,6 +1,6 @@
 [package]
 name = "standout"
-version = "13.0.0"
+version.workspace = true
 edition = "2021"
 description = "Styled CLI template rendering with automatic terminal detection"
 license = "MIT"
