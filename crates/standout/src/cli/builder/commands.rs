@@ -228,7 +228,8 @@ impl AppBuilder {
             Some((key, existing)) => (key, existing.append(resolution)),
             None => (path.to_string(), resolution),
         };
-        self.command_questionnaire_resolution.insert(key, resolution);
+        self.command_questionnaire_resolution
+            .insert(key, resolution);
     }
 }
 
