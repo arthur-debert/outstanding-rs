@@ -11,7 +11,7 @@ readme = "README.md"
 
 [dependencies]
 console = "0.16"
-dark-light = "0.2"
+dark-light = "3"
 deunicode = "1.6.2"
 minijinja = { version = "2", features = ["loader"] }
 once_cell = "1.19"

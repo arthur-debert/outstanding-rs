@@ -8,8 +8,8 @@ pub enum ColorMode {
 
 pub(crate) fn probe_color_mode() -> ColorMode {
     match detect_os_theme() {
-        OsThemeMode::Dark => ColorMode::Dark,
-        OsThemeMode::Light => ColorMode::Light,
+        Ok(OsThemeMode::Dark) => ColorMode::Dark,
+        _ => ColorMode::Light,
     }
 }
 
