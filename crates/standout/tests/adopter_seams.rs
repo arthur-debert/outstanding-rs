@@ -1,4 +1,3 @@
-
 use clap::{Arg, ArgAction, Command};
 use serde_json::json;
 use standout::cli::{
