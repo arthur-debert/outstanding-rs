@@ -38,4 +38,5 @@ pub use hooks::{
     RenderedOutput, TextOutput,
 };
 pub use results::{emits_events, Delivery, EmitError, EventSink, NoEvents, Results, RunRecorder};
+pub use standout_types::{ColorPolicy, Representation};
 pub use stream::{StreamCapture, StreamSink};

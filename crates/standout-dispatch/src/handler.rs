@@ -6,6 +6,7 @@ use crate::results::{NoEvents, Results};
 use crate::verify::ExpectedArg;
 use clap::ArgMatches;
 use serde::Serialize;
+use standout_types::{ColorPolicy, Representation};
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::fmt;
@@ -86,6 +87,8 @@ pub struct CommandContext {
     pub command_path: Vec<String>,
     pub app_state: Rc<Extensions>,
     pub extensions: Extensions,
+    representation: Representation,
+    color_policy: ColorPolicy,
 }
 impl CommandContext {
     pub fn new(command_path: Vec<String>, app_state: Rc<Extensions>) -> Self {
@@ -93,16 +96,29 @@ impl CommandContext {
             command_path,
             app_state,
             extensions: Extensions::new(),
+            representation: Representation::default(),
+            color_policy: ColorPolicy::default(),
         }
+    }
+    pub fn with_presentation(
+        mut self,
+        representation: Representation,
+        color_policy: ColorPolicy,
+    ) -> Self {
+        self.representation = representation;
+        self.color_policy = color_policy;
+        self
+    }
+    pub fn representation(&self) -> Representation {
+        self.representation
+    }
+    pub fn color_policy(&self) -> ColorPolicy {
+        self.color_policy
     }
 }
 impl Default for CommandContext {
     fn default() -> Self {
-        Self {
-            command_path: Vec::new(),
-            app_state: Rc::new(Extensions::new()),
-            extensions: Extensions::new(),
-        }
+        Self::new(Vec::new(), Rc::new(Extensions::new()))
     }
 }
 #[derive(Debug)]
@@ -992,11 +1008,10 @@ mod tests {
     use serde_json::json;
     #[test]
     fn test_command_context_creation() {
-        let ctx = CommandContext {
-            command_path: vec!["config".into(), "get".into()],
-            app_state: Rc::new(Extensions::new()),
-            extensions: Extensions::new(),
-        };
+        let ctx = CommandContext::new(
+            vec!["config".into(), "get".into()],
+            Rc::new(Extensions::new()),
+        );
         assert_eq!(ctx.command_path, vec!["config", "get"]);
     }
     #[derive(Debug, thiserror::Error)]
@@ -1142,11 +1157,7 @@ mod tests {
         });
         app_state.insert(Config { debug: true });
         let app_state = Rc::new(app_state);
-        let ctx = CommandContext {
-            command_path: vec!["list".into()],
-            app_state: app_state.clone(),
-            extensions: Extensions::new(),
-        };
+        let ctx = CommandContext::new(vec!["list".into()], app_state.clone());
         let db = ctx.app_state.get::<Database>().unwrap();
         assert_eq!(db.url, "postgres://localhost");
         let config = ctx.app_state.get::<Config>().unwrap();
@@ -1158,11 +1169,7 @@ mod tests {
         struct Present;
         let mut app_state = Extensions::new();
         app_state.insert(Present);
-        let ctx = CommandContext {
-            command_path: vec![],
-            app_state: Rc::new(app_state),
-            extensions: Extensions::new(),
-        };
+        let ctx = CommandContext::new(vec![], Rc::new(app_state));
         assert!(ctx.app_state.get_required::<Present>().is_ok());
         #[derive(Debug)]
         struct Missing;

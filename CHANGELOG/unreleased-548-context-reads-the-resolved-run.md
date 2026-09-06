@@ -1,0 +1,2 @@
+- `CommandContext::representation()` and `CommandContext::color_policy()` return what the run resolved, so a post-dispatch or post-output hook can decide by encoding instead of re-parsing the injected `_output_mode` argument. Both are read-only; the pair is set at the dispatch edge (closes #548).
+- `Representation` and `ColorPolicy` now live in the new dependency-free `standout-types` crate, re-exported unchanged from `standout`, `standout-render` and `standout-dispatch` (closes #548).

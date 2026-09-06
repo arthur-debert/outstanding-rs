@@ -321,6 +321,7 @@ impl App {
         let mut ctx = match self.command_context(
             path,
             output_mode,
+            color_policy,
             override_path.as_deref(),
             &sink,
             &recorder,
@@ -435,6 +436,7 @@ impl App {
         let mut ctx = match self.command_context(
             path,
             output_mode,
+            color_policy,
             override_path.as_deref(),
             sink,
             recorder,
@@ -493,6 +495,7 @@ impl App {
         &self,
         path: Vec<String>,
         output_mode: Representation,
+        color_policy: ColorPolicy,
         override_path: Option<&std::path::Path>,
         sink: &StreamSink,
         recorder: &RunRecorder,
@@ -517,7 +520,8 @@ impl App {
                 sink.redirect_on_first_write(move || open_output_file(&path));
             }
         }
-        let mut ctx = CommandContext::new(path, self.app_state.clone());
+        let mut ctx = CommandContext::new(path, self.app_state.clone())
+            .with_presentation(output_mode, color_policy);
         ctx.extensions.insert(warnings.clone());
         Ok(ctx)
     }

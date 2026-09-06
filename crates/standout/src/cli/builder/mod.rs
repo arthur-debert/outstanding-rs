@@ -1558,7 +1558,8 @@ impl App {
         let mut ctx = CommandContext::new(
             path.split('.').map(String::from).collect(),
             self.app_state.clone(),
-        );
+        )
+        .with_presentation(output_mode, color_policy);
         let warnings = WarningBuffer::new();
         self.seed_startup_warnings(&warnings);
         ctx.extensions.insert(InputSources::from_process());
