@@ -25,7 +25,7 @@ pub struct ArtifactOutput {
     pub bytes: Vec<u8>,
     pub suggested_destination: Option<PathBuf>,
     pub stdout_allowed: bool,
-    pub report: Option<serde_json::Value>,
+    pub report: Option<standout_types::RenderData>,
 }
 #[derive(Debug, Clone)]
 pub enum RenderedOutput {
@@ -153,7 +153,11 @@ impl HookError {
 }
 pub type PreDispatchFn = Rc<dyn Fn(&ArgMatches, &mut CommandContext) -> Result<(), HookError>>;
 pub type PostDispatchFn = Rc<
-    dyn Fn(&ArgMatches, &CommandContext, serde_json::Value) -> Result<serde_json::Value, HookError>,
+    dyn Fn(
+        &ArgMatches,
+        &CommandContext,
+        standout_types::RenderData,
+    ) -> Result<standout_types::RenderData, HookError>,
 >;
 pub type PostOutputFn =
     Rc<dyn Fn(&ArgMatches, &CommandContext, RenderedOutput) -> Result<RenderedOutput, HookError>>;
@@ -204,8 +208,8 @@ impl Hooks {
         F: Fn(
                 &ArgMatches,
                 &CommandContext,
-                serde_json::Value,
-            ) -> Result<serde_json::Value, HookError>
+                standout_types::RenderData,
+            ) -> Result<standout_types::RenderData, HookError>
             + 'static,
     {
         self.post_dispatch.push(Rc::new(f));
@@ -233,8 +237,8 @@ impl Hooks {
         &self,
         matches: &ArgMatches,
         ctx: &CommandContext,
-        data: serde_json::Value,
-    ) -> Result<serde_json::Value, HookError> {
+        data: standout_types::RenderData,
+    ) -> Result<standout_types::RenderData, HookError> {
         let mut current = data;
         for hook in &self.post_dispatch {
             current = hook(matches, ctx, current)?;
@@ -400,7 +404,7 @@ mod tests {
     }
     #[test]
     fn test_post_dispatch_transformation() {
-        use serde_json::json;
+        use crate::test_data as json;
         let hooks = Hooks::new().post_dispatch(|_, _, mut data| {
             if let Some(obj) = data.as_object_mut() {
                 obj.insert("modified".into(), json!(true));

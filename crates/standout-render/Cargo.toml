@@ -12,7 +12,7 @@ readme = "README.md"
 [dependencies]
 console = "0.16"
 deunicode = "1.6.2"
-minijinja = { version = "2", features = ["loader"] }
+minijinja = { version = "=2.23.0", features = ["loader", "unstable_machinery", "preserve_order"] }
 once_cell = "1.19"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
@@ -36,6 +36,7 @@ dark-light = "0.2"
 test-support = []
 
 [dev-dependencies]
+serde_json = { version = "1", features = ["raw_value", "arbitrary_precision"] }
 tempfile = "3.24.0"
 proptest = "1"
 serial_test = "3"

@@ -1,3 +1,4 @@
+use crate::template::presentation::escape_text;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -658,6 +659,22 @@ impl Decorations {
     }
 
     pub fn overhead_with_policy(&self, num_columns: usize, policy: crate::AmbiguousWidth) -> usize {
+        self.prepared_text().prepared_overhead(num_columns, policy)
+    }
+
+    pub(crate) fn prepared_text(&self) -> Self {
+        Self {
+            column_sep: escape_text(&self.column_sep),
+            row_prefix: escape_text(&self.row_prefix),
+            row_suffix: escape_text(&self.row_suffix),
+        }
+    }
+
+    pub(crate) fn prepared_overhead(
+        &self,
+        num_columns: usize,
+        policy: crate::AmbiguousWidth,
+    ) -> usize {
         use crate::tabular::visible_width_with_policy;
         let prefix_width = visible_width_with_policy(&self.row_prefix, policy);
         let suffix_width = visible_width_with_policy(&self.row_suffix, policy);
@@ -671,6 +688,37 @@ impl Decorations {
 pub struct FlatDataSpec {
     pub columns: Vec<Column>,
     pub decorations: Decorations,
+}
+
+impl FlatDataSpec {
+    pub(crate) fn prepared_text(&self) -> Self {
+        Self {
+            columns: self.columns.iter().map(Column::prepared_text).collect(),
+            decorations: self.decorations.prepared_text(),
+        }
+    }
+}
+
+impl Column {
+    pub(crate) fn prepared_text(&self) -> Self {
+        let mut column = self.clone();
+        column.null_repr = escape_text(&column.null_repr);
+        prepare_overflow_text(&mut column.overflow);
+        if let Some(sub) = &mut column.sub_columns {
+            sub.separator = escape_text(&sub.separator);
+            for column in &mut sub.columns {
+                column.null_repr = escape_text(&column.null_repr);
+                prepare_overflow_text(&mut column.overflow);
+            }
+        }
+        column
+    }
+}
+
+fn prepare_overflow_text(overflow: &mut Overflow) {
+    if let Overflow::Truncate { marker, .. } = overflow {
+        *marker = escape_text(marker);
+    }
 }
 
 impl FlatDataSpec {

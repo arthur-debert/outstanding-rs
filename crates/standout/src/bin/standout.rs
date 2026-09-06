@@ -382,7 +382,7 @@ struct GeneratedFiles {
 
 impl GeneratedFiles {
     fn render(spec: &ProjectSpec) -> Result<Self> {
-        let mut env = new_environment();
+        let mut env = code_generation_environment();
         for (name, source) in TEMPLATE_CATALOG {
             env.add_template(name, source)
                 .with_context(|| format!("template {name} is malformed"))?;
@@ -2012,8 +2012,18 @@ impl CommandInput {
     }
 }
 
+fn code_generation_environment() -> minijinja::Environment<'static> {
+    let mut environment = new_environment();
+    environment.set_auto_escape_callback(|_| minijinja::AutoEscape::None);
+    environment.set_formatter(|output, _state, value| {
+        output.write_str(&standout_render::template::stringify(value))?;
+        Ok(())
+    });
+    environment
+}
+
 fn render_inline(template: &str, spec: &ProjectSpec) -> Result<String> {
-    new_environment()
+    code_generation_environment()
         .template_from_str(template)?
         .render(model(spec))
         .with_context(|| format!("path template {template} is missing model data"))

@@ -14,10 +14,9 @@
 
 use std::borrow::Cow;
 
-use minijinja::value::ValueKind;
+use minijinja::value::{Kwargs, Rest, ValueKind};
 use minijinja::{
-    escape_formatter, AutoEscape, Environment, Error, ErrorKind, Output, State, UndefinedBehavior,
-    Value,
+    AutoEscape, Environment, Error, ErrorKind, Output, State, UndefinedBehavior, Value,
 };
 
 // The only sanctioned constructor for a rendering environment inside
@@ -31,8 +30,119 @@ pub fn new_environment() -> Environment<'static> {
 
 pub(crate) fn install(env: &mut Environment<'static>) {
     env.set_formatter(spelling_formatter);
+    env.set_auto_escape_callback(|_| AutoEscape::Custom("standout"));
+    env.add_filter("__standout_capture", super::presentation::capture);
+    env.add_function(
+        "__standout_call",
+        |state: &State, value: Value, args: minijinja::value::Rest<Value>| {
+            value.call(state, &args).map(super::presentation::capture)
+        },
+    );
+    env.add_filter(
+        "__standout_plain_if_formatted",
+        super::presentation::plain_if_formatted,
+    );
+    env.add_filter(
+        "__standout_plain_for_comparison",
+        super::presentation::plain_for_comparison,
+    );
+    env.add_filter("attr", |value: Value, key: Value| {
+        minijinja::filters::attr(
+            &super::presentation::plain_if_formatted(value),
+            &super::presentation::plain_if_formatted(key),
+        )
+    });
+    install_comparison_tests(env);
+    env.add_filter("map", map_filter);
+    env.add_filter("sort", |state: &State, value: Value, kwargs: Kwargs| {
+        minijinja::filters::sort(state, value, project_attribute(kwargs)?)
+    });
+    env.add_filter("unique", |state: &State, value: Value, kwargs: Kwargs| {
+        minijinja::filters::unique(state, value, project_attribute(kwargs)?)
+    });
+    env.add_filter(
+        "groupby",
+        |value: Value, attribute: Option<Value>, kwargs: Kwargs| {
+            let attribute = attribute.map(super::presentation::plain_if_formatted);
+            let attribute = attribute
+                .as_ref()
+                .map(|value| {
+                    value.as_str().ok_or_else(|| {
+                        Error::new(ErrorKind::InvalidOperation, "value is not a string")
+                    })
+                })
+                .transpose()?;
+            minijinja::filters::groupby(value, attribute, project_attribute(kwargs)?)
+        },
+    );
+    for name in ["safe", "escape", "e"] {
+        env.add_filter(name, |value: Value| value);
+    }
+    env.add_filter("replace", |value: Value, from: String, to: String| {
+        stringify(&value).replace(&from, &to)
+    });
+    env.add_filter("tojson", |value: Value| -> Result<String, Error> {
+        serde_json::to_string(&value)
+            .map_err(|e| Error::new(ErrorKind::InvalidOperation, e.to_string()))
+    });
     env.add_filter("string", string_filter);
     env.add_filter("join", join_filter);
+}
+
+fn install_comparison_tests(env: &mut Environment<'static>) {
+    use super::presentation::plain_for_comparison;
+    use minijinja::tests;
+    for (names, test) in [
+        (
+            &["eq", "equalto", "=="][..],
+            tests::is_eq as fn(&Value, &Value) -> bool,
+        ),
+        (&["ne", "!="][..], tests::is_ne),
+        (&["lt", "lessthan", "<"][..], tests::is_lt),
+        (&["le", "<="][..], tests::is_le),
+        (&["gt", "greaterthan", ">"][..], tests::is_gt),
+        (&["ge", ">="][..], tests::is_ge),
+    ] {
+        for name in names {
+            env.add_test(*name, move |value: Value, other: Value| {
+                test(&plain_for_comparison(value), &plain_for_comparison(other))
+            });
+        }
+    }
+    env.add_test("in", |state: &State, value: Value, other: Value| {
+        tests::is_in(
+            state,
+            &plain_for_comparison(value),
+            &plain_for_comparison(other),
+        )
+    });
+}
+
+fn project_attribute(kwargs: Kwargs) -> Result<Kwargs, Error> {
+    kwargs
+        .args()
+        .map(|name| {
+            let value = kwargs.get::<Value>(name)?;
+            Ok((
+                name.to_owned(),
+                if name == "attribute" {
+                    super::presentation::plain_if_formatted(value)
+                } else {
+                    value
+                },
+            ))
+        })
+        .collect()
+}
+
+fn map_filter(state: &State, value: Value, args: Rest<Value>) -> Result<Vec<Value>, Error> {
+    let (args, kwargs): (&[Value], Kwargs) = minijinja::value::from_args(&args)?;
+    let mut args = args.to_vec();
+    if let Some(name) = args.first_mut() {
+        *name = super::presentation::plain_if_formatted(name.clone());
+    }
+    args.push(project_attribute(kwargs)?.into());
+    minijinja::filters::map(state, value, Rest(args))
 }
 
 fn string_filter(state: &State, value: Value) -> Result<Value, Error> {
@@ -44,49 +154,22 @@ fn string_filter(state: &State, value: Value) -> Result<Value, Error> {
     {
         return Err(Error::from(ErrorKind::UndefinedError));
     }
-    Ok(match value.kind() {
-        ValueKind::String => value,
-        _ => Value::from(stringify(&value).into_owned()),
-    })
+    Ok(Value::from(stringify(&value).into_owned()))
 }
 
-fn join_filter(state: &State, value: Value, joiner: Option<Value>) -> Result<Value, Error> {
-    let items = value
-        .try_iter()
-        .map_err(|err| {
-            Error::new(
-                ErrorKind::InvalidOperation,
-                format!("cannot join value of type {}", value.kind()),
-            )
-            .with_source(err)
-        })?
-        .collect::<Vec<_>>();
-    let separator = joiner.as_ref().map(stringify).unwrap_or_default();
-
-    let joiner_is_safe = joiner.as_ref().is_some_and(Value::is_safe);
-    let escaping = !matches!(state.auto_escape(), AutoEscape::None);
-    if escaping && (joiner_is_safe || items.iter().any(Value::is_safe)) {
-        let mut output = String::new();
-        for (index, item) in items.iter().enumerate() {
-            if index > 0 {
-                output.push_str(&separator);
-            }
-            match item.as_str().filter(|_| item.is_safe()) {
-                Some(safe) => output.push_str(safe),
-                None => output.push_str(&state.format(item.clone())?),
-            }
-        }
-        return Ok(Value::from_safe_string(output));
-    }
-
+fn join_filter(_state: &State, value: Value, joiner: Option<Value>) -> Result<Value, Error> {
+    let separator = joiner
+        .as_ref()
+        .map(super::presentation::markup)
+        .unwrap_or_default();
     let mut output = String::new();
-    for (index, item) in items.iter().enumerate() {
+    for (index, item) in value.try_iter()?.enumerate() {
         if index > 0 {
             output.push_str(&separator);
         }
-        output.push_str(&stringify(item));
+        output.push_str(&super::presentation::markup(&item));
     }
-    Ok(Value::from(output))
+    Ok(super::presentation::fragment(output))
 }
 
 pub fn stringify(value: &Value) -> Cow<'_, str> {
@@ -115,22 +198,18 @@ fn bool_str(value: &Value) -> &'static str {
     }
 }
 
-fn spelling_formatter(out: &mut Output, state: &State, value: &Value) -> Result<(), Error> {
-    match value.kind() {
-        ValueKind::Bool
-        | ValueKind::None
-        | ValueKind::Seq
-        | ValueKind::Map
-        | ValueKind::Iterable => {
-            escape_formatter(out, state, &Value::from(stringify(value).into_owned()))
-        }
-        _ => escape_formatter(out, state, value),
-    }
+fn spelling_formatter(out: &mut Output, _state: &State, value: &Value) -> Result<(), Error> {
+    out.write_str(&super::presentation::markup(value))?;
+    Ok(())
 }
 
 // minijinja renders container elements with Debug, which quotes strings, so
 // this in-container form of `stringify` does too.
 fn repr(value: &Value) -> Cow<'_, str> {
+    let projected = super::presentation::plain_if_formatted(value.clone());
+    if projected.kind() == ValueKind::String && value.kind() != ValueKind::String {
+        return Cow::Owned(format!("{:?}", projected.as_str().unwrap()));
+    }
     match value.kind() {
         ValueKind::Bool => Cow::Borrowed(bool_str(value)),
         ValueKind::None => Cow::Borrowed(NONE),

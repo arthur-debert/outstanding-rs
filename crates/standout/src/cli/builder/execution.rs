@@ -539,7 +539,7 @@ impl App {
         sink: &StreamSink,
         warnings: &WarningBuffer,
     ) -> DispatchResult {
-        let mut pending_records: Option<(Vec<serde_json::Value>, String)> = None;
+        let mut pending_records: Option<(Vec<standout_render::RenderData>, String)> = None;
         let (output, render, status) = match dispatch_output {
             DispatchOutput::Text {
                 formatted,
@@ -599,7 +599,11 @@ impl App {
             {
                 let snapshot = warnings.snapshot();
                 if !snapshot.is_empty() {
-                    records.extend(crate::cli::warning_records(&snapshot));
+                    records.extend(
+                        crate::cli::warning_records(&snapshot)
+                            .into_iter()
+                            .map(Into::into),
+                    );
                     let document =
                         match standout_render::serialize_record_array(records, output_mode) {
                             Ok(document) => document,
@@ -1589,19 +1593,26 @@ fn resolve_artifact_destination(
 }
 
 fn report_envelope(
-    report: Option<serde_json::Value>,
+    report: Option<standout_render::RenderData>,
     receipt: &ArtifactReceipt,
-) -> Result<serde_json::Value, RunError> {
-    let receipt = serde_json::to_value(receipt).map_err(|e| {
+) -> Result<standout_render::RenderData, RunError> {
+    let receipt = standout_render::RenderData::from_serialize(receipt).map_err(|e| {
         RunError::render(
             format!("Failed to serialize artifact receipt: {}", e),
             Arc::new(e),
         )
     })?;
-    Ok(serde_json::json!({
-        "report": report.unwrap_or(serde_json::Value::Null),
-        "receipt": receipt,
-    }))
+    Ok(standout_render::RenderData::Object(
+        [
+            (
+                "report".into(),
+                report.unwrap_or(standout_render::RenderData::Null),
+            ),
+            ("receipt".into(), receipt),
+        ]
+        .into_iter()
+        .collect(),
+    ))
 }
 
 impl App {
@@ -2890,7 +2901,7 @@ mod tests {
                 "list",
                 Hooks::new().post_dispatch(|_, _ctx, mut data| {
                     if let Some(obj) = data.as_object_mut() {
-                        obj.insert("modified".into(), json!(true));
+                        obj.insert("modified".into(), json!(true).into());
                     }
                     Ok(data)
                 }),
@@ -2970,13 +2981,13 @@ mod tests {
                 Hooks::new()
                     .post_dispatch(|_, _ctx, mut data| {
                         if let Some(v) = data.get_mut("value") {
-                            *v = json!(v.as_i64().unwrap_or(0) * 2);
+                            *v = json!(v.as_i64().unwrap_or(0) * 2).into();
                         }
                         Ok(data)
                     })
                     .post_dispatch(|_, _ctx, mut data| {
                         if let Some(v) = data.get_mut("value") {
-                            *v = json!(v.as_i64().unwrap_or(0) + 10);
+                            *v = json!(v.as_i64().unwrap_or(0) + 10).into();
                         }
                         Ok(data)
                     }),
@@ -3058,7 +3069,7 @@ mod tests {
                 "test",
                 Hooks::new().post_dispatch(|_, _ctx, mut data| {
                     if let Some(obj) = data.as_object_mut() {
-                        obj.insert("added_by_hook".into(), json!("yes"));
+                        obj.insert("added_by_hook".into(), json!("yes").into());
                     }
                     Ok(data)
                 }),
@@ -3101,7 +3112,11 @@ mod tests {
             .hooks(
                 "test",
                 Hooks::new().post_dispatch(|_, _ctx, data| {
-                    if data.get("valid") == Some(&serde_json::json!(false)) {
+                    if data
+                        .get("valid")
+                        .and_then(standout_render::RenderData::as_bool)
+                        == Some(false)
+                    {
                         return Err(HookError::post_dispatch("invalid data"));
                     }
                     Ok(data)
@@ -3847,7 +3862,7 @@ header:
                 cfg.template_name("test-3")
             })
             .unwrap()
-            .context("extra", minijinja::Value::from("x"))
+            .context("extra", crate::RenderData::from("x"))
             .build()
             .unwrap();
 
@@ -3858,13 +3873,13 @@ header:
             })
             .unwrap()
             .theme(make_theme())
-            .context("extra", minijinja::Value::from("x"))
+            .context("extra", crate::RenderData::from("x"))
             .build()
             .unwrap();
 
         let app3 = AppBuilder::new()
             .templates(EmbeddedTemplates::new(TEMPLATES, ""))
-            .context("extra", minijinja::Value::from("x"))
+            .context("extra", crate::RenderData::from("x"))
             .command_with("test", FnHandler::new(make_handler()), |cfg| {
                 cfg.template_name("test-3")
             })
@@ -3875,7 +3890,7 @@ header:
 
         let app4 = AppBuilder::new()
             .templates(EmbeddedTemplates::new(TEMPLATES, ""))
-            .context("extra", minijinja::Value::from("x"))
+            .context("extra", crate::RenderData::from("x"))
             .theme(make_theme())
             .command_with("test", FnHandler::new(make_handler()), |cfg| {
                 cfg.template_name("test-3")
@@ -3890,7 +3905,7 @@ header:
                 cfg.template_name("test-3")
             })
             .unwrap()
-            .context("extra", minijinja::Value::from("x"))
+            .context("extra", crate::RenderData::from("x"))
             .theme(make_theme())
             .build()
             .unwrap();
@@ -3898,7 +3913,7 @@ header:
         let app6 = AppBuilder::new()
             .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .theme(make_theme())
-            .context("extra", minijinja::Value::from("x"))
+            .context("extra", crate::RenderData::from("x"))
             .command_with("test", FnHandler::new(make_handler()), |cfg| {
                 cfg.template_name("test-3")
             })

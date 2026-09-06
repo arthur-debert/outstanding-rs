@@ -39,3 +39,10 @@ pub use hooks::{
 pub use results::{emits_events, Delivery, EmitError, EventSink, NoEvents, Results, RunRecorder};
 pub use standout_types::{ColorPolicy, Representation};
 pub use stream::{StreamCapture, StreamSink};
+
+#[cfg(test)]
+macro_rules! test_data {
+    ($($tokens:tt)*) => { standout_types::RenderData::from(serde_json::json!($($tokens)*)) };
+}
+#[cfg(test)]
+pub(crate) use test_data;

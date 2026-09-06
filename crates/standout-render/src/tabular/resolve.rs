@@ -1,5 +1,6 @@
 use super::types::{FlatDataSpec, Width};
 use super::util::visible_width_with_policy;
+use crate::template::presentation::escape_text;
 use crate::AmbiguousWidth;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,6 +36,15 @@ impl FlatDataSpec {
         total_width: usize,
         policy: AmbiguousWidth,
     ) -> ResolvedWidths {
+        self.prepared_text()
+            .resolve_prepared_widths(total_width, policy)
+    }
+
+    pub(crate) fn resolve_prepared_widths(
+        &self,
+        total_width: usize,
+        policy: AmbiguousWidth,
+    ) -> ResolvedWidths {
         self.resolve_widths_impl(total_width, None, policy)
     }
 
@@ -52,8 +62,26 @@ impl FlatDataSpec {
         data: &[Vec<S>],
         policy: AmbiguousWidth,
     ) -> ResolvedWidths {
+        let data: Vec<Vec<_>> = data
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|value| escape_text(value.as_ref()))
+                    .collect()
+            })
+            .collect();
+        self.prepared_text()
+            .resolve_prepared_widths_from_data(total_width, &data, policy)
+    }
+
+    pub(crate) fn resolve_prepared_widths_from_data<S: AsRef<str>>(
+        &self,
+        total_width: usize,
+        data: &[Vec<S>],
+        policy: AmbiguousWidth,
+    ) -> ResolvedWidths {
         let measured = self.measure_columns(data, policy);
-        self.resolve_widths_measured_with_policy(total_width, &measured, policy)
+        self.resolve_prepared_widths_measured(total_width, &measured, policy)
     }
 
     pub(crate) fn measure_columns<S: AsRef<str>>(
@@ -75,7 +103,7 @@ impl FlatDataSpec {
         max_data_widths
     }
 
-    pub(crate) fn resolve_widths_measured_with_policy(
+    pub(crate) fn resolve_prepared_widths_measured(
         &self,
         total_width: usize,
         measured: &[usize],
@@ -96,7 +124,7 @@ impl FlatDataSpec {
 
         let overhead = self
             .decorations
-            .overhead_with_policy(self.columns.len(), policy);
+            .prepared_overhead(self.columns.len(), policy);
         let available = total_width.saturating_sub(overhead);
 
         let mut widths: Vec<usize> = Vec::with_capacity(self.columns.len());

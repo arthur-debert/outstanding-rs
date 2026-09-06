@@ -1,9 +1,9 @@
 use crate::context::ContextProvider;
 use crate::setup::SetupError;
 use crate::topics::Topic;
+use crate::RenderData;
 use crate::TemplateRegistry;
 use crate::{EmbeddedStyles, EmbeddedTemplates, Representation, Theme};
-use minijinja::Value;
 
 use super::AppBuilder;
 
@@ -25,7 +25,7 @@ impl AppBuilder {
         self
     }
 
-    pub fn context(mut self, name: impl Into<String>, value: Value) -> Self {
+    pub fn context(mut self, name: impl Into<String>, value: RenderData) -> Self {
         self.context_registry.add_static(name, value);
         self
     }
@@ -260,7 +260,7 @@ mod tests {
 
         let builder = AppBuilder::new()
             .templates(EmbeddedTemplates::new(TEMPLATES, ""))
-            .context("version", Value::from("1.0.0"))
+            .context("version", RenderData::from("1.0.0"))
             .command_with(
                 "info",
                 FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"name": "app"})))),
@@ -285,8 +285,8 @@ mod tests {
 
         let builder = AppBuilder::new()
             .templates(EmbeddedTemplates::new(TEMPLATES, ""))
-            .context("author", Value::from("Alice"))
-            .context("year", Value::from(2024))
+            .context("author", RenderData::from("Alice"))
+            .context("year", RenderData::from(2024))
             .command_with(
                 "info",
                 FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"title": "Report"})))),
@@ -312,7 +312,7 @@ mod tests {
         let builder = AppBuilder::new()
             .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .context_fn("terminal_width", |ctx: &RenderContext| {
-                Value::from(ctx.terminal_width.unwrap_or(80))
+                RenderData::from(ctx.terminal_width.unwrap_or(80))
             })
             .command_with(
                 "info",
@@ -340,7 +340,7 @@ mod tests {
         let builder = AppBuilder::new()
             .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .context_fn("mode", |ctx: &RenderContext| {
-                Value::from(format!("{:?}", ctx.representation))
+                RenderData::from(format!("{:?}", ctx.representation))
             })
             .command_with(
                 "info",
@@ -366,7 +366,7 @@ mod tests {
 
         let builder = AppBuilder::new()
             .templates(EmbeddedTemplates::new(TEMPLATES, ""))
-            .context("value", Value::from("from_context"))
+            .context("value", RenderData::from("from_context"))
             .command_with(
                 "test",
                 FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"value": "from_data"})))),
@@ -391,7 +391,7 @@ mod tests {
 
         let builder = AppBuilder::new()
             .templates(EmbeddedTemplates::new(TEMPLATES, ""))
-            .context("app_name", Value::from("MyApp"))
+            .context("app_name", RenderData::from("MyApp"))
             .command_with(
                 "list",
                 FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({})))),
@@ -427,7 +427,7 @@ mod tests {
             .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .context_fn("doubled_count", |ctx: &RenderContext| {
                 let count = ctx.data.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
-                Value::from(count * 2)
+                RenderData::from(count * 2)
             })
             .command_with(
                 "test",
@@ -455,9 +455,9 @@ mod tests {
             .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .context(
                 "config",
-                Value::from_iter([
-                    ("debug", Value::from(true)),
-                    ("max_items", Value::from(100)),
+                RenderData::from_iter([
+                    ("debug", RenderData::from(true)),
+                    ("max_items", RenderData::from(100)),
                 ]),
             )
             .command_with(
@@ -484,7 +484,7 @@ mod tests {
 
         let builder = AppBuilder::new()
             .templates(EmbeddedTemplates::new(TEMPLATES, ""))
-            .context("separator", Value::from(" | "))
+            .context("separator", RenderData::from(" | "))
             .command_with(
                 "list",
                 FnHandler::new(|_m, _ctx| {
@@ -513,7 +513,7 @@ mod tests {
 
         let builder = AppBuilder::new()
             .templates(EmbeddedTemplates::new(TEMPLATES, ""))
-            .context("extra", Value::from("should_not_appear"))
+            .context("extra", RenderData::from("should_not_appear"))
             .command_with(
                 "test",
                 FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"data": "value"})))),

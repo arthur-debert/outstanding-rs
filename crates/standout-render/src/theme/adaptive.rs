@@ -61,7 +61,7 @@ mod tests {
             Some(Style::new().green()),
             Some(Style::new().red()),
         );
-        let data = serde_json::to_value(SimpleData {
+        let data = standout_types::RenderData::from_serialize(SimpleData {
             message: "hi".into(),
         })
         .unwrap();

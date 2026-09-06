@@ -1,12 +1,12 @@
 use crate::config::TdooConfig;
 use clap::ArgMatches;
 use serde::Serialize;
-use serde_json::Value as JsonValue;
 use standout::cli::{
     Artifact, CommandConfig, CommandContext, CommandContextInput, HookError, Output,
 };
 use standout::handler;
 use standout::input::{ArgSource, ConfigSource, FlagSource, InputChain, StdinSource};
+use standout::RenderData as JsonValue;
 use todo_core::{ExportWarning, Todo, TodoFilter, TodoStore};
 
 /// The title a new todo carries: `--title`, else piped stdin.

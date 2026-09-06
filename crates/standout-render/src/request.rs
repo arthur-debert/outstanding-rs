@@ -65,7 +65,7 @@ pub enum TemplateRef {
 // Owned, no lifetime: the artifact path can store this until after the
 // write instead of keeping a second snapshot type.
 pub struct RenderRequest {
-    pub data: serde_json::Value,
+    pub data: standout_types::RenderData,
     pub template: TemplateRef,
     pub theme: Theme,
     pub format: Representation,
@@ -129,11 +129,12 @@ pub(crate) fn resolve_style_mode(
 }
 
 fn serialize_structured(
-    data: &serde_json::Value,
+    data: &standout_types::RenderData,
     format: Representation,
 ) -> Result<RenderResult, RenderError> {
     Ok(RenderResult::plain(crate::document::serialize_structured(
-        data, format,
+        &data.to_json(),
+        format,
     )?))
 }
 
@@ -146,7 +147,7 @@ fn render_from_request(request: &RenderRequest) -> Result<RenderResult, RenderEr
         if request.format == Representation::Csv {
             if let Some(projection) = &request.csv_projection {
                 let csv = projection
-                    .render(&request.data)
+                    .render(&request.data.to_json())
                     .map_err(|e| RenderError::OperationError(e.to_string()))?;
                 return Ok(RenderResult::plain(csv));
             }
@@ -211,7 +212,7 @@ pub(crate) fn convenience_engine() -> SharedTemplateEngine {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn convenience_request(
     template: TemplateRef,
-    data: serde_json::Value,
+    data: standout_types::RenderData,
     theme: Theme,
     format: Representation,
     color_policy: ColorPolicy,
@@ -261,7 +262,7 @@ fn render_context_from_request(request: &RenderRequest) -> RenderContext<'_> {
 mod tests {
     use super::*;
     use crate::template::MiniJinjaEngine;
-    use serde_json::json;
+    use crate::test_data as json;
     use serial_test::serial;
 
     fn sample_target() -> TargetProperties {
@@ -331,11 +332,11 @@ mod tests {
 
     #[test]
     fn render_request_carries_extras_to_context_providers() {
-        use minijinja::Value;
+        use standout_types::RenderData;
 
         let mut registry = ContextRegistry::new();
         registry.add_provider("label", |ctx: &RenderContext| {
-            Value::from(ctx.get_extra("label").unwrap_or("missing"))
+            RenderData::from(ctx.get_extra("label").unwrap_or("missing"))
         });
         let request = RenderRequest {
             data: json!({"name": "Ada"}),
@@ -575,7 +576,7 @@ mod tests {
             fn render_template(
                 &self,
                 template: &str,
-                data: &serde_json::Value,
+                data: &standout_types::RenderData,
             ) -> Result<String, RenderError> {
                 self.inner.render_template(template, data)
             }
@@ -588,7 +589,7 @@ mod tests {
             fn render_named(
                 &self,
                 name: &str,
-                data: &serde_json::Value,
+                data: &standout_types::RenderData,
             ) -> Result<String, RenderError> {
                 self.inner.render_named(name, data)
             }
@@ -600,8 +601,8 @@ mod tests {
             fn render_with_context(
                 &self,
                 template: &str,
-                data: &serde_json::Value,
-                context: HashMap<String, serde_json::Value>,
+                data: &standout_types::RenderData,
+                context: HashMap<String, standout_types::RenderData>,
             ) -> Result<String, RenderError> {
                 self.inner.render_with_context(template, data, context)
             }

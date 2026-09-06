@@ -183,7 +183,10 @@ fn the_control_character_escaper_has_two_copies_and_they_agree() {
     let root = workspace_root();
     let [first, second] = CONTROL_ESCAPER_COPIES.map(|copy| fs::read_to_string(root.join(copy)));
     assert_eq!(
-        first.unwrap(),
+        first.unwrap().replace(
+            "pub(crate) fn escape_control_characters",
+            "pub fn escape_control_characters",
+        ),
         second.unwrap(),
         "the two copies of the escaper have drifted: {} and {}",
         CONTROL_ESCAPER_COPIES[0],

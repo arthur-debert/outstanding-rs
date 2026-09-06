@@ -3,7 +3,6 @@ use serde::Serialize;
 use serde_json::json;
 use serial_test::serial;
 use standout::cli::hooks::TextOutput;
-use standout::cli::RunErrorKind;
 use standout::cli::{
     App, CommandContext, Delivery, EventsFnHandler, FnHandler, Output, RenderedOutput, Results,
     Summary, SummaryResult,
@@ -248,7 +247,7 @@ fn help_reports_the_same_decision_a_command_does() {
 
 #[test]
 #[serial]
-fn a_help_page_the_strict_style_check_rejects_pages_nothing() {
+fn literal_brackets_in_help_text_do_not_prevent_paging_in_strict_mode() {
     let strict = App::builder()
         .name("myapp")
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
@@ -268,8 +267,10 @@ fn a_help_page_the_strict_style_check_rejects_pages_nothing() {
         .subcommand(Command::new("log").about("[bogus]every entry so far[/bogus]"));
     let result = on_a_terminal().run(&strict, described, ["myapp", "--help"]);
 
-    result.assert_error_kind(RunErrorKind::Render);
-    assert_eq!(result.delivery(), &Delivery::Stdout);
+    result.assert_success();
+    result.assert_stdout_contains("[bogus]every entry so far[/bogus]");
+    assert!(result.warnings().is_empty());
+    assert_eq!(result.delivery(), &Delivery::Pager(PAGER.to_string()));
 }
 
 #[test]

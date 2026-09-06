@@ -38,7 +38,9 @@ fn apply_app(seen: Seen) -> App {
             }),
             move |cfg| {
                 cfg.template_name("apply").post_dispatch(
-                    move |_matches: &ArgMatches, ctx: &CommandContext, data: serde_json::Value| {
+                    move |_matches: &ArgMatches,
+                          ctx: &CommandContext,
+                          data: standout::RenderData| {
                         seen.borrow_mut()
                             .push((ctx.representation(), ctx.color_policy()));
                         if ctx.representation().is_structured() {

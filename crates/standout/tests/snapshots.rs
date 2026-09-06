@@ -1,5 +1,5 @@
 use clap::Command;
-use insta::{assert_json_snapshot, assert_snapshot};
+use insta::assert_snapshot;
 use serde_json::json;
 use standout::cli::FnHandler;
 use standout::cli::{App, Output};
@@ -70,7 +70,10 @@ fn test_snapshots_json_output() {
     let output = result.output().unwrap();
 
     let json_value: serde_json::Value = serde_json::from_str(output).unwrap();
-    assert_json_snapshot!("json_list_output", json_value);
+    assert_snapshot!(
+        "json_list_output",
+        serde_json::to_string_pretty(&json_value).unwrap()
+    );
 }
 
 #[test]

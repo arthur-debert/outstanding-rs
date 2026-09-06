@@ -15,13 +15,16 @@ impl SimpleEngine {
         }
     }
 
-    fn resolve_path<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    fn resolve_path<'a>(
+        value: &'a standout_types::RenderData,
+        path: &str,
+    ) -> Option<&'a standout_types::RenderData> {
         let mut current = value;
 
         for part in path.split('.') {
             current = match current {
-                serde_json::Value::Object(map) => map.get(part)?,
-                serde_json::Value::Array(arr) => {
+                standout_types::RenderData::Object(map) => map.get(part)?,
+                standout_types::RenderData::Array(arr) => {
                     let index: usize = part.parse().ok()?;
                     arr.get(index)?
                 }
@@ -32,24 +35,23 @@ impl SimpleEngine {
         Some(current)
     }
 
-    fn format_value(value: &serde_json::Value) -> String {
-        match value {
-            serde_json::Value::String(s) => s.clone(),
-            serde_json::Value::Number(n) => n.to_string(),
-            serde_json::Value::Bool(b) => b.to_string(),
-            serde_json::Value::Null => String::new(),
-            serde_json::Value::Array(_) | serde_json::Value::Object(_) => value.to_string(),
+    fn format_value(value: &standout_types::RenderData) -> String {
+        if value.is_null() {
+            String::new()
+        } else {
+            super::presentation::markup(&value.to_template_value())
         }
     }
 
     fn render_impl(
         &self,
         template: &str,
-        data: &serde_json::Value,
-        context: Option<&HashMap<String, serde_json::Value>>,
+        data: &standout_types::RenderData,
+        context: Option<&HashMap<String, standout_types::RenderData>>,
     ) -> Result<String, RenderError> {
         let mut result = String::with_capacity(template.len());
         let mut chars = template.chars().peekable();
+        let mut literal_start = 0;
 
         while let Some(ch) = chars.next() {
             if ch == '{' {
@@ -57,6 +59,8 @@ impl SimpleEngine {
                     chars.next();
                     result.push('{');
                 } else {
+                    super::source::validate_literal(&result[literal_start..])
+                        .map_err(|error| RenderError::TemplateError(error.to_string()))?;
                     let mut var_name = String::new();
                     let mut found_close = false;
 
@@ -113,6 +117,7 @@ impl SimpleEngine {
                             result.push_str(&format!("{{{}}}", var_name));
                         }
                     }
+                    literal_start = result.len();
                 }
             } else if ch == '}' {
                 if chars.peek() == Some(&'}') {
@@ -126,6 +131,8 @@ impl SimpleEngine {
             }
         }
 
+        super::source::validate_literal(&result[literal_start..])
+            .map_err(|error| RenderError::TemplateError(error.to_string()))?;
         Ok(result)
     }
 }
@@ -140,7 +147,7 @@ impl TemplateEngine for SimpleEngine {
     fn render_template(
         &self,
         template: &str,
-        data: &serde_json::Value,
+        data: &standout_types::RenderData,
     ) -> Result<String, RenderError> {
         self.render_impl(template, data, None)
     }
@@ -150,7 +157,11 @@ impl TemplateEngine for SimpleEngine {
         Ok(())
     }
 
-    fn render_named(&self, name: &str, data: &serde_json::Value) -> Result<String, RenderError> {
+    fn render_named(
+        &self,
+        name: &str,
+        data: &standout_types::RenderData,
+    ) -> Result<String, RenderError> {
         let template = self
             .templates
             .get(name)
@@ -165,8 +176,8 @@ impl TemplateEngine for SimpleEngine {
     fn render_with_context(
         &self,
         template: &str,
-        data: &serde_json::Value,
-        context: HashMap<String, serde_json::Value>,
+        data: &standout_types::RenderData,
+        context: HashMap<String, standout_types::RenderData>,
     ) -> Result<String, RenderError> {
         self.render_impl(template, data, Some(&context))
     }
@@ -187,7 +198,7 @@ impl TemplateEngine for SimpleEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use crate::test_data as json;
 
     #[test]
     fn test_simple_substitution() {

@@ -146,6 +146,13 @@ enum StyledEvent<'a> {
     CloseTag(&'a str),
 }
 
+#[derive(Debug)]
+pub enum StyledTextEvent<'a> {
+    Text(std::borrow::Cow<'a, str>),
+    OpenTag(&'a str),
+    CloseTag(&'a str),
+}
+
 impl<'a> StyledText<'a> {
     pub fn parse(input: &'a str) -> Self {
         let tokens = Tokenizer::new(input).collect::<Vec<_>>();
@@ -195,6 +202,23 @@ impl<'a> StyledText<'a> {
         }
 
         Self { events }
+    }
+
+    pub fn visit(&self, mut visitor: impl FnMut(StyledTextEvent<'_>)) {
+        for event in &self.events {
+            visitor(match event {
+                StyledEvent::Text {
+                    source,
+                    unescape_brackets,
+                } => StyledTextEvent::Text(if *unescape_brackets {
+                    unescape(source)
+                } else {
+                    std::borrow::Cow::Borrowed(source)
+                }),
+                StyledEvent::OpenTag(name) => StyledTextEvent::OpenTag(name),
+                StyledEvent::CloseTag(name) => StyledTextEvent::CloseTag(name),
+            });
+        }
     }
 
     pub fn visit_visible_chars(&self, mut visitor: impl FnMut(char)) {
@@ -345,7 +369,7 @@ fn visit_plain_text_units<'a>(
     while let Some((start, character)) = indices.next() {
         if unescape_brackets && character == '\\' {
             if let Some(&(next_start, next)) = indices.peek() {
-                if next == '[' || next == ']' {
+                if matches!(next, '[' | ']' | '\\') {
                     indices.next();
                     let end = next_start + next.len_utf8();
                     visitor(Some(next), &source[start..end]);
@@ -688,7 +712,7 @@ fn find_unescaped_bracket(s: &str) -> Option<usize> {
         while i < bytes.len() {
             if bytes[i] == b'\\' && i + 1 < bytes.len() {
                 let next = bytes[i + 1];
-                if next == b'[' || next == b']' {
+                if matches!(next, b'[' | b']' | b'\\') {
                     i += 2;
                     continue;
                 }
@@ -702,13 +726,11 @@ fn find_unescaped_bracket(s: &str) -> Option<usize> {
     None
 }
 
-// Returns `Cow::Borrowed` when no `\[`/`\]` escape is present, so
-// escape-free inputs (Windows paths, regexes) stay allocation-free.
 fn unescape(s: &str) -> std::borrow::Cow<'_, str> {
     let bytes = s.as_bytes();
     let has_escape = bytes
         .windows(2)
-        .any(|w| w[0] == b'\\' && (w[1] == b'[' || w[1] == b']'));
+        .any(|w| w[0] == b'\\' && matches!(w[1], b'[' | b']' | b'\\'));
     if !has_escape {
         return std::borrow::Cow::Borrowed(s);
     }
@@ -717,7 +739,7 @@ fn unescape(s: &str) -> std::borrow::Cow<'_, str> {
     while let Some(c) = chars.next() {
         if c == '\\' {
             if let Some(&next) = chars.peek() {
-                if next == '[' || next == ']' {
+                if matches!(next, '[' | ']' | '\\') {
                     out.push(next);
                     chars.next();
                     continue;
@@ -1555,7 +1577,7 @@ mod tests {
         }
 
         #[test]
-        fn unescape_borrows_when_no_bracket_escape_present() {
+        fn unescape_borrows_when_no_escape_present() {
             assert!(matches!(
                 unescape("plain text"),
                 std::borrow::Cow::Borrowed(_)
@@ -1580,11 +1602,52 @@ mod tests {
         }
 
         #[test]
-        fn double_backslash_then_open_emits_backslash_then_literal_bracket() {
-            // `\\` is not an escape sequence, so the first `\` is literal;
-            // the second `\` pairs with `[` to emit a literal `[`.
+        fn escaped_backslash_does_not_escape_adjacent_tag() {
             let parser = BBParser::new(test_styles(), TagTransform::Remove);
-            assert_eq!(parser.parse("\\\\[bold]"), "\\[bold]");
+            let (output, errors) = parser.parse_with_diagnostics(r"\\[bold]text[/bold]");
+            assert_eq!(output, r"\text");
+            assert!(errors.is_empty());
+        }
+
+        #[test]
+        fn odd_backslash_count_escapes_the_bracket() {
+            let parser = BBParser::new(test_styles(), TagTransform::Remove);
+            let (output, errors) = parser.parse_with_diagnostics(r"\\\[bold\]");
+            assert_eq!(output, r"\[bold]");
+            assert!(errors.is_empty());
+        }
+
+        #[test]
+        fn independently_escaped_text_preserves_adjacent_authored_tags() {
+            let parser = BBParser::new(test_styles(), TagTransform::Remove);
+            for literal in [r"\", r"\\", r"\[", r"[draft].txt\", r"C:\dir\"] {
+                let mut escaped = String::new();
+                for character in literal.chars() {
+                    if matches!(character, '\\' | '[' | ']') {
+                        escaped.push('\\');
+                    }
+                    escaped.push(character);
+                }
+                let source = format!("[bold]{escaped}[/bold][red]tail[/red]");
+                let (output, errors) = parser.parse_with_diagnostics(&source);
+                assert_eq!(output, format!("{literal}tail"));
+                assert!(errors.is_empty());
+                assert_eq!(strip_tags(&source), output);
+            }
+        }
+
+        #[test]
+        fn backslash_pairs_are_one_visible_character_and_one_selection_unit() {
+            let source = r"[bold]a\\\[b\]z[/bold]";
+            let styled = StyledText::parse(source);
+            let mut visible = String::new();
+            styled.visit_visible_chars(|character| visible.push(character));
+            assert_eq!(visible, r"a\[b]z");
+            assert_eq!(styled.select_range(0..visible.chars().count()), source);
+            assert_eq!(styled.select_range(1..2), r"[bold]\\[/bold]");
+            assert_eq!(styled.select_range(1..3), r"[bold]\\\[[/bold]");
+            assert_eq!(strip_tags(&styled.select_range(1..2)), r"\");
+            assert_eq!(strip_tags(&styled.select_range(1..3)), r"\[");
         }
 
         #[test]

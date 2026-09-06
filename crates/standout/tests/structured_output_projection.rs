@@ -255,7 +255,7 @@ fn projection_runs_between_post_dispatch_and_post_output() {
                     .structured_only()
                     .structured_output_projection(rustloc_projection())
                     .post_dispatch(|_matches, _ctx, mut root| {
-                        root["report"]["items"][0]["language"] = json!("Rust (hooked)");
+                        root["report"]["items"][0]["language"] = json!("Rust (hooked)").into();
                         Ok(root)
                     })
                     .post_output(|_matches, _ctx, output| {

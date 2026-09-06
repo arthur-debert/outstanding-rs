@@ -4,6 +4,6 @@
 {%- else %}
 {% for todo in todos -%}
 {%- set status = "done" if todo.done else "pending" -%}
-[index]{{ ("#" ~ todo.id) | col(4, align="right") }}[/index]  [{{ status }}]{{ todo.title | col(40, truncate="end") }}[/{{ status }}]
+[index]{{ ("#" ~ todo.id) | col(4, align="right") }}[/index]  {{ todo.title | col(40, truncate="end") | style_as(status) }}
 {% endfor -%}
 {%- endif %}

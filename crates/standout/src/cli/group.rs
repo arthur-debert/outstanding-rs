@@ -580,8 +580,8 @@ impl<H> CommandConfig<H> {
         F: Fn(
                 &ArgMatches,
                 &CommandContext,
-                serde_json::Value,
-            ) -> Result<serde_json::Value, crate::cli::hooks::HookError>
+                standout_render::RenderData,
+            ) -> Result<standout_render::RenderData, crate::cli::hooks::HookError>
             + 'static,
     {
         let hooks = self.hooks.take().unwrap_or_default();

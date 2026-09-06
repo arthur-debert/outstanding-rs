@@ -41,7 +41,7 @@ pub enum DispatchOutput {
     /// run's warning records only if the post-output hooks return the document
     /// unchanged. CSV, whose rows are the events alone, arrives as `Text`.
     Records {
-        records: Vec<serde_json::Value>,
+        records: Vec<standout_render::RenderData>,
         status: ExitStatus,
     },
 }
@@ -197,7 +197,7 @@ pub(crate) struct PendingRender {
 impl PendingRender {
     fn request(
         &self,
-        data: serde_json::Value,
+        data: standout_render::RenderData,
         template: standout_render::TemplateRef,
     ) -> RenderRequest {
         RenderRequest {
@@ -216,7 +216,10 @@ impl PendingRender {
         }
     }
 
-    pub(crate) fn resolved(&self, data: serde_json::Value) -> Result<RenderRequest, RunError> {
+    pub(crate) fn resolved(
+        &self,
+        data: standout_render::RenderData,
+    ) -> Result<RenderRequest, RunError> {
         let template = render_time_template(
             &self.command_path,
             &self.template,
@@ -226,7 +229,7 @@ impl PendingRender {
         Ok(self.request(data, template))
     }
 
-    fn untemplated(&self, data: serde_json::Value) -> RenderRequest {
+    fn untemplated(&self, data: standout_render::RenderData) -> RenderRequest {
         self.request(data, standout_render::TemplateRef::Absent)
     }
 }
@@ -289,7 +292,7 @@ pub(crate) fn render_handler_output<T: Serialize>(
     color_policy: ColorPolicy,
     structured_output_projection: Option<&StructuredOutputProjection>,
     target: TargetProperties,
-    document_records: Option<Vec<serde_json::Value>>,
+    document_records: Option<Vec<standout_render::RenderData>>,
 ) -> Result<DispatchOutput, RunError> {
     let (output, status) = match result {
         Ok(output) => output.split_exit_status(),
@@ -318,11 +321,11 @@ pub(crate) fn render_handler_output<T: Serialize>(
         warnings,
     };
 
-    let event_document = |events: Vec<serde_json::Value>,
-                          summary: Option<serde_json::Value>|
+    let event_document = |events: Vec<standout_render::RenderData>,
+                          summary: Option<standout_render::RenderData>|
      -> Result<DispatchOutput, RunError> {
         if output_mode == crate::Representation::Csv {
-            let request = render.untemplated(serde_json::Value::Array(events));
+            let request = render.untemplated(standout_render::RenderData::Array(events));
             let (formatted, raw) = render_via_request(&request)?;
             return Ok(DispatchOutput::Text {
                 formatted,
@@ -384,8 +387,8 @@ pub(crate) fn render_handler_output<T: Serialize>(
     }
 }
 
-fn serialize_handler_data<T: Serialize>(data: &T) -> Result<serde_json::Value, RunError> {
-    serde_json::to_value(data).map_err(|e| {
+fn serialize_handler_data<T: Serialize>(data: &T) -> Result<standout_render::RenderData, RunError> {
+    standout_render::RenderData::from_serialize(data).map_err(|e| {
         RunError::render(
             format!("Failed to serialize handler result: {}", e),
             Arc::new(e),
@@ -394,11 +397,11 @@ fn serialize_handler_data<T: Serialize>(data: &T) -> Result<serde_json::Value, R
 }
 
 fn run_post_dispatch_hooks(
-    json_data: serde_json::Value,
+    json_data: standout_render::RenderData,
     matches: &ArgMatches,
     ctx: &CommandContext,
     hooks: Option<&Hooks>,
-) -> Result<serde_json::Value, RunError> {
+) -> Result<standout_render::RenderData, RunError> {
     match hooks {
         Some(hooks) => hooks
             .run_post_dispatch(matches, ctx, json_data)

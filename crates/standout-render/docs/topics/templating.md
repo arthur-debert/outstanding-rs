@@ -1,6 +1,6 @@
 # Templating
 
-`standout-render` uses a two-pass templating system that combines a template engine for logic and data binding with a custom BBCode-like syntax for styling. This separation keeps templates readable while providing full control over both content and presentation.
+`standout-render` displays inserted values as text and applies styles written in templates or constructed with `FormattedText`. MiniJinja handles variables and control flow; the bracket parser turns deliberate styles into terminal output.
 
 The default engine is MiniJinja (Jinja2-compatible), but alternative engines are available. See [Template Engines](template-engines.md) for options including a lightweight `SimpleEngine` for reduced binary size.
 
@@ -14,7 +14,7 @@ Templates are processed in two distinct passes:
 Template + Data → [Pass 1: MiniJinja] → Text with style tags → [Pass 2: BBParser] → Final output
 ```
 
-**Pass 1 - MiniJinja**: Standard template processing. Variables are substituted, control flow executes, filters apply.
+**Pass 1 - MiniJinja**: Values are inserted with their text escaped, control flow executes, and formatting operations preserve explicit styles.
 
 **Pass 2 - BBParser**: Style tag processing. Bracket-notation tags are converted to ANSI escape codes (or stripped, depending on output mode).
 
@@ -28,11 +28,85 @@ After Pass 1: [title]Report[/title] has 42 items
 After Pass 2: \x1b[1;36mReport\x1b[0m has 42 items  (or plain: "Report has 42 items")
 ```
 
-This separation means:
+## Text and Formatted Values
 
-- Template logic (loops, conditionals) is handled by MiniJinja—a mature, well-documented engine
-- Style application is a simple, predictable transformation
-- You can debug each pass independently
+Ordinary `{{ value }}` displays brackets and backslashes literally. C0/C1
+controls, including ESC, CR, NUL and DEL, become visible lowercase codepoint
+spellings such as `\u{1b}` and `\u{d}`. Newline and tab remain layout whitespace.
+The same policy applies to nested values, loop items, context values, table
+cells, and incremental human output, including with color disabled. A filename
+that must occupy one line needs a separate single-line presentation operation.
+
+Construct deliberate formatting in CLI view data:
+
+```rust
+use standout_render::FormattedText;
+
+let heading = FormattedText::text("Changed: ")
+    .append(FormattedText::text("[draft].txt").styled("path")?)
+    .styled("heading")?;
+let colored = FormattedText::from_ansi_sgr("\x1b[31mred\x1b[0m");
+```
+
+`text` accepts a string; `append` accepts strings or formatted children.
+`styled` wraps the existing children and validates the name: a lowercase ASCII
+letter or `_`, then lowercase ASCII letters, digits, `_` or `-`.
+Text children remain literal even inside a style. Define semantic styles in the
+theme, and keep `FormattedText` in CLI view types rather than application
+library models.
+
+`plain_text()` concatenates the text children. JSON/YAML/CSV/NDJSON serialize a
+formatted value as that string, with no style metadata; ordinary values retain
+their original contents and shape. Human escape spellings are applied only when
+displaying text. Explicit raw output and diagnostic payload APIs retain their
+separate byte-preserving behavior.
+
+Authored literal fragments between template expressions must contain complete
+bracket tokens and paired backslash escapes. Escape literal brackets and
+backslashes as `\[` and `\\`; use `value | style_as(name)` for dynamic styles.
+This also applies inside branches, loops, captures, and included templates.
+
+### Importing ANSI SGR
+
+`from_ansi_sgr` accepts SGR introduced by `ESC [` or C1 CSI (`U+009B`) and
+terminated by `m`. It supports semicolon-separated decimal parameters:
+
+| Parameters | Formatting |
+| --- | --- |
+| `0` | Reset all attributes and colors |
+| `1`, `2`, `3`, `4`, `5`, `7`, `8`, `9` | Bold, dim, italic, underline, blink, reverse, hidden, strikethrough |
+| `22`, `23`, `24`, `25`, `27`, `28`, `29` | Reset bold/dim together, then the corresponding attributes above |
+| `30–37`, `40–47`, `90–97`, `100–107` | Standard and bright foreground/background colors |
+| `39`, `49` | Default foreground/background |
+| `38;5;n`, `48;5;n` | Indexed foreground/background, `n` in `0–255` |
+| `38;2;r;g;b`, `48;2;r;g;b` | RGB foreground/background, each channel in `0–255` |
+
+An empty parameter means `0`. Each sequence permits at most 128 parameter
+bytes and 32 parameters. Unsupported, malformed, incomplete, or oversized
+sequences remain text in full; a partially supported sequence changes no style.
+OSC, DCS and other control strings remain text as complete units, including any
+SGR inside them. Supported SGR becomes metadata and disappears from the plain
+projection; remaining controls become visible only during human rendering.
+
+### Composition and String Operations
+
+`append`, template `join`, `style_as`, tables, padding and `truncate_at` preserve
+explicit formatting. Width operations measure the displayed text after control
+escaping; style metadata has zero width. Truncation closes styles before the
+following output.
+
+`~`, `string`, `replace` and slicing use formatted values' plain-text projection
+and return ordinary text. Macro and block captures preserve template-authored
+styles and literal value children. Use `MiniJinjaEngine` for these captures;
+a bare MiniJinja environment does not perform Standout's template preparation.
+
+Terminal templates reject `{% autoescape ... %}` blocks. The HTML filters
+`safe`, `escape` and `e` leave values unchanged and confer no terminal formatting
+privileges. MiniJinja safe-string metadata on supplied data is cleared at ingress.
+The `verbatim` filter is removed: replace `{{ value | verbatim }}` with
+`{{ value }}`. Callers outside templates can use
+`standout_render::escape_control_characters(String)` for the same control policy;
+ordinary template insertion already handles both controls and brackets.
 
 ---
 
@@ -183,16 +257,17 @@ Style tags and MiniJinja work together seamlessly:
 [title]{% if custom_title %}{{ custom_title }}{% else %}Default Title{% endif %}[/title]
 
 {% for task in tasks %}
-[{{ task.status }}]{{ task.title }}[/{{ task.status }}]
+{{ task.title | style_as(task.status) }}
 {% endfor %}
 ```
 
-The second example shows dynamic style names—the style applied depends on the value of `task.status`.
+The second example selects a validated style name from `task.status`. Templates
+that assemble a tag name with `[{{ status }}]` are rejected; use `style_as`.
 
 ### Literal brackets
 
-Pass 2 reads `[` as the start of a style tag. To put a literal `[` in the
-output, escape it as `\[`; escape a literal `]` as `\]`:
+In literal template source, escape `[` as `\[`, `]` as `\]`, and a backslash
+as `\\`. Inserted values need no manual escaping:
 
 ```jinja
 Ready \[y/n\]
@@ -206,9 +281,9 @@ does not begin a valid tag name (for example `[0, 100]`) is already left
 literal, so escaping is only needed when the bracketed text would otherwise
 parse as a tag.
 
-This is distinct from MiniJinja's `{{`/`}}` brace escape, which belongs to Pass
-1 (see [Template Engines](template-engines.md)) and does not affect the Pass 2
-bracket syntax.
+A doubled backslash emits one backslash, so `\\[title]x[/title]` displays a
+backslash followed by styled `x`. MiniJinja brace escaping remains separate
+(see [Template Engines](template-engines.md)).
 
 ---
 
@@ -305,13 +380,13 @@ Beyond MiniJinja's standard filters, `standout-render` provides formatting filte
 {% endif %}
 ```
 
-Returns visual width (handles Unicode—CJK characters count as 2).
+Returns displayed width after control escaping; CJK characters count as 2.
 
 ### Style Application
 
 ```jinja
-{{ value | style_as("error") }}                    {# wraps in [error]...[/error] #}
-{{ task.status | style_as(task.status) }}         {# dynamic: [pending]pending[/pending] #}
+{{ value | style_as("error") }}
+{{ task.status | style_as(task.status) }}
 ```
 
 ---
@@ -428,8 +503,7 @@ let output = render_auto(template, &data, &theme, Representation::Json, ColorPol
 
 | Mode | Behavior |
 | ------ | ---------- |
-| `Term` | Render template, apply styles |
-| `Text` | Render template, strip styles |
+| `Human` | Render template; color policy selects styled or plain output |
 | `TermDebug` | Render template, keep style tags |
 | `Json` | `serde_json::to_string_pretty(data)` |
 | `Yaml` | `serde_yaml::to_string(data)` |
@@ -450,7 +524,8 @@ use standout_render::validate_template;
 validate_template(template, &sample_data, &theme)?;
 ```
 
-The error lists every unknown or unbalanced tag.
+The error lists unknown or unbalanced authored tags. Brackets in ordinary
+values are literal and produce no style diagnostics.
 
 ---
 

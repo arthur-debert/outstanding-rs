@@ -1,3 +1,13 @@
+mod presentation;
+pub mod render_data;
+
+pub use render_data::RenderData;
+
+pub use presentation::{
+    FormattedText, InvalidStyleName, PresentationNode, PresentationStyle, SgrColor, SgrParser,
+    SgrStyle, SgrToken,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Representation {
     #[default]

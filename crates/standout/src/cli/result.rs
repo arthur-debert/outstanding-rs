@@ -37,7 +37,11 @@ impl CompletedRun {
             warnings,
             output_mode,
             color_policy,
-            results: recorder.records(),
+            results: recorder
+                .records()
+                .iter()
+                .map(standout_render::RenderData::to_json)
+                .collect(),
             delivery: recorder.delivery(),
             entries: String::new(),
         }

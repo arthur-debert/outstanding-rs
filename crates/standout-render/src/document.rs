@@ -17,7 +17,7 @@ pub fn serialize_document<T: Serialize>(
             Ok(json)
         }
         Representation::Yaml => {
-            let mut yaml = serde_yaml::to_string(data)?;
+            let mut yaml = serialize_yaml(data)?;
             if !yaml.ends_with('\n') {
                 yaml.push('\n');
             }
@@ -35,27 +35,90 @@ pub fn serialize_document<T: Serialize>(
     }
 }
 
+fn serialize_yaml<T: Serialize>(data: &T) -> Result<String, RenderError> {
+    let json = serde_json::to_value(data)?;
+    let yaml: serde_yaml::Value = serde_yaml::from_str(&serde_json::to_string(&json)?)?;
+    let projected = serde_json::to_value(&yaml)?;
+    if !equivalent_json(&json, &projected) {
+        return Err(RenderError::OperationError(
+            "YAML cannot represent this JSON number without losing precision".into(),
+        ));
+    }
+    Ok(serde_yaml::to_string(&yaml)?)
+}
+
+fn equivalent_json(left: &serde_json::Value, right: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    match (left, right) {
+        (Value::Number(left), Value::Number(right)) => {
+            let left = decimal_parts(&left.to_string());
+            left.is_some() && left == decimal_parts(&right.to_string())
+        }
+        (Value::Array(left), Value::Array(right)) => {
+            left.len() == right.len() && left.iter().zip(right).all(|(a, b)| equivalent_json(a, b))
+        }
+        (Value::Object(left), Value::Object(right)) => {
+            left.len() == right.len()
+                && left.iter().all(|(key, value)| {
+                    right
+                        .get(key)
+                        .is_some_and(|other| equivalent_json(value, other))
+                })
+        }
+        _ => left == right,
+    }
+}
+
+fn decimal_parts(source: &str) -> Option<(bool, String, i64)> {
+    let (mantissa, exponent) = source.split_once(['e', 'E']).unwrap_or((source, "0"));
+    let mut exponent = exponent.parse::<i64>().ok()?;
+    let negative = mantissa.starts_with('-');
+    let mantissa = mantissa.trim_start_matches('-');
+    if let Some((_, fraction)) = mantissa.split_once('.') {
+        exponent = exponent.checked_sub(i64::try_from(fraction.len()).ok()?)?;
+    }
+    let mut digits = mantissa.replace('.', "").trim_start_matches('0').to_owned();
+    if digits.is_empty() {
+        return Some((false, digits, 0));
+    }
+    while digits.ends_with('0') {
+        digits.pop();
+        exponent = exponent.checked_add(1)?;
+    }
+    Some((negative, digits, exponent))
+}
+
 /// The record a run's document gives a handler's rendered value:
 /// `{"type":"result","data":<value>}`.
-pub fn result_record(data: serde_json::Value) -> serde_json::Value {
-    serde_json::json!({ "type": "result", "data": data })
+pub fn result_record(data: standout_types::RenderData) -> standout_types::RenderData {
+    standout_types::RenderData::Object(
+        [
+            (
+                "type".into(),
+                standout_types::RenderData::String("result".into()),
+            ),
+            ("data".into(), data),
+        ]
+        .into_iter()
+        .collect(),
+    )
 }
 
 /// The `ndjson` form of a handler's rendered value: [`result_record`] as one
 /// line, without its newline.
 pub fn result_entry<T: Serialize>(data: &T) -> Result<String, RenderError> {
     Ok(serde_json::to_string(&result_record(
-        serde_json::to_value(data)?,
+        standout_types::RenderData::from_serialize(data)?,
     ))?)
 }
 
 /// The document a run's records become under an encoding with no line
 /// framing: the array, in the form the framework writes a rendered value.
-pub fn serialize_record_array(
-    records: Vec<serde_json::Value>,
+pub fn serialize_record_array<T: Serialize>(
+    records: Vec<T>,
     representation: Representation,
 ) -> Result<String, RenderError> {
-    serialize_structured(&serde_json::Value::Array(records), representation)
+    serialize_structured(&serde_json::to_value(records)?, representation)
 }
 
 /// The document text of `data` under a structured representation, without the
@@ -67,7 +130,7 @@ pub(crate) fn serialize_structured(
 ) -> Result<String, RenderError> {
     match representation {
         Representation::Json => Ok(serde_json::to_string_pretty(data)?),
-        Representation::Yaml => Ok(serde_yaml::to_string(data)?),
+        Representation::Yaml => serialize_yaml(data),
         Representation::Csv => crate::util::write_csv(data),
         Representation::Ndjson => result_entry(data),
         mode => Err(RenderError::OperationError(format!(
@@ -142,7 +205,7 @@ mod tests {
     fn a_record_array_is_the_line_framed_records_as_one_document() {
         let records = vec![
             serde_json::json!({"type": "apply_start"}),
-            result_record(serde_json::json!({"add": 1})),
+            result_record(serde_json::json!({"add": 1}).into()).to_json(),
         ];
         for mode in [Representation::Json, Representation::Yaml] {
             let text = serialize_record_array(records.clone(), mode).unwrap();
@@ -179,5 +242,36 @@ mod tests {
             &format!("{yaml}---\n{yaml}")
         )
         .is_err());
+    }
+}
+
+#[cfg(test)]
+mod json_feature_tests {
+    use super::*;
+
+    #[test]
+    fn yaml_preserves_json_values_without_serializer_protocol_fields() {
+        let raw = serde_json::value::RawValue::from_string(
+            r#"{"integer":42,"float":1.25,"scientific":1e3,"text":"[draft]","nested":[true,null]}"#
+                .into(),
+        )
+        .unwrap();
+        let yaml = serialize_document(&raw, Representation::Yaml).unwrap();
+        assert!(!yaml.contains("$serde_json"));
+        let expected: serde_json::Value = serde_json::from_str(raw.get()).unwrap();
+        let actual: serde_json::Value = serde_yaml::from_str(&yaml).unwrap();
+        assert!(equivalent_json(&expected, &actual));
+        for number in [
+            "123456789012345678901234567890",
+            "0.123456789012345678901234567890",
+        ] {
+            let number: serde_json::Number = number.parse().unwrap();
+            let error = serialize_document(&number, Representation::Yaml).unwrap_err();
+            assert!(
+                error.to_string().contains("precision")
+                    || error.to_string().contains("expected any YAML value"),
+                "{error}"
+            );
+        }
     }
 }

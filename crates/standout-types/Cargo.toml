@@ -9,3 +9,10 @@ categories = ["command-line-interface"]
 repository = "https://github.com/arthur-debert/standout"
 
 [dependencies]
+minijinja = { version = "2", features = ["preserve_order"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+indexmap = { version = "2", features = ["serde"] }
+
+[dev-dependencies]
+serde_json = { version = "1", features = ["raw_value", "arbitrary_precision"] }

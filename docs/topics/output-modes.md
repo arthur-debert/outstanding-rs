@@ -40,6 +40,13 @@ representation, [below](#ndjson-mode).
 There is no XML representation. `--output xml` is a clap usage error like any
 other value the flag does not accept, exit `2`.
 
+Inserted values display brackets and backslashes literally in human output;
+terminal controls become visible codepoint spellings, with newline and tab
+preserved. This applies with color enabled or disabled and to incremental
+output. Use CLI-owned `FormattedText` for deliberate styles; see
+[Text and formatted values](../../crates/standout-render/docs/topics/templating.md#text-and-formatted-values)
+for construction, ANSI import, and composition.
+
 ## The style decision
 
 The style mode is resolved per run from the representation, the run's
@@ -62,8 +69,9 @@ myapp list | less       # No colors (pipe)
 
 `NO_COLOR` and `TERM=dumb` suppress the reported capability, so they turn a
 bare run plain. `CLICOLOR_FORCE` is not part of that probe, so it does not turn
-a plain destination colored. A structured encoding never carries escape
-sequences, whatever the policy says.
+a plain destination colored. The renderer adds no styling sequences to structured output. Ordinary data
+retains its original contents under each encoding's rules; `FormattedText`
+serializes as its plain-text projection.
 
 ## The color policy
 

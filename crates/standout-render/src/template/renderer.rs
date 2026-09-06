@@ -198,7 +198,7 @@ impl Renderer {
             target.color_scheme = color_scheme;
         }
         let request = crate::RenderRequest {
-            data: serde_json::to_value(data)?,
+            data: standout_types::RenderData::from_serialize(data)?,
             template: TemplateRef::Named(name.to_string()),
             theme: self.theme.clone(),
             format: self.representation,
@@ -589,7 +589,7 @@ mod tests {
             fn render_template(
                 &self,
                 source: &str,
-                data: &serde_json::Value,
+                data: &standout_types::RenderData,
             ) -> Result<String, RenderError> {
                 Ok(format!("Mock Render: {} data={}", source, data))
             }
@@ -597,7 +597,7 @@ mod tests {
             fn render_named(
                 &self,
                 name: &str,
-                data: &serde_json::Value,
+                data: &standout_types::RenderData,
             ) -> Result<String, RenderError> {
                 if let Some(src) = self.templates.get(name) {
                     Ok(format!("Mock Named: {} data={}", src, data))
@@ -609,8 +609,8 @@ mod tests {
             fn render_with_context(
                 &self,
                 template: &str,
-                data: &serde_json::Value,
-                _context: HashMap<String, serde_json::Value>,
+                data: &standout_types::RenderData,
+                _context: HashMap<String, standout_types::RenderData>,
             ) -> Result<String, RenderError> {
                 self.render_template(template, data)
             }
@@ -757,7 +757,7 @@ mod tests {
             .with_color_policy(ColorPolicy::Never);
         narrow.add_template("width", template).unwrap();
         assert_eq!(
-            narrow.render("width", &serde_json::json!({})).unwrap(),
+            narrow.render("width", &crate::test_data!({})).unwrap(),
             "3|↦≈Δ    "
         );
 
@@ -766,7 +766,7 @@ mod tests {
             .with_ambiguous_width(AmbiguousWidth::Wide);
         wide.add_template("width", template).unwrap();
         assert_eq!(
-            wide.render("width", &serde_json::json!({})).unwrap(),
+            wide.render("width", &crate::test_data!({})).unwrap(),
             "5|↦≈Δ  "
         );
     }

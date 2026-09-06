@@ -120,7 +120,7 @@ fn the_help_page_renders_ansi_through_the_default_help_theme() {
         !raw.contains("?]"),
         "a colored help render must resolve every tag: {raw:?}"
     );
-    assert!(result.stdout_plain().contains("--file <PATH>"));
+    assert!(result.stdout_plain().contains("--file <PATH>"), "{raw:?}");
 }
 #[test]
 #[serial]

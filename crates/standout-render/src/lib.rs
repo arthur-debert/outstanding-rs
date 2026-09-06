@@ -84,3 +84,16 @@ pub use file_loader::{
 pub use embedded::{
     EmbeddedSource, EmbeddedStyles, EmbeddedTemplates, StylesheetResource, TemplateResource,
 };
+
+pub use escape::escape_control_characters;
+pub use standout_types::{
+    FormattedText, InvalidStyleName, PresentationNode, PresentationStyle, RenderData, SgrColor,
+    SgrStyle,
+};
+
+#[cfg(test)]
+macro_rules! test_data {
+    ($($tokens:tt)*) => { standout_types::RenderData::from(serde_json::json!($($tokens)*)) };
+}
+#[cfg(test)]
+pub(crate) use test_data;

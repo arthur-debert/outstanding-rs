@@ -81,7 +81,7 @@ pub(crate) struct EventDestination {
     /// value bound to `event`.
     request: Option<RefCell<RenderRequest>>,
     failure: RefCell<Option<RunError>>,
-    retained: Option<RefCell<Vec<serde_json::Value>>>,
+    retained: Option<RefCell<Vec<standout_render::RenderData>>>,
 }
 
 impl EventDestination {
@@ -91,7 +91,7 @@ impl EventDestination {
             .filter(|_| context.representation.is_human())
             .map(|template| {
                 RefCell::new(RenderRequest {
-                    data: serde_json::Value::Null,
+                    data: standout_render::RenderData::Null,
                     template,
                     theme: context.theme,
                     format: context.representation,
@@ -125,7 +125,7 @@ impl EventDestination {
     /// The event records this run retained, in emit order, or `None` when the
     /// representation already wrote each event as it arrived. Taking them empties
     /// the destination.
-    pub(crate) fn take_document_records(&self) -> Option<Vec<serde_json::Value>> {
+    pub(crate) fn take_document_records(&self) -> Option<Vec<standout_render::RenderData>> {
         self.retained
             .as_ref()
             .map(|retained| std::mem::take(&mut *retained.borrow_mut()))
@@ -140,7 +140,7 @@ impl EventDestination {
         crate::cli::builder::execution::unresolved_style_tags_error(self.warnings.as_ref())
     }
 
-    fn render(&self, event: &serde_json::Value) -> Result<String, EmitError> {
+    fn render(&self, event: &standout_render::RenderData) -> Result<String, EmitError> {
         let Some(request) = self.request.as_ref() else {
             return Err(EmitError::Render {
                 message: format!(
@@ -153,7 +153,9 @@ impl EventDestination {
             });
         };
         let mut request = request.borrow_mut();
-        request.data = serde_json::json!({ "event": event });
+        request.data = standout_render::RenderData::Object(
+            [("event".into(), event.clone())].into_iter().collect(),
+        );
         let text = standout_render::render_request_split(&request)
             .map(|rendered| rendered.formatted)
             .map_err(|error| EmitError::Render {
@@ -169,7 +171,7 @@ impl EventDestination {
         }
     }
 
-    fn write(&self, event: &serde_json::Value) -> Result<(), EmitError> {
+    fn write(&self, event: &standout_render::RenderData) -> Result<(), EmitError> {
         if let Some(retained) = self.retained.as_ref() {
             retained.borrow_mut().push(event.clone());
             return Ok(());
@@ -210,7 +212,7 @@ fn emit_failure_error(error: &EmitError) -> RunError {
 }
 
 impl EventSink for EventDestination {
-    fn deliver(&self, event: &serde_json::Value) -> Result<(), EmitError> {
+    fn deliver(&self, event: &standout_render::RenderData) -> Result<(), EmitError> {
         let Err(error) = self.write(event) else {
             return Ok(());
         };
