@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project_root=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
+# shellcheck source=scripts/agent-env
+source "$project_root/scripts/agent-env"
+if (($# == 0)); then
+    printf 'Usage: scripts/with-sccache COMMAND [ARG ...]\n' >&2
+    exit 2
+fi
+if [[ -z "${SCCACHE_GCS_KEY:-}" ]]; then
+    exec "$@"
+fi
+
+secret_dir=$(mktemp -d)
+cleanup() {
+    sccache --stop-server >/dev/null 2>&1 || true
+    rm -rf "$secret_dir"
+}
+trap cleanup EXIT
+umask 077
+printf '%s' "$SCCACHE_GCS_KEY" | base64 --decode > "$secret_dir/key.json"
+unset SCCACHE_GCS_KEY
+export SCCACHE_GCS_BUCKET=${SCCACHE_GCS_BUCKET:-code-reviews-gh-sccache}
+export SCCACHE_GCS_KEY_PREFIX=${SCCACHE_GCS_KEY_PREFIX:-arthur-debert/standout}
+export SCCACHE_GCS_KEY_PATH="$secret_dir/key.json"
+export SCCACHE_GCS_RW_MODE=READ_WRITE
+export SCCACHE_SERVER_PORT=$((20000 + $$ % 20000))
+"$@"
+sccache --show-stats

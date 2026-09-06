@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project_root=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
+cd "$project_root"
+# shellcheck source=scripts/tool-versions.env
+source scripts/tool-versions.env
+fingerprint=$(cat scripts/install-quality-tools scripts/install-sccache \
+    .node-version scripts/tool-versions.env scripts/quality-tools/package{,-lock}.json | shasum -a 256 | awk '{print $1}')
+if [[ "${1:-}" == --cache-key ]]; then
+    printf '%s\n' "$fingerprint"
+    exit 0
+fi
+prefix=${1:-"$project_root/.quality-tools"}
+mkdir -p "$prefix/bin" "$prefix/npm"
+prefix=$(cd "$prefix" && pwd -P)
+export PATH="$prefix/bin:$PATH"
+if [[ -f "$prefix/.installed" && "$(cat "$prefix/.installed")" == "$fingerprint" ]] &&
+    [[ -x "$prefix/bin/node" && -x "$prefix/bin/lefthook" && -x "$prefix/bin/shellcheck" &&
+       -x "$prefix/bin/sccache" && -x "$prefix/bin/markdownlint" && -x "$prefix/bin/prettier" ]]; then
+    exit 0
+fi
+
+case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64 | Darwin-aarch64) platform=darwin.aarch64 ;;
+    Darwin-x86_64) platform=darwin.x86_64 ;;
+    Linux-arm64 | Linux-aarch64) platform=linux.aarch64 ;;
+    Linux-x86_64) platform=linux.x86_64 ;;
+    *) printf 'Unsupported platform\n' >&2; exit 1 ;;
+esac
+work_dir=$(mktemp -d)
+trap 'rm -rf "$work_dir"' EXIT
+archive="shellcheck-v${SHELLCHECK_VERSION}.${platform}.tar.gz"
+curl --fail --location --silent --show-error \
+    "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/$archive" \
+    --output "$work_dir/$archive"
+tar -xzf "$work_dir/$archive" -C "$work_dir"
+install -m 755 "$work_dir/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" "$prefix/bin/shellcheck"
+cp scripts/quality-tools/package{,-lock}.json "$prefix/npm/"
+npm ci --no-audit --no-fund --prefix "$prefix/npm"
+for tool in lefthook markdownlint prettier; do
+    ln -sfn "../npm/node_modules/.bin/$tool" "$prefix/bin/$tool"
+done
+ln -sfn ../npm/node_modules/node/bin/node "$prefix/bin/node"
+test "$(node --version)" = "v$(cat .node-version)"
+scripts/install-sccache "$prefix"
+printf '%s\n' "$fingerprint" > "$prefix/.installed"
