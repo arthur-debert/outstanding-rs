@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+## 13.0.0 - 2026-09-06
+
 - **Breaking:** configuration, render, final-write and event failures now carry the
   error underneath them. Downcast `source()` to `clapfig::ClapfigError`,
   `standout::RenderError`, `serde_json::Error` or `std::io::Error` instead of matching
