@@ -11,6 +11,7 @@ readme = "README.md"
 
 [dependencies]
 console = "0.16"
+dark-light = "0.2"
 deunicode = "1.6.2"
 minijinja = { version = "2", features = ["loader"] }
 once_cell = "1.19"
@@ -25,12 +26,6 @@ terminal_size = "0.4"
 standout-bbparser = { version = "13.0.3", path = "../standout-bbparser" }
 standout-types = { version = "13.0.3", path = "../standout-types" }
 thiserror = "2"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-dark-light = "3.0.0"
-
-[target.'cfg(not(target_os = "macos"))'.dependencies]
-dark-light = "0.2"
 
 [features]
 test-support = []

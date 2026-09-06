@@ -7,13 +7,9 @@ pub enum ColorMode {
 }
 
 pub(crate) fn probe_color_mode() -> ColorMode {
-    #[cfg(target_os = "macos")]
-    let mode = detect_os_theme().unwrap_or(OsThemeMode::Light);
-    #[cfg(not(target_os = "macos"))]
-    let mode = detect_os_theme();
-    match mode {
+    match detect_os_theme() {
         OsThemeMode::Dark => ColorMode::Dark,
-        _ => ColorMode::Light,
+        OsThemeMode::Light => ColorMode::Light,
     }
 }
 
