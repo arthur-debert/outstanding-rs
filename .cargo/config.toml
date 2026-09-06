@@ -1,3 +1,7 @@
 [build]
 rustc-wrapper = "scripts/rustc-wrapper"
 incremental = false
+
+[env]
+# Cargo 1.96 workspace publishing can stop before pending registry confirmations.
+PUBLISH_GRACE_SLEEP = "1"
