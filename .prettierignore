@@ -1,0 +1,7 @@
+**/fixtures/**
+**/__fixtures__/**
+**/testdata/**
+**/golden/**
+**/goldens/**
+**/snapshots/**
+**/__snapshots__/**

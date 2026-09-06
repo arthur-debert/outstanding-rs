@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project_root=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
+cd "$project_root"
+# shellcheck source=scripts/agent-env
+source scripts/agent-env
+
+for tool in cargo node markdownlint prettier shellcheck sccache; do
+    command -v "$tool" >/dev/null 2>&1 || {
+        printf '%s is required; run scripts/install-quality-tools\n' "$tool" >&2
+        exit 1
+    }
+done
+
+printf 'Checking JSON and YAML formatting\n'
+files=()
+while IFS= read -r -d '' file; do
+    [[ -f "$file" ]] && files+=("$file")
+done < <(git ls-files -z -- '*.json' '*.yml' '*.yaml')
+if ((${#files[@]})); then prettier --check "${files[@]}"; fi
+
+printf 'Checking Markdown\n'
+files=()
+while IFS= read -r -d '' file; do
+    [[ -f "$file" ]] || continue
+    [[ -f "${file%.md}.lex" ]] && continue
+    files+=("$file")
+done < <(git ls-files -z -- '*.md')
+if ((${#files[@]})); then markdownlint "${files[@]}"; fi
+
+printf 'Checking shell scripts\n'
+files=()
+while IFS= read -r -d '' file; do
+    [[ -f "$file" ]] || continue
+    case "$file" in
+        *.sh | *.env) files+=("$file") ;;
+        *)
+            IFS= read -r first_line < "$file" || true
+            if [[ "$first_line" =~ ^\#!.*(bash|/sh)$ ]]; then files+=("$file"); fi
+            ;;
+    esac
+done < <(git ls-files -z -- '*.sh' '*.env' 'scripts/*' '.agents/hooks/*')
+if ((${#files[@]})); then shellcheck -x "${files[@]}"; fi
+
+printf 'Checking Rust formatting\n'
+cargo fmt --all -- --check
+printf 'Checking Rust with Clippy\n'
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+printf 'Running Rust tests\n'
+cargo test --locked --workspace --all-features
+printf 'Checking Rust documentation\n'
+RUSTDOCFLAGS='-D warnings' cargo doc --locked --workspace --all-features --no-deps
