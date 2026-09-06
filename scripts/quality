@@ -43,6 +43,20 @@ while IFS= read -r -d '' file; do
 done < <(git ls-files -z -- '*.sh' '*.env' 'scripts/*' 'app-bin/*' '.agents/hooks/*')
 if ((${#files[@]})); then shellcheck -x "${files[@]}"; fi
 
+printf 'Checking Python syntax\n'
+while IFS= read -r -d '' file; do
+    [[ -f "$file" ]] || continue
+    IFS= read -r first_line < "$file" || true
+    if [[ "$file" == *.py || "$first_line" =~ ^\#!.*python ]]; then
+        python3 - "$file" <<'PYTHON'
+import pathlib
+import sys
+path = pathlib.Path(sys.argv[1])
+compile(path.read_bytes(), str(path), "exec")
+PYTHON
+    fi
+done < <(git ls-files -z -- '*.py' 'scripts/*')
+
 printf 'Checking Rust formatting\n'
 cargo fmt --all -- --check
 printf 'Checking Rust with Clippy\n'
