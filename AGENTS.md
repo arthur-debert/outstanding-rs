@@ -81,7 +81,19 @@ Code comments and rustdoc are kept deliberately sparse. The default for any new
 - No history, dates, ticket numbers, "we decided", chain-of-thought, or
   task-execution notes in source. That belongs in the PR, the ADR, or `docs/`.
 
+**Some `///` is code, not documentation.** A `///` on a `#[derive(Questionnaire)]`
+field is the question prompt the derive reads (`doc_prompt` in `standout-macros`),
+and a `///` in a clap derive tree is the help text a user sees. Deleting those
+changes what the program says, and no test that does not assert on the prompt will
+notice. Read what a `///` feeds before removing it.
+
 Reviewers: a module doc that omits a permutation is **not** a finding; module docs
 are orienting, not exhaustive. "Add a comment explaining X" is not a finding
 unless X is a surprising line per the rule above. Shepherds: do not answer review
 threads by adding comments.
+
+This binds whoever is directing the work too. Asking an agent what facts a doc
+should contain is the same request a reviewer makes when it files a documentation
+finding, and it produces the same result: more prose, which draws the next
+finding. Brief the cap and the ownership rule, then let the author choose the
+content.
