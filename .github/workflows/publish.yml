@@ -27,14 +27,29 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/cache@v5
+      - name: Cache Rust toolchain
+        uses: actions/cache@v5
+        with:
+          path: ~/.rustup/toolchains
+          key: rust-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}
+
+      - name: Cache release tools
+        uses: actions/cache@v5
+        with:
+          path: .quality-tools
+          key: release-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'scripts/tool-versions.env', 'scripts/install-release-tools', 'scripts/install-sccache') }}
+
+      - name: Cache downloaded Rust dependencies
+        uses: actions/cache@v5
         with:
           path: |
-            ~/.rustup
-            ~/.cargo/registry
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
             ~/.cargo/git
-            .quality-tools
-          key: release-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'scripts/tool-versions.env', 'scripts/install-release-tools', 'scripts/install-sccache') }}
+          key: cargo-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            cargo-deps-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install Rust and release tools
         run: |
@@ -45,9 +60,10 @@ jobs:
       - uses: actions/cache@v5
         with:
           path: target
-          key: rust-release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ hashFiles('**/Cargo.toml', 'crates/**/*.rs') }}
+          key: rust-release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml') }}-${{ hashFiles('Cargo.lock') }}-${{ hashFiles('**/Cargo.toml', 'crates/**/*.rs') }}
           restore-keys: |
-            rust-release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
+            rust-release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml') }}-${{ hashFiles('Cargo.lock') }}-
+            rust-release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml') }}-
 
       - uses: dopplerhq/cli-action@v4
 
