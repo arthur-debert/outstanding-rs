@@ -2145,8 +2145,6 @@ dependencies = [
  "serde_json",
  "serial_test",
  "standout",
- "standout-dispatch",
- "standout-input",
  "standout-test",
  "tempfile",
  "todo-core",

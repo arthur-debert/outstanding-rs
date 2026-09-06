@@ -9,8 +9,6 @@ publish = false
 [dependencies]
 todo-core = { path = "../todo-core" }
 standout = { path = "../../standout", version = "12.0.1" }
-standout-dispatch = { path = "../../standout-dispatch", version = "12.0.1" }
-standout-input = { path = "../../standout-input", version = "12.0.1", default-features = false, features = ["simple-prompts"] }
 
 anyhow = "1"
 clapfig = "0.26"
