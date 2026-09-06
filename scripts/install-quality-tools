@@ -6,7 +6,7 @@ cd "$project_root"
 # shellcheck source=scripts/tool-versions.env
 source scripts/tool-versions.env
 fingerprint=$(cat scripts/install-quality-tools scripts/install-sccache \
-    scripts/tool-versions.env scripts/quality-tools/package{,-lock}.json | shasum -a 256 | awk '{print $1}')
+    .node-version scripts/tool-versions.env scripts/quality-tools/package{,-lock}.json | shasum -a 256 | awk '{print $1}')
 if [[ "${1:-}" == --cache-key ]]; then
     printf '%s\n' "$fingerprint"
     exit 0
@@ -42,5 +42,6 @@ for tool in lefthook markdownlint prettier; do
     ln -sfn "../npm/node_modules/.bin/$tool" "$prefix/bin/$tool"
 done
 ln -sfn ../npm/node_modules/node/bin/node "$prefix/bin/node"
+test "$(node --version)" = "v$(cat .node-version)"
 scripts/install-sccache "$prefix"
 printf '%s\n' "$fingerprint" > "$prefix/.installed"
