@@ -13,7 +13,7 @@ Review behavioral defects: wrong results, lost errors, unsafe file or process
 handling, races, and violations of documented behavior. Formatting belongs to the
 configured linters. Keep reviews and implementation separate when delegating work.
 
-### Comments and rustdoc: one owner, near zero volume
+## Comments and rustdoc: one owner, near zero volume
 
 Code comments and rustdoc are kept deliberately sparse. The default for any new
 `//`, `///`, or `//!` line is: don't write it.

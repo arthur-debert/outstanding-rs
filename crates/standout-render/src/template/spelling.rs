@@ -3,7 +3,7 @@
 //! minijinja renders booleans and none with Jinja2's Python spellings — `True`,
 //! `False`, `None`. Standout renders `true`, `false`, and `none`. Two seams
 //! keep that true everywhere: [`new_environment`] installs a formatter that
-//! normalizes top-level interpolation, and [`stringify`] replaces
+//! normalizes top-level interpolation, and [`stringify()`] replaces
 //! `Value::to_string()` wherever standout itself turns a value into text
 //! (filters, table cells, borders) — a formatter cannot reach those, since they
 //! go through `Display for Value` directly.
