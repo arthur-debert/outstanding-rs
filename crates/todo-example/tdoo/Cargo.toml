@@ -1,13 +1,13 @@
 [package]
 name = "tdoo"
-version = "13.0.0"
+version.workspace = true
 edition = "2021"
 description = "Standout CLI for the two-package todo worked example"
 license = "MIT"
-publish = false
+repository = "https://github.com/arthur-debert/standout"
 
 [dependencies]
-todo-core = { path = "../todo-core" }
+todo-core = { path = "../todo-core", version = "13.0.0" }
 standout = { path = "../../standout", version = "13.0.0" }
 
 anyhow = "1"

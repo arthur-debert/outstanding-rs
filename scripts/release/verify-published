@@ -1,0 +1,74 @@
+#!/usr/bin/env python3.11
+import concurrent.futures
+import hashlib
+import io
+import json
+import re
+import subprocess
+import sys
+import tarfile
+import time
+import tomllib
+import urllib.error
+import urllib.request
+
+
+def git(*args):
+    return subprocess.check_output(["git", *args], text=True).strip()
+
+
+def fetch(url):
+    request = urllib.request.Request(url, headers={"User-Agent": "standout-release"})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return response.read()
+
+
+def verify(name, version, commit):
+    for attempt in range(12):
+        try:
+            release = json.loads(fetch(f"https://crates.io/api/v1/crates/{name}/{version}"))["version"]
+            if release["yanked"]:
+                raise ValueError(f"{name} {version} is yanked")
+            archive = fetch(f"https://static.crates.io/crates/{name}/{name}-{version}.crate")
+            if hashlib.sha256(archive).hexdigest() != release["checksum"]:
+                raise ValueError(f"{name} {version}: archive checksum differs from crates.io")
+            with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as package:
+                vcs = json.load(package.extractfile(f"{name}-{version}/.cargo_vcs_info.json"))
+            if vcs["git"]["sha1"] != commit or vcs["git"].get("dirty", False):
+                raise ValueError(f"{name} {version}: published source does not match {commit}")
+            return f"Verified {name} {version} at {commit}"
+        except urllib.error.HTTPError as error:
+            if error.code not in (404, 429, 500, 502, 503, 504) or attempt == 11:
+                raise
+        except urllib.error.URLError:
+            if attempt == 11:
+                raise
+        time.sleep(5)
+
+
+def main():
+    if len(sys.argv) != 2 or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", sys.argv[1]):
+        raise ValueError("Usage: scripts/release/verify-published vMAJOR.MINOR.PATCH")
+    tag = sys.argv[1]
+    commit = git("rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}")
+    root = tomllib.loads(git("show", f"{commit}:Cargo.toml"))
+    version = root["workspace"]["package"]["version"]
+    if tag != f"v{version}":
+        raise ValueError(f"{tag} does not match workspace version {version}")
+    names = []
+    for member in root["workspace"]["members"]:
+        package = tomllib.loads(git("show", f"{commit}:{member}/Cargo.toml"))["package"]
+        if package.get("publish") is not False:
+            names.append(package["name"])
+    if not names:
+        raise ValueError("Workspace has no publishable packages")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        for result in pool.map(lambda name: verify(name, version, commit), names):
+            print(result, flush=True)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
+        sys.exit(str(error))

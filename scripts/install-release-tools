@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$repo/scripts/tool-versions.env"
+export PATH="$repo/.quality-tools/bin:$PATH"
+if [[ "$(cargo release --version 2>/dev/null || true)" != "cargo-release $CARGO_RELEASE_VERSION" ]]; then
+  cargo install cargo-release --locked --version "$CARGO_RELEASE_VERSION" --root "$repo/.quality-tools"
+fi
