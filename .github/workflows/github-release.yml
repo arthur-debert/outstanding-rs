@@ -2,7 +2,7 @@ name: GitHub release
 
 on:
   push:
-    tags: ["v[0-9]*"]
+    tags: ['v[0-9]*']
   workflow_dispatch:
     inputs:
       tag:
@@ -27,7 +27,7 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.11.16"
+          python-version: '3.11.16'
 
       - name: Verify crates.io and create GitHub release
         env:
