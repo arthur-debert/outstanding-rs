@@ -920,7 +920,7 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        if let Err(error) = self.surface_conflicts(&cmd) {
+        if let Err(error) = self.validated_parse_surface(&cmd) {
             return HelpResult::Error(clap::Error::raw(
                 clap::error::ErrorKind::ArgumentConflict,
                 format!("{error}\n"),

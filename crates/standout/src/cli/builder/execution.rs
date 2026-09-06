@@ -1455,18 +1455,19 @@ impl App {
     }
 
     pub(crate) fn validated_command_tree(&self, cmd: &Command) -> Result<Command, SetupError> {
-        let propagated = crate::cli::app::with_globals_propagated(cmd);
         self.malformed_registrations()?;
-        self.validate_questionnaire_surfaces(&propagated)?;
+        let propagated = self.validated_parse_surface(cmd)?;
         self.unreachable_registrations(cmd)?;
-        self.surface_conflicts(cmd)?;
         Ok(propagated)
     }
 
-    pub(crate) fn surface_conflicts(&self, cmd: &Command) -> Result<(), SetupError> {
+    pub(crate) fn validated_parse_surface(&self, cmd: &Command) -> Result<Command, SetupError> {
+        let propagated = crate::cli::app::with_globals_propagated(cmd);
+        self.validate_questionnaire_surfaces(&propagated)?;
         self.config_override_flag_collision(cmd)?;
         self.framework_flag_collision(cmd)?;
-        self.config_command_collision(cmd)
+        self.config_command_collision(cmd)?;
+        Ok(propagated)
     }
 
     pub(crate) fn validate_questionnaire_surfaces(&self, cmd: &Command) -> Result<(), SetupError> {

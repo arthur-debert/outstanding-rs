@@ -2,12 +2,12 @@ use clap::Command;
 use serde_json::json;
 use standout::cli::{
     App, CommandContext, CommandContextInput, Confirmation, ConfirmationAcceptance, DispatchResult,
-    ExitStatus, FnHandler, HandlerResult, Output, RunErrorKind,
+    ExitStatus, FnHandler, HandlerResult, HelpResult, Output, RunErrorKind,
 };
 use standout::input::questionnaire::{
     AnswerSheetDiagnostic, AnswerSheetFormat, Questionnaire as RuntimeQuestionnaire, RawAnswers,
 };
-use standout::EmbeddedTemplates;
+use standout::{EmbeddedTemplates, InputSources};
 use standout_test::{serial, TestHarness, TestResult};
 
 const TEMPLATES: &[(&str, &str)] = &[("entry", "{{ name }}/{{ region }}")];
@@ -392,6 +392,48 @@ fn a_global_clap_propagates_without_colliding_still_runs() {
 
     result.assert_success();
     assert_eq!(result.stdout(), "ada/eu");
+}
+
+#[test]
+#[serial(questionnaire)]
+fn the_parse_only_entry_point_reports_the_reserved_name_as_well() {
+    let colliding = Command::new("formlike")
+        .subcommand_required(true)
+        .arg(global_yes())
+        .subcommand(Command::new("entry"));
+
+    match spec_sheet_app().get_matches_from(
+        colliding,
+        ["formlike", "entry"],
+        &InputSources::from_process(),
+    ) {
+        HelpResult::Error(error) => assert!(
+            error
+                .to_string()
+                .contains("declares reserved name(s): --yes"),
+            "{error}"
+        ),
+        other => panic!("expected a reserved-name error, got {other:?}"),
+    }
+
+    let clear = Command::new("formlike")
+        .subcommand_required(true)
+        .arg(
+            clap::Arg::new("verbose")
+                .long("verbose")
+                .global(true)
+                .action(clap::ArgAction::SetTrue),
+        )
+        .subcommand(Command::new("entry"));
+
+    match spec_sheet_app().get_matches_from(
+        clear,
+        ["formlike", "entry", "--verbose"],
+        &InputSources::from_process(),
+    ) {
+        HelpResult::Matches(matches) => assert_eq!(matches.subcommand_name(), Some("entry")),
+        other => panic!("expected matches, got {other:?}"),
+    }
 }
 
 #[test]
