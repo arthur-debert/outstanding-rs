@@ -24,8 +24,7 @@ use std::io::Write;
 use serde::Deserialize;
 
 use crate::cli::handler::{
-    ArtifactRun, Diagnostic, DiagnosticKind, DispatchResult, OutputKind, RunError, RunErrorKind,
-    Severity,
+    ArtifactRun, Diagnostic, DiagnosticKind, DispatchResult, OutputKind, RunError, Severity,
 };
 use crate::tabular::{Column, Width};
 use crate::{CsvProjection, Representation};
@@ -49,11 +48,11 @@ pub fn emit_run_result<W: Write + ?Sized, E: Write + ?Sized>(
             .and_then(|()| stdout.flush())
             .err()
             .map(|error| {
-                RunError::new(
+                RunError::final_write(
                     format!("Error writing binary stdout: {}", error),
-                    RunErrorKind::FinalWrite(OutputKind::Binary),
+                    error,
+                    OutputKind::Binary,
                 )
-                .with_source(error)
             }),
         DispatchResult::Artifact(run) => emit_artifact(run, stdout, stderr),
         DispatchResult::Silent => None,
@@ -87,13 +86,11 @@ fn emit_failure<W: Write + ?Sized, E: Write + ?Sized>(
         writeln!(stderr, "{}", error).and_then(|()| stderr.flush())
     };
     if let Err(write_error) = stderr_prose {
-        return Some(
-            RunError::new(
-                format!("Error writing stderr: {}", write_error),
-                RunErrorKind::FinalWrite(OutputKind::Text),
-            )
-            .with_source(write_error),
-        );
+        return Some(RunError::final_write(
+            format!("Error writing stderr: {}", write_error),
+            write_error,
+            OutputKind::Text,
+        ));
     }
     if !carries_diagnostic_document(output_mode) {
         return None;
@@ -284,13 +281,11 @@ fn emit_artifact<W: Write + ?Sized, E: Write + ?Sized>(
 
     if to_stdout {
         if let Err(error) = stdout.write_all(run.bytes()).and_then(|()| stdout.flush()) {
-            return Some(
-                RunError::new(
-                    format!("Error writing artifact stdout: {}", error),
-                    RunErrorKind::FinalWrite(OutputKind::Artifact),
-                )
-                .with_source(error),
-            );
+            return Some(RunError::final_write(
+                format!("Error writing artifact stdout: {}", error),
+                error,
+                OutputKind::Artifact,
+            ));
         }
     }
 
@@ -303,11 +298,11 @@ fn emit_artifact<W: Write + ?Sized, E: Write + ?Sized>(
     };
 
     written.err().map(|error| {
-        RunError::new(
+        RunError::final_write(
             format!("Error writing artifact report: {}", error),
-            RunErrorKind::FinalWrite(OutputKind::Artifact),
+            error,
+            OutputKind::Artifact,
         )
-        .with_source(error)
     })
 }
 
@@ -318,20 +313,20 @@ fn final_write_error_unless_broken_pipe(
     if kind == OutputKind::Text && error.kind() == std::io::ErrorKind::BrokenPipe {
         None
     } else {
-        Some(
-            RunError::new(
-                format!("Error writing stdout: {}", error),
-                RunErrorKind::FinalWrite(kind),
-            )
-            .with_source(error),
-        )
+        Some(RunError::final_write(
+            format!("Error writing stdout: {}", error),
+            error,
+            kind,
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::handler::{AppFailure, ArtifactDestination, ArtifactReceipt, RunOutput};
+    use crate::cli::handler::{
+        AppFailure, ArtifactDestination, ArtifactReceipt, RunErrorKind, RunOutput,
+    };
     use crate::cli::HookPhase;
 
     struct FailingWriter;

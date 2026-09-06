@@ -236,7 +236,7 @@ fn render_via_request(request: &RenderRequest) -> Result<(String, String), RunEr
 }
 
 fn render_error(error: standout_render::RenderError) -> RunError {
-    RunError::new(error.to_string(), RunErrorKind::Render)
+    RunError::render(error.to_string(), error)
 }
 
 fn absent_template_render_error(
@@ -384,12 +384,8 @@ pub(crate) fn render_handler_output<T: Serialize>(
 }
 
 fn serialize_handler_data<T: Serialize>(data: &T) -> Result<serde_json::Value, RunError> {
-    serde_json::to_value(data).map_err(|e| {
-        RunError::new(
-            format!("Failed to serialize handler result: {}", e),
-            RunErrorKind::Render,
-        )
-    })
+    serde_json::to_value(data)
+        .map_err(|e| RunError::render(format!("Failed to serialize handler result: {}", e), e))
 }
 
 fn run_post_dispatch_hooks(
