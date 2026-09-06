@@ -179,12 +179,13 @@ pub(crate) fn register_tabular_filters_with_source(
             if style.is_empty() {
                 return Ok(text.into_owned());
             }
-            if style.contains(['[', ']', '/']) {
+            if !standout_bbparser::is_valid_tag_name(&style) {
                 return Err(minijinja::Error::new(
                     minijinja::ErrorKind::InvalidOperation,
                     format!(
-                        "style_as: `{style}` cannot name a style; `[`, `]` and `/` \
-                         are the tag syntax the name is written into"
+                        "style_as: `{style}` cannot name a style; a style name is \
+                         lowercase ASCII letters, digits, `_` and `-`, starting with \
+                         a letter or `_`"
                     ),
                 ));
             }
@@ -1158,7 +1159,18 @@ mod tests {
         env.add_template("dynamic", "{{ value | style_as(name) }}")
             .unwrap();
 
-        for name in ["[error]", "error]", "a/b", "/error"] {
+        for name in [
+            "[error]",
+            "error]",
+            "a/b",
+            "/error",
+            "Error",
+            "1st",
+            "two words",
+            "name.with.dot",
+            "err\u{7}or",
+            "-error",
+        ] {
             let error = env
                 .get_template("dynamic")
                 .unwrap()
@@ -1169,12 +1181,14 @@ mod tests {
             assert!(error.contains(name), "{error}");
         }
 
-        let rendered = env
-            .get_template("dynamic")
-            .unwrap()
-            .render(context!(value => "text", name => "error"))
-            .unwrap();
-        assert_eq!(rendered, "[error]text[/error]");
+        for name in ["error", "my-style2", "_private"] {
+            let rendered = env
+                .get_template("dynamic")
+                .unwrap()
+                .render(context!(value => "text", name => name))
+                .unwrap();
+            assert_eq!(rendered, format!("[{name}]text[/{name}]"));
+        }
     }
 
     #[test]

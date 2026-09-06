@@ -421,7 +421,7 @@ impl BBParser {
                         stack.push(name);
                         self.emit_open_tag_event(&mut events, &mut errors, name, *start, *end);
                     } else {
-                        let is_valid_name = Tokenizer::is_valid_tag_name(name);
+                        let is_valid_name = is_valid_tag_name(name);
                         if is_valid_name {
                             errors.push(UnknownTagError {
                                 tag: name.to_string(),
@@ -453,7 +453,7 @@ impl BBParser {
                             }
                         }
                     } else {
-                        let is_valid_name = Tokenizer::is_valid_tag_name(name);
+                        let is_valid_name = is_valid_tag_name(name);
                         if is_valid_name {
                             errors.push(UnknownTagError {
                                 tag: name.to_string(),
@@ -738,27 +738,19 @@ impl<'a> Tokenizer<'a> {
     fn new(input: &'a str) -> Self {
         Self { input, pos: 0 }
     }
+}
 
-    fn is_valid_tag_name(s: &str) -> bool {
-        if s.is_empty() {
-            return false;
-        }
+pub fn is_valid_tag_name(s: &str) -> bool {
+    let mut chars = s.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
 
-        let mut chars = s.chars();
-        let first = chars.next().unwrap();
-
-        if !first.is_ascii_lowercase() && first != '_' {
-            return false;
-        }
-
-        for c in chars {
-            if !c.is_ascii_lowercase() && !c.is_ascii_digit() && c != '_' && c != '-' {
-                return false;
-            }
-        }
-
-        true
+    if !first.is_ascii_lowercase() && first != '_' {
+        return false;
     }
+
+    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
 }
 
 impl<'a> Iterator for Tokenizer<'a> {
@@ -789,7 +781,7 @@ impl<'a> Iterator for Tokenizer<'a> {
                 let end_pos = start_pos + close_bracket + 1;
 
                 if let Some(tag_name) = tag_content.strip_prefix('/') {
-                    if Self::is_valid_tag_name(tag_name) {
+                    if is_valid_tag_name(tag_name) {
                         self.pos = end_pos;
                         Some(Token::CloseTag {
                             name: tag_name,
@@ -804,7 +796,7 @@ impl<'a> Iterator for Tokenizer<'a> {
                             end: end_pos,
                         })
                     }
-                } else if Self::is_valid_tag_name(tag_content) {
+                } else if is_valid_tag_name(tag_content) {
                     self.pos = end_pos;
                     Some(Token::OpenTag {
                         name: tag_content,
@@ -1358,61 +1350,61 @@ mod tests {
 
         #[test]
         fn valid_simple_names() {
-            assert!(Tokenizer::is_valid_tag_name("bold"));
-            assert!(Tokenizer::is_valid_tag_name("red"));
-            assert!(Tokenizer::is_valid_tag_name("a"));
+            assert!(is_valid_tag_name("bold"));
+            assert!(is_valid_tag_name("red"));
+            assert!(is_valid_tag_name("a"));
         }
 
         #[test]
         fn valid_with_underscore() {
-            assert!(Tokenizer::is_valid_tag_name("my_style"));
-            assert!(Tokenizer::is_valid_tag_name("_private"));
-            assert!(Tokenizer::is_valid_tag_name("a_b_c"));
+            assert!(is_valid_tag_name("my_style"));
+            assert!(is_valid_tag_name("_private"));
+            assert!(is_valid_tag_name("a_b_c"));
         }
 
         #[test]
         fn valid_with_hyphen() {
-            assert!(Tokenizer::is_valid_tag_name("my-style"));
-            assert!(Tokenizer::is_valid_tag_name("font-bold"));
-            assert!(Tokenizer::is_valid_tag_name("a-b-c"));
+            assert!(is_valid_tag_name("my-style"));
+            assert!(is_valid_tag_name("font-bold"));
+            assert!(is_valid_tag_name("a-b-c"));
         }
 
         #[test]
         fn valid_with_numbers() {
-            assert!(Tokenizer::is_valid_tag_name("h1"));
-            assert!(Tokenizer::is_valid_tag_name("col2"));
-            assert!(Tokenizer::is_valid_tag_name("style123"));
+            assert!(is_valid_tag_name("h1"));
+            assert!(is_valid_tag_name("col2"));
+            assert!(is_valid_tag_name("style123"));
         }
 
         #[test]
         fn invalid_starts_with_digit() {
-            assert!(!Tokenizer::is_valid_tag_name("1style"));
-            assert!(!Tokenizer::is_valid_tag_name("123"));
+            assert!(!is_valid_tag_name("1style"));
+            assert!(!is_valid_tag_name("123"));
         }
 
         #[test]
         fn invalid_starts_with_hyphen() {
-            assert!(!Tokenizer::is_valid_tag_name("-style"));
-            assert!(!Tokenizer::is_valid_tag_name("-1"));
+            assert!(!is_valid_tag_name("-style"));
+            assert!(!is_valid_tag_name("-1"));
         }
 
         #[test]
         fn invalid_uppercase() {
-            assert!(!Tokenizer::is_valid_tag_name("Bold"));
-            assert!(!Tokenizer::is_valid_tag_name("BOLD"));
-            assert!(!Tokenizer::is_valid_tag_name("myStyle"));
+            assert!(!is_valid_tag_name("Bold"));
+            assert!(!is_valid_tag_name("BOLD"));
+            assert!(!is_valid_tag_name("myStyle"));
         }
 
         #[test]
         fn invalid_special_chars() {
-            assert!(!Tokenizer::is_valid_tag_name("my.style"));
-            assert!(!Tokenizer::is_valid_tag_name("my@style"));
-            assert!(!Tokenizer::is_valid_tag_name("my style"));
+            assert!(!is_valid_tag_name("my.style"));
+            assert!(!is_valid_tag_name("my@style"));
+            assert!(!is_valid_tag_name("my style"));
         }
 
         #[test]
         fn invalid_empty() {
-            assert!(!Tokenizer::is_valid_tag_name(""));
+            assert!(!is_valid_tag_name(""));
         }
     }
 
@@ -1918,7 +1910,7 @@ mod proptests {
 
         #[test]
         fn valid_tag_names_accepted(tag in valid_tag_name()) {
-            prop_assert!(Tokenizer::is_valid_tag_name(&tag));
+            prop_assert!(is_valid_tag_name(&tag));
         }
 
         #[test]
@@ -1973,18 +1965,18 @@ mod proptests {
         #[test]
         fn invalid_start_digit_rejected(n in 0..10u8, rest in "[a-z0-9_-]{0,5}") {
             let tag = format!("{}{}", n, rest);
-            prop_assert!(!Tokenizer::is_valid_tag_name(&tag));
+            prop_assert!(!is_valid_tag_name(&tag));
         }
 
         #[test]
         fn invalid_start_hyphen_rejected(rest in "[a-z0-9_-]{0,5}") {
             let tag = format!("-{}", rest);
-            prop_assert!(!Tokenizer::is_valid_tag_name(&tag));
+            prop_assert!(!is_valid_tag_name(&tag));
         }
 
         #[test]
         fn uppercase_rejected(tag in "[A-Z][a-zA-Z0-9_-]{0,5}") {
-            prop_assert!(!Tokenizer::is_valid_tag_name(&tag));
+            prop_assert!(!is_valid_tag_name(&tag));
         }
     }
 }
