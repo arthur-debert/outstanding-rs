@@ -723,9 +723,7 @@ pub(crate) trait ErasedCommandConfig {
     #[allow(dead_code)]
     fn hooks(&self) -> Option<&Hooks>;
     fn take_hooks(&mut self) -> Option<Hooks>;
-    fn take_input_chains(&mut self) -> Option<Hooks> {
-        None
-    }
+    fn take_input_chains(&mut self) -> Option<Hooks>;
     fn take_questionnaire(&mut self) -> Option<QuestionnaireCommand>;
     /// True when the handler declares that it produces its result while it runs.
     fn emits_events(&self) -> bool {
@@ -944,6 +942,10 @@ where
     }
 
     fn take_hooks(&mut self) -> Option<Hooks> {
+        None
+    }
+
+    fn take_input_chains(&mut self) -> Option<Hooks> {
         None
     }
 
