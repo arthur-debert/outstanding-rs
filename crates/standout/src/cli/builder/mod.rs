@@ -24,7 +24,7 @@ use clap::parser::ValueSource;
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use serde::Serialize;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
 use super::config::{
@@ -380,7 +380,9 @@ pub struct App {
     finalized_commands: RefCell<Option<HashMap<String, DispatchFn>>>,
     pub(crate) command_hooks: HashMap<String, Hooks>,
     pub(crate) command_input_chains: HashMap<String, Hooks>,
+    pub(crate) command_questionnaire_resolution: HashMap<String, Hooks>,
     pub(crate) questionnaire_commands: HashMap<String, QuestionnaireCommand>,
+    pub(crate) config_exempt_commands: HashSet<String>,
     pub(crate) context_registry: ContextRegistry,
     pub(crate) default_command: Option<String>,
     pub(crate) default_command_resolver: Option<crate::cli::DefaultCommandResolver>,
@@ -421,9 +423,11 @@ pub struct AppBuilder {
     finalized_commands: RefCell<Option<HashMap<String, DispatchFn>>>,
     pub(crate) command_hooks: HashMap<String, Hooks>,
     pub(crate) command_input_chains: HashMap<String, Hooks>,
+    pub(crate) command_questionnaire_resolution: HashMap<String, Hooks>,
     pub(crate) hook_phase_sources: HashMap<(String, HookPhase), HookRegistrationSource>,
     pub(crate) setup_errors: Vec<SetupError>,
     pub(crate) questionnaire_commands: HashMap<String, QuestionnaireCommand>,
+    pub(crate) config_exempt_commands: HashSet<String>,
     pub(crate) context_registry: ContextRegistry,
     pub(crate) default_command: Option<String>,
     pub(crate) default_command_resolver: Option<crate::cli::DefaultCommandResolver>,
@@ -476,9 +480,11 @@ impl AppBuilder {
             finalized_commands: RefCell::new(None),
             command_hooks: HashMap::new(),
             command_input_chains: HashMap::new(),
+            command_questionnaire_resolution: HashMap::new(),
             hook_phase_sources: HashMap::new(),
             setup_errors: Vec::new(),
             questionnaire_commands: HashMap::new(),
+            config_exempt_commands: HashSet::new(),
             context_registry: ContextRegistry::new(),
             default_command: None,
             default_command_resolver: None,
@@ -690,7 +696,9 @@ impl AppBuilder {
             finalized_commands: self.finalized_commands,
             command_hooks: self.command_hooks,
             command_input_chains: self.command_input_chains,
+            command_questionnaire_resolution: self.command_questionnaire_resolution,
             questionnaire_commands: self.questionnaire_commands,
+            config_exempt_commands: self.config_exempt_commands,
             context_registry: self.context_registry,
             default_command: self.default_command,
             default_command_resolver: self.default_command_resolver,
@@ -1532,9 +1540,12 @@ impl App {
     where
         H: Handler,
     {
-        let config = self
-            .resolve_config(matches)
-            .map_err(|error| HookError::pre_dispatch("Config error").with_source(error))?;
+        let config = if self.config_exempt_commands.contains(path) {
+            None
+        } else {
+            self.resolve_config(matches)
+                .map_err(|error| HookError::pre_dispatch("Config error").with_source(error))?
+        };
         let resolved = self.resolve_run(
             matches,
             config.as_ref().and_then(|config| config.term.as_ref()),
@@ -1564,6 +1575,10 @@ impl App {
 
         if let Some(chains) = self.command_input_chains.get(path) {
             chains.run_pre_dispatch(matches, &mut ctx)?;
+        }
+
+        if let Some(resolution) = self.command_questionnaire_resolution.get(path) {
+            resolution.run_pre_dispatch(matches, &mut ctx)?;
         }
 
         if let Some(hooks) = hooks {

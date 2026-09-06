@@ -38,6 +38,7 @@ struct VariantAttrs {
     simple: bool,
     pure: bool,
     pageable: bool,
+    no_config: bool,
 }
 
 struct VariantInfo {
@@ -201,6 +202,9 @@ impl Parse for VariantAttrs {
                 Meta::Path(p) if p.is_ident("pageable") => {
                     attrs.pageable = true;
                 }
+                Meta::Path(p) if p.is_ident("no_config") => {
+                    attrs.no_config = true;
+                }
                 _ if meta.path().is_ident("pre_dispatch") => {
                     set_hook_paths(&mut attrs.pre_dispatch, "pre_dispatch", &meta)?;
                 }
@@ -274,7 +278,7 @@ impl Parse for VariantAttrs {
                 _ => {
                     return Err(Error::new(
                         meta.span(),
-                        "unknown attribute, expected one of: name, handler, template_name, inputs, silent, binary, structured_only, pageable, pre_dispatch, post_dispatch, post_output, questionnaire, nested, skip, default, list_view, item_type, pipe_to, pipe_through, pipe_to_clipboard, simple, pure",
+                        "unknown attribute, expected one of: name, handler, template_name, inputs, silent, binary, structured_only, pageable, no_config, pre_dispatch, post_dispatch, post_output, questionnaire, nested, skip, default, list_view, item_type, pipe_to, pipe_through, pipe_to_clipboard, simple, pure",
                     ));
                 }
             }
@@ -310,6 +314,7 @@ impl VariantAttrs {
             simple,
             pure,
             pageable,
+            no_config,
         } = other;
 
         self.name = name.or(self.name.take());
@@ -339,6 +344,7 @@ impl VariantAttrs {
         self.simple |= simple;
         self.pure |= pure;
         self.pageable |= pageable;
+        self.no_config |= no_config;
         Ok(())
     }
 
@@ -572,7 +578,8 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                     || v.attrs.pipe_to.is_some()
                     || v.attrs.pipe_through.is_some()
                     || v.attrs.pipe_to_clipboard
-                    || v.attrs.pageable;
+                    || v.attrs.pageable
+                    || v.attrs.no_config;
 
                 let handler_expr = if v.attrs.list_view {
                      if let Some(item_type_str) = &v.attrs.item_type {
@@ -664,6 +671,9 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                     let pageable_call = v.attrs.pageable.then(|| {
                         quote! { __cfg = __cfg.pageable(); }
                     });
+                    let no_config_call = v.attrs.no_config.then(|| {
+                        quote! { __cfg = __cfg.without_config(); }
+                    });
 
                     quote! {
                         let __builder = __builder.command_with(#cmd_name, #handler_expr, |mut __cfg| {
@@ -678,6 +688,7 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                             #pipe_through_call
                             #pipe_clipboard_call
                             #pageable_call
+                            #no_config_call
                             __cfg
                         });
                     }
