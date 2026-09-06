@@ -336,6 +336,18 @@ pub(crate) enum HookRegistrationSource {
     CommandConfig,
 }
 
+impl HookRegistrationSource {
+    fn describe(self, path: &str) -> String {
+        match self {
+            Self::AppBuilderHooks => format!("`AppBuilder::hooks(\"{path}\", ..)`"),
+            Self::CommandConfig => format!(
+                "the command's own `CommandConfig` (`command_with(\"{path}\", ..)`, or \
+                 `pre_dispatch`/`post_dispatch`/`post_output` on the `#[derive(Dispatch)]` variant)"
+            ),
+        }
+    }
+}
+
 /// Read once at [`AppBuilder::build`]; a truthy value turns strict mode on and never off.
 pub const STRICT_STYLE_TAGS_ENV: &str = "STANDOUT_STRICT_STYLE_TAGS";
 
@@ -367,6 +379,7 @@ pub struct App {
     pending_commands: RefCell<HashMap<String, PendingCommand>>,
     finalized_commands: RefCell<Option<HashMap<String, DispatchFn>>>,
     pub(crate) command_hooks: HashMap<String, Hooks>,
+    pub(crate) command_input_chains: HashMap<String, Hooks>,
     pub(crate) questionnaire_commands: HashMap<String, QuestionnaireCommand>,
     pub(crate) context_registry: ContextRegistry,
     pub(crate) default_command: Option<String>,
@@ -407,6 +420,7 @@ pub struct AppBuilder {
     pending_commands: RefCell<HashMap<String, PendingCommand>>,
     finalized_commands: RefCell<Option<HashMap<String, DispatchFn>>>,
     pub(crate) command_hooks: HashMap<String, Hooks>,
+    pub(crate) command_input_chains: HashMap<String, Hooks>,
     pub(crate) hook_phase_sources: HashMap<(String, HookPhase), HookRegistrationSource>,
     pub(crate) setup_errors: Vec<SetupError>,
     pub(crate) questionnaire_commands: HashMap<String, QuestionnaireCommand>,
@@ -461,6 +475,7 @@ impl AppBuilder {
             pending_commands: RefCell::new(HashMap::new()),
             finalized_commands: RefCell::new(None),
             command_hooks: HashMap::new(),
+            command_input_chains: HashMap::new(),
             hook_phase_sources: HashMap::new(),
             setup_errors: Vec::new(),
             questionnaire_commands: HashMap::new(),
@@ -674,6 +689,7 @@ impl AppBuilder {
             pending_commands: self.pending_commands,
             finalized_commands: self.finalized_commands,
             command_hooks: self.command_hooks,
+            command_input_chains: self.command_input_chains,
             questionnaire_commands: self.questionnaire_commands,
             context_registry: self.context_registry,
             default_command: self.default_command,
@@ -1545,6 +1561,10 @@ impl App {
         }
 
         let hooks = self.command_hooks.get(path);
+
+        if let Some(chains) = self.command_input_chains.get(path) {
+            chains.run_pre_dispatch(matches, &mut ctx)?;
+        }
 
         if let Some(hooks) = hooks {
             hooks.run_pre_dispatch(matches, &mut ctx)?;

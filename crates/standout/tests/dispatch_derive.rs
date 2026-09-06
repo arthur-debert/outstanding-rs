@@ -343,3 +343,89 @@ fn inputs_attribute_resolves_a_chain_for_a_derive_registered_command() {
     );
     rejected.assert_error_contains("note cannot be empty");
 }
+
+mod hook_handlers {
+    use super::*;
+    use clap::ArgMatches;
+    use standout::cli::hooks::HookError;
+    use std::cell::RefCell;
+
+    thread_local! {
+        static ORDER: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
+    }
+
+    fn record(step: &'static str) {
+        ORDER.with(|order| order.borrow_mut().push(step));
+    }
+
+    pub fn reset() {
+        ORDER.with(|order| order.borrow_mut().clear());
+    }
+
+    pub fn steps() -> Vec<&'static str> {
+        ORDER.with(|order| order.borrow().clone())
+    }
+
+    pub fn first(_matches: &ArgMatches, _ctx: &mut CommandContext) -> Result<(), HookError> {
+        record("first");
+        Ok(())
+    }
+
+    pub fn second(_matches: &ArgMatches, _ctx: &mut CommandContext) -> Result<(), HookError> {
+        record("second");
+        Ok(())
+    }
+
+    pub fn chained(_matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<()> {
+        record("handler");
+        Ok(Output::Silent)
+    }
+
+    pub fn single(_matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<()> {
+        record("handler");
+        Ok(Output::Silent)
+    }
+}
+
+#[derive(Subcommand, Dispatch)]
+#[dispatch(handlers = hook_handlers)]
+enum HookCommands {
+    #[dispatch(pre_dispatch(hook_handlers::first, hook_handlers::second), silent)]
+    Chained,
+    #[dispatch(pre_dispatch = hook_handlers::first, silent)]
+    Single,
+}
+
+fn hook_command() -> clap::Command {
+    clap::Command::new("app")
+        .subcommand(clap::Command::new("chained"))
+        .subcommand(clap::Command::new("single"))
+}
+
+fn hook_app() -> App {
+    App::builder()
+        .commands(HookCommands::dispatch_config())
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+#[test]
+fn a_pre_dispatch_list_runs_every_hook_in_written_order() {
+    let app = hook_app();
+    hook_handlers::reset();
+    TestHarness::new()
+        .run(&app, hook_command(), ["app", "chained"])
+        .assert_success();
+    assert_eq!(hook_handlers::steps(), ["first", "second", "handler"]);
+}
+
+#[test]
+fn the_single_path_pre_dispatch_spelling_registers_that_one_hook() {
+    let app = hook_app();
+    hook_handlers::reset();
+    TestHarness::new()
+        .run(&app, hook_command(), ["app", "single"])
+        .assert_success();
+    assert_eq!(hook_handlers::steps(), ["first", "handler"]);
+}

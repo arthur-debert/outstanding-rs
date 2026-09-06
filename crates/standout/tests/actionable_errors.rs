@@ -135,7 +135,7 @@ fn render_named_file_refresh_error_keeps_read_context() {
 }
 
 #[test]
-fn hook_conflict_error_names_the_phase_and_single_registration_fix() {
+fn hook_conflict_error_names_the_phase_and_both_registrations() {
     let result = App::builder()
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
@@ -149,9 +149,9 @@ fn hook_conflict_error_names_the_phase_and_single_registration_fix() {
 
     let message = build_error(result);
 
-    assert!(message.contains("command `show` registers pre-dispatch hooks"));
-    assert!(message.contains("CommandConfig"));
-    assert!(message.contains("AppBuilder::hooks"));
+    assert!(message.contains("command `show` registers pre-dispatch hooks twice"));
+    assert!(message.contains("`CommandConfig` (`command_with(\"show\", ..)`"));
+    assert!(message.contains("`AppBuilder::hooks(\"show\", ..)`"));
     assert!(message.contains("keep each (path, phase) in one registration path"));
 }
 
