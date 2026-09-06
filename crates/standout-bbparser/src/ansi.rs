@@ -21,14 +21,6 @@
 //! colour: a caller walking the text itself has to remember the rule, and one
 //! that forgets emits an opener with no reset, dyeing every later line of
 //! terminal output.
-//!
-//! Reaching for the balance is still each cutter's decision, and not every
-//! cutter should. `StyledText::render_range` and `standout-render`'s
-//! `truncate_to_display_width` cut to discard, so they close what they cut —
-//! the second through `closing_for`. Wrapping cuts to continue the value on the
-//! next line, where a reset would both break it mid-colour and corrupt the byte
-//! length the caller reads back as a source offset, so it takes its prefix
-//! unbalanced.
 
 use console::AnsiCodeIterator;
 
