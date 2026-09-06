@@ -1,13 +1,13 @@
 [package]
 name = "standout-fixtures"
-version = "13.0.0"
+version.workspace = true
 edition = "2021"
 description = "The shared downstream-shaped app fixture the standout test suites assert against"
 license = "MIT"
-publish = false
+repository = "https://github.com/arthur-debert/standout"
 
 [dependencies]
-standout = { path = "../standout", version = "13.0.0" }
+standout = { path = "../standout", version = "13.0.4" }
 anyhow = "1"
 clap = { version = "4", features = ["help"] }
 console = "0.16"

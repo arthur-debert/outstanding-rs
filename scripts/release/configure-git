@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+: "${RELEASE_TOKEN:?RELEASE_TOKEN is required}"
+git config user.name "github-actions[bot]"
+git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+export GH_TOKEN="$RELEASE_TOKEN"
+gh auth setup-git
+exec "$@"

@@ -1,59 +1,77 @@
-name: Checks
-
-# Thin caller of shipit's wf-checks quality-checks block (ADP02-WS05, #184;
-# ADR-0010/0039/0040: consumer CI is routing-only YAML over shipit-published
-# reusable workflows). Replaces the legacy caller of
-# arthur-debert/release/.github/workflows/rust-ci.yml@v3: the lane planner
-# (`shipit ci plan`) reads .shipit.toml [lanes] and emits the lint + test
-# matrix, and each job runs `pixi run --locked <run>` — the same
-# implementation a laptop runs. The block is consumed by the floating major
-# ref @v1, per the ADR-0010 publishing convention.
-#
-# Release workflows (release.yml) and the docs deploy (docs.yml) stay on the
-# legacy release path — out of scope for this surface.
+name: Quality checks
 
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      macos:
+        description: Run on macOS instead of Linux
+        type: boolean
+        default: false
 
-# Superseded-run hygiene (shipit#645): a branch with an open PR gets BOTH a
-# push run and a pull_request run per push. The group is scoped per EVENT and
-# per ref/PR: `github.event_name` keeps the push run and the PR run of the
-# same head in separate groups (both verdicts are legit), while within one
-# event a new push cancels the now-superseded in-flight run for the same
-# branch (push: github.ref) or the same PR (pull_request: PR number). A
-# cancelled-because-superseded run belongs to an old head, and the `check`
-# job below turns cancellation into a SKIP, so it is never the surviving
-# verdict on the current head.
 concurrency:
-  group: checks-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  group: checks-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  checks:
-    uses: arthur-debert/shipit/.github/workflows/wf-checks.yml@v1
-  # The merge-blocking verdict under ONE stable name: branch protection
-  # requires `check`, and a called workflow's jobs report as
-  # "checks / <lane>" — so this aggregator keeps the exact `check` name
-  # alive, succeeding iff the block succeeded. Result propagation with one
-  # deliberate hole (shipit#645): a CANCELLED block means the run was
-  # superseded (the concurrency group above cancelled it for a newer head),
-  # and the new head's run carries the verdict — so cancellation SKIPS this
-  # job (a skipped required check counts as satisfied, i.e. neutral) instead
-  # of failing it. Every completed result stays explicit via `if: always()`:
-  # success passes, anything else — including a skipped block — fails.
-  check:
-    needs: checks
-    if: always() && needs.checks.result != 'cancelled'
-    runs-on: ubuntu-latest
+  quality:
+    name: Format, lint, and test
+    runs-on: ${{ inputs.macos && 'macos-15' || 'ubuntu-24.04' }}
+    env:
+      DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+      CARGO_INCREMENTAL: '0'
+      SCCACHE_BASEDIRS: ${{ github.workspace }}
+      SCCACHE_CLIENT_SIDE: '1'
     steps:
-      - name: Verdict
-        env:
-          RESULT: ${{ needs.checks.result }}
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+
+      - name: Cache quality tools
+        uses: actions/cache@v5
+        with:
+          path: .quality-tools
+          key: quality-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/install-quality-tools', 'scripts/install-sccache', 'scripts/tool-versions.env', 'scripts/quality-tools/package*.json', '.node-version') }}
+      - name: Install quality tools
         run: |
-          echo "wf-checks: $RESULT"
-          test "$RESULT" = "success"
+          scripts/install-quality-tools
+          source scripts/tool-versions.env
+          echo "SCCACHE_VERSION=$SCCACHE_VERSION" >> "$GITHUB_ENV"
+
+      - name: Cache Rust toolchain
+        uses: actions/cache@v5
+        with:
+          path: ~/.rustup/toolchains
+          key: rust-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}
+      - name: Install repository Rust toolchain
+        run: rustup show
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ runner.os }}-${{ runner.arch }}
+          cache-bin: false
+
+      - name: Load secrets from Doppler
+        if: env.DOPPLER_TOKEN != ''
+        uses: DopplerHQ/secrets-fetch-action@v2.0.0
+        with:
+          doppler-token: ${{ env.DOPPLER_TOKEN }}
+          inject-env-vars: true
+      - name: Set up shared compiler cache
+        uses: arthur-debert/release/.github/actions/setup-sccache@v3
+        with:
+          gcs-key: ${{ env.SCCACHE_GCS_KEY }}
+          key-prefix: ${{ github.repository }}/${{ runner.os }}/${{ runner.arch }}
+          version: v${{ env.SCCACHE_VERSION }}
+      - name: Run repository quality checks
+        run: |
+          scripts/with-sccache --keep-server scripts/quality
+          # rust-cache starts unawaited cleanup of both optional test directories.
+          mkdir -p target/tests/{target,trybuild}

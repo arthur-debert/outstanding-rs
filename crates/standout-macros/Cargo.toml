@@ -1,6 +1,6 @@
 [package]
 name = "standout-macros"
-version = "13.0.0"
+version.workspace = true
 edition = "2021"
 description = "Proc macros for compile-time resource embedding in Standout"
 license = "MIT"

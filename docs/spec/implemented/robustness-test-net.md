@@ -191,7 +191,7 @@ environment conventions (`NO_COLOR`, `TERM=dumb`) get pinning tests.
 This Spec *is* testing; its own verification is: (a) the new suite fails on the unfixed
 open bugs (#302, #303) and on reverts of the recent fixes (#297–#301 fix commits reverted
 locally → red); (b) the shared fixture replaces at least the three known hand-synced
-fixture copies; (c) `pixi run test` wall-time increase stays within an agreed budget.
+fixture copies; (c) `cargo test --workspace` wall-time increase stays within an agreed budget.
 
 ## Workstream Hints
 

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -z ${CI:-} && -r /Volumes/code/projects/dotfiles/devdevice/env.sh ]]; then
+  # shellcheck source=/dev/null
+  source /Volumes/code/projects/dotfiles/devdevice/env.sh
+fi
+# shellcheck source=scripts/agent-env
+source "$(dirname "$0")/agent-env"
+exec sccache "$@"

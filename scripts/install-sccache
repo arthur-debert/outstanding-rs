@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+project_root=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
+# shellcheck source=scripts/tool-versions.env
+source "$project_root/scripts/tool-versions.env"
+prefix=${1:-"$project_root/.quality-tools"}
+target=${2:-}
+
+if [[ -z "$target" ]]; then
+    case "$(uname -s)-$(uname -m)" in
+        Darwin-arm64 | Darwin-aarch64) target=aarch64-apple-darwin ;;
+        Darwin-x86_64) target=x86_64-apple-darwin ;;
+        Linux-aarch64 | Linux-arm64) target=aarch64-unknown-linux-musl ;;
+        Linux-x86_64) target=x86_64-unknown-linux-musl ;;
+        *)
+            printf 'Unsupported sccache platform: %s-%s\n' \
+                "$(uname -s)" "$(uname -m)" >&2
+            exit 1
+            ;;
+    esac
+fi
+
+case "$target" in
+    aarch64-apple-darwin | x86_64-apple-darwin | \
+        aarch64-unknown-linux-musl | x86_64-unknown-linux-musl) ;;
+    *)
+        printf 'Unsupported sccache target: %s\n' "$target" >&2
+        exit 1
+        ;;
+esac
+
+archive="sccache-v${SCCACHE_VERSION}-${target}.tar.gz"
+base_url="https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}"
+work_dir=$(mktemp -d)
+trap 'rm -rf "$work_dir"' EXIT
+
+curl --fail --location --silent --show-error \
+    "$base_url/$archive" --output "$work_dir/$archive"
+curl --fail --location --silent --show-error \
+    "$base_url/$archive.sha256" --output "$work_dir/$archive.sha256"
+(
+    cd "$work_dir"
+    if command -v sha256sum >/dev/null 2>&1; then
+        actual=$(sha256sum "$archive" | awk '{print $1}')
+    else
+        actual=$(shasum -a 256 "$archive" | awk '{print $1}')
+    fi
+    expected=$(tr -d '[:space:]' < "$archive.sha256")
+    test "$actual" = "$expected"
+    tar -xzf "$archive"
+)
+
+mkdir -p "$prefix/bin"
+install -m 755 \
+    "$work_dir/sccache-v${SCCACHE_VERSION}-${target}/sccache" \
+    "$prefix/bin/sccache"
