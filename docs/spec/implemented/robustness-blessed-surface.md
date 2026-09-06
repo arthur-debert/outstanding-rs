@@ -50,7 +50,7 @@ replaces the audit's numbers as this epic's baseline.
   handling at all. The guides pin `standout = "7"` at 8.1.1.
 - **Wizard output is compile-tested** — `generated_project_matrix_formats_checks_tests_and_runs`
   in `crates/standout/src/bin/standout.rs:2823` runs `cargo fmt --check` / `check` /
-  `test` on generated projects under `pixi run test`. The generator-rot risk (#244) is
+  `test` on generated projects under `cargo test --workspace`. The generator-rot risk (#244) is
   covered; what is not covered is that the generated project uses the *blessed* idiom.
 - **`docs/SUMMARY.md` orphans**: `topics/standout-help.md`, `topics/topics-system.md`,
   both `index.md`s, two upgrade guides, `crates/input/design.md`, and
