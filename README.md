@@ -218,6 +218,38 @@ You can find comprehensive documentation in our book: **[standout.magik.works](h
 
 Contributions welcome. Use the [issue tracker](https://github.com/arthur-debert/standout/issues) for bugs and feature requests.
 
+Install Git, Bash, rustup, Node.js/npm, curl, and Python 3.11 (available as `python3.11`). Bootstrap the repository's tool versions and pre-commit hook, then run the same checks as CI:
+
+```bash
+scripts/session-start
+scripts/quality
+```
+
+Create a worktree and launch either installed agent CLI, or create a worktree directly:
+
+```bash
+scripts/agent-start codex my-change
+scripts/agent-start claude another-change
+scripts/worktree third-change main
+```
+
+`scripts/worktree BRANCH [BASE]` defaults new branches to the current commit. Worktrees use writable `WORKSPACES` (default `/Volumes/workspace/trees`), otherwise `${XDG_DATA_HOME:-$HOME/.local/share}/standout/worktrees`.
+
+Native Codex sessions require a trusted project and reviewed hooks through `/hooks`. In the Codex application, set **Settings → Worktrees → Worktree root** to your worktree directory; repository hooks cannot choose the application's worktree location. Claude's native `--worktree` uses the repository hook.
+
+Publishing requires authenticated Doppler and GitHub CLI access, Git push permission, and the crates.io token from Doppler's `github/prd` configuration. Preview a patch release before executing it:
+
+```bash
+source scripts/agent-env
+scripts/install-release-tools
+doppler run --project github --config prd -- cargo release --workspace patch
+doppler run --project github --config prd -- cargo release --workspace patch --execute
+```
+
+Dispatch the same publisher with `gh workflow run publish.yml --ref main -f bump=patch`; `minor` and `major` are also accepted. Use the branch containing the workflow with `--ref` when publishing from another branch.
+
+For a published tag, `scripts/release/verify-published vMAJOR.MINOR.PATCH` checks crates.io packages against its commit. `scripts/release/github vMAJOR.MINOR.PATCH` verifies the packages and creates the matching GitHub release if absent.
+
 ## License
 
 MIT
