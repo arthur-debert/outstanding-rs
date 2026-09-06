@@ -48,17 +48,30 @@ fn words(text: &str) -> usize {
     text.split_whitespace().count()
 }
 
+fn structure_problem(source: &str) -> Option<String> {
+    let mut seen_bullet = false;
+    for (index, line) in source.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if line.starts_with("- ") {
+            seen_bullet = true;
+        } else if !(seen_bullet && line.starts_with(char::is_whitespace)) {
+            return Some(format!(
+                "line {} is {line:?}, not a `- ` bullet or an indented continuation",
+                index + 1
+            ));
+        }
+    }
+    (!seen_bullet).then(|| "is empty".to_string())
+}
+
 #[test]
 fn every_unreleased_fragment_is_a_bullet_list() {
     let mut offenders = Vec::new();
     for (name, source) in fragments() {
-        let first = source.lines().find(|line| !line.trim().is_empty());
-        match first {
-            Some(line) if line.starts_with("- ") => {}
-            Some(line) => offenders.push(format!(
-                "CHANGELOG/{name}: starts with {line:?}, not a `- ` bullet"
-            )),
-            None => offenders.push(format!("CHANGELOG/{name}: is empty")),
+        if let Some(problem) = structure_problem(&source) {
+            offenders.push(format!("CHANGELOG/{name}: {problem}"));
         }
     }
     assert!(
@@ -107,6 +120,16 @@ fn every_unreleased_fragment_is_within_budget() {
         "{}\n\n{GUIDANCE}",
         offenders.join("\n")
     );
+}
+
+#[test]
+fn content_outside_a_bullet_is_not_a_bullet_list() {
+    assert_eq!(structure_problem("- one\n  two\n\n- three\n"), None);
+    assert!(structure_problem("- one\n\n# a heading\n").is_some());
+    assert!(structure_problem("- one\ntop-level prose\n").is_some());
+    assert!(structure_problem("preamble\n\n- one\n").is_some());
+    assert!(structure_problem("  orphan continuation\n").is_some());
+    assert!(structure_problem("\n\n").is_some());
 }
 
 #[test]
