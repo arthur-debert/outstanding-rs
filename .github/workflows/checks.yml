@@ -1,31 +1,10 @@
 name: Checks
 
-# Thin caller of shipit's wf-checks quality-checks block (ADP02-WS05, #184;
-# ADR-0010/0039/0040: consumer CI is routing-only YAML over shipit-published
-# reusable workflows). Replaces the legacy caller of
-# arthur-debert/release/.github/workflows/rust-ci.yml@v3: the lane planner
-# (`shipit ci plan`) reads .shipit.toml [lanes] and emits the lint + test
-# matrix, and each job runs `pixi run --locked <run>` — the same
-# implementation a laptop runs. The block is consumed by the floating major
-# ref @v1, per the ADR-0010 publishing convention.
-#
-# Release workflows (release.yml) and the docs deploy (docs.yml) stay on the
-# legacy release path — out of scope for this surface.
-
 on:
   push:
-    branches: ['**']
   pull_request:
+  workflow_dispatch:
 
-# Superseded-run hygiene (shipit#645): a branch with an open PR gets BOTH a
-# push run and a pull_request run per push. The group is scoped per EVENT and
-# per ref/PR: `github.event_name` keeps the push run and the PR run of the
-# same head in separate groups (both verdicts are legit), while within one
-# event a new push cancels the now-superseded in-flight run for the same
-# branch (push: github.ref) or the same PR (pull_request: PR number). A
-# cancelled-because-superseded run belongs to an old head, and the `check`
-# job below turns cancellation into a SKIP, so it is never the surviving
-# verdict on the current head.
 concurrency:
   group: checks-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -34,26 +13,87 @@ permissions:
   contents: read
 
 jobs:
-  checks:
-    uses: arthur-debert/shipit/.github/workflows/wf-checks.yml@v1
-  # The merge-blocking verdict under ONE stable name: branch protection
-  # requires `check`, and a called workflow's jobs report as
-  # "checks / <lane>" — so this aggregator keeps the exact `check` name
-  # alive, succeeding iff the block succeeded. Result propagation with one
-  # deliberate hole (shipit#645): a CANCELLED block means the run was
-  # superseded (the concurrency group above cancelled it for a newer head),
-  # and the new head's run carries the verdict — so cancellation SKIPS this
-  # job (a skipped required check counts as satisfied, i.e. neutral) instead
-  # of failing it. Every completed result stays explicit via `if: always()`:
-  # success passes, anything else — including a skipped block — fails.
-  check:
-    needs: checks
-    if: always() && needs.checks.result != 'cancelled'
-    runs-on: ubuntu-latest
+  quality:
+    name: Quality (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_INCREMENTAL: '0'
+      SCCACHE_BASEDIRS: ${{ github.workspace }}
+      SCCACHE_CLIENT_SIDE: '1'
     steps:
-      - name: Verdict
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+
+      - name: Cache quality tools
+        uses: actions/cache@v5
+        with:
+          path: .quality-tools
+          key: quality-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/install-quality-tools', 'scripts/install-sccache', 'scripts/tool-versions.env', 'scripts/quality-tools/package*.json', '.node-version') }}
+      - name: Install quality tools
+        run: scripts/install-quality-tools
+
+      - name: Cache Rust toolchain
+        uses: actions/cache@v5
+        with:
+          path: ~/.rustup/toolchains
+          key: rust-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}
+      - name: Install repository Rust toolchain
+        run: rustup show
+
+      - name: Cache downloaded Rust dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/git
+          key: cargo-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            cargo-deps-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Cache compiled Rust outputs
+        uses: actions/cache@v5
+        with:
+          path: target
+          key: rust-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'scripts/quality') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ hashFiles('crates/**') }}
+          restore-keys: |
+            rust-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'scripts/quality') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-
+
+      - name: Cache local compiler results
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/sccache
+            ~/Library/Caches/Mozilla.sccache
+          key: sccache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'scripts/tool-versions.env') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ hashFiles('crates/**') }}
+          restore-keys: |
+            sccache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'scripts/tool-versions.env') }}-
+
+      - name: Install Doppler
+        uses: dopplerhq/cli-action@v4
+      - name: Run repository quality checks
         env:
-          RESULT: ${{ needs.checks.result }}
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         run: |
-          echo "wf-checks: $RESULT"
-          test "$RESULT" = "success"
+          if [ -n "$DOPPLER_TOKEN" ]; then
+            doppler run -- scripts/with-sccache scripts/quality
+          else
+            scripts/quality
+          fi
+
+  check:
+    if: always()
+    needs: quality
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require quality checks to pass
+        env:
+          RESULT: ${{ needs.quality.result }}
+        run: test "$RESULT" = success
