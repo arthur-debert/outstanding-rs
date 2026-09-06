@@ -23,6 +23,7 @@ else
 fi
 standout_name=${1//\//-}
 standout_tree=$(mktemp -d "$standout_workspaces/standout-$standout_name-XXXXXX")
+trap 'rmdir "$standout_tree" 2>/dev/null || true' EXIT
 if git show-ref --verify --quiet "refs/heads/$1"; then
   git worktree add "$standout_tree" "$1" >&2
 else

@@ -1,3 +1,5 @@
+lefthook: .quality-tools/bin/lefthook
+
 pre-commit:
   commands:
     quality:

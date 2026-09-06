@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$(git rev-parse --show-toplevel)/scripts/worktree\" --hook",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && bash scripts/worktree --hook",
             "timeout": 600
           }
         ]
