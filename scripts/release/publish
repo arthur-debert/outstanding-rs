@@ -12,6 +12,4 @@ case "${1:-}" in
   patch|minor|major) ;;
   *) echo "Usage: scripts/release/publish patch|minor|major [cargo-release options]" >&2; exit 2 ;;
 esac
-# Cargo 1.96 workspace publishing can stop before pending registry confirmations.
-export PUBLISH_GRACE_SLEEP=1
 exec cargo release --workspace "$@"

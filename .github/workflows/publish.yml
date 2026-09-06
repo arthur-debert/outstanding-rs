@@ -23,7 +23,6 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
-      CACHE_ON_FAILURE: 'true'
       CARGO_INCREMENTAL: '0'
       SCCACHE_BASEDIRS: ${{ github.workspace }}
       SCCACHE_CLIENT_SIDE: '1'
@@ -60,6 +59,7 @@ jobs:
         with:
           shared-key: ${{ runner.os }}-${{ runner.arch }}
           cache-bin: false
+          cache-on-failure: true
 
       - name: Load secrets from Doppler
         uses: DopplerHQ/secrets-fetch-action@v2.0.0
