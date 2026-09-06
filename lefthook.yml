@@ -1,4 +1,4 @@
-lefthook: '"$(git rev-parse --show-toplevel)/.quality-tools/bin/lefthook"'
+lefthook: .quality-tools/bin/lefthook
 
 pre-commit:
   commands:
