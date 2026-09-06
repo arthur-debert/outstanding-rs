@@ -71,4 +71,7 @@ jobs:
           key-prefix: ${{ github.repository }}/${{ runner.os }}/${{ runner.arch }}
           version: v${{ env.SCCACHE_VERSION }}
       - name: Run repository quality checks
-        run: scripts/with-sccache --keep-server scripts/quality
+        run: |
+          scripts/with-sccache --keep-server scripts/quality
+          # rust-cache starts unawaited cleanup of both optional test directories.
+          mkdir -p target/tests/{target,trybuild}
