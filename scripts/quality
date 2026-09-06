@@ -6,6 +6,12 @@ cd "$project_root"
 # shellcheck source=scripts/agent-env
 source scripts/agent-env
 
+CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-target}
+if [[ "$CARGO_TARGET_DIR" != /* ]]; then
+    CARGO_TARGET_DIR="$project_root/$CARGO_TARGET_DIR"
+fi
+export CARGO_TARGET_DIR
+
 for tool in node markdownlint prettier shellcheck sccache; do
     [[ -x "$project_root/.quality-tools/bin/$tool" ]] || {
         printf '%s is required; run scripts/install-quality-tools\n' "$tool" >&2
