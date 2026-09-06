@@ -49,7 +49,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::cli::builder::TemplateRef;
-use crate::cli::handler::{Artifact, Diagnostic, Extensions, Output, RunError, RunErrorKind};
+use crate::cli::handler::{Artifact, Diagnostic, Extensions, Output, RunError};
 use crate::setup::SetupError;
 use crate::Representation;
 use standout_render::{escape_style_tags, ColorPolicy};
@@ -356,10 +356,11 @@ impl ResolvedConfig {
     }
 }
 
-pub(crate) fn config_run_error(error: &ClapfigError) -> RunError {
-    let prose = clapfig::render::render_plain(error);
-    let run_error = RunError::new(prose, RunErrorKind::Config);
-    match config_error_position(error) {
+pub(crate) fn config_run_error(error: ClapfigError) -> RunError {
+    let prose = clapfig::render::render_plain(&error);
+    let position = config_error_position(&error);
+    let run_error = RunError::config(prose, error);
+    match position {
         Some((file, line, column)) => {
             let diagnostic = run_error.diagnostic();
             let diagnostic = Diagnostic::error(diagnostic.summary)
@@ -471,6 +472,31 @@ mod tests {
         };
         let position = config_error_position(&ClapfigError::UnknownKeys(vec![info]));
         assert_eq!(position, Some(("app.toml".to_string(), 3, 1)));
+    }
+
+    #[test]
+    fn a_config_failure_carries_the_clapfig_error_a_caller_can_inspect() {
+        let info = clapfig::error::UnknownKeyInfo {
+            key: "bogus".into(),
+            path: "app.toml".into(),
+            line: 3,
+            source: None,
+            env_var: None,
+            span: None,
+            url_key: None,
+            override_key: None,
+            input_type: None,
+        };
+        let run_error = config_run_error(ClapfigError::UnknownKeys(vec![info]));
+
+        let source = std::error::Error::source(&run_error)
+            .and_then(|source| source.downcast_ref::<ClapfigError>())
+            .expect("a config failure formats its cause but drops it");
+        let ClapfigError::UnknownKeys(keys) = source else {
+            panic!("expected UnknownKeys, got {source:?}");
+        };
+        assert_eq!(keys[0].key, "bogus");
+        assert_eq!(keys[0].line, 3);
     }
 
     #[test]

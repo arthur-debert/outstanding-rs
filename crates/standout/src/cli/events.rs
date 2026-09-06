@@ -182,10 +182,14 @@ impl EventDestination {
 /// failed while rendering; one the destination refused failed the same write
 /// that carries a whole run's text, and reaches machine consumers under the
 /// `final-write` kind rather than `render`.
-fn failure_kind(error: &EmitError) -> RunErrorKind {
+fn emit_failure_error(error: &EmitError) -> RunError {
     match error {
-        EmitError::Serialize(_) | EmitError::Render(_) => RunErrorKind::Render,
-        EmitError::Write(_) => RunErrorKind::FinalWrite(OutputKind::Text),
+        EmitError::Serialize(_) | EmitError::Render(_) => {
+            RunError::new(error.to_string(), RunErrorKind::Render)
+        }
+        EmitError::Write(io) => {
+            RunError::final_write(error.to_string(), rebuilt(io), OutputKind::Text)
+        }
     }
 }
 
@@ -213,11 +217,7 @@ impl EventSink for EventDestination {
     fn record_failure(&self, error: &EmitError) {
         let mut failure = self.failure.borrow_mut();
         if failure.is_none() {
-            let recorded = RunError::new(error.to_string(), failure_kind(error));
-            *failure = Some(match error {
-                EmitError::Write(io) => recorded.with_source(rebuilt(io)),
-                EmitError::Serialize(_) | EmitError::Render(_) => recorded,
-            });
+            *failure = Some(emit_failure_error(error));
         }
     }
 }
@@ -243,7 +243,7 @@ mod tests {
         ];
         for (error, expected) in cases {
             assert_eq!(
-                DiagnosticKind::from(failure_kind(&error)),
+                DiagnosticKind::from(emit_failure_error(&error).kind()),
                 expected,
                 "{error}"
             );

@@ -588,6 +588,34 @@ impl RunError {
             kind != RunErrorKind::App,
             "app run errors must be constructed from AppFailure"
         );
+        assert!(
+            kind != RunErrorKind::Config,
+            "config run errors must be constructed from RunError::config"
+        );
+        Self::of_kind(message, kind)
+    }
+    /// A write that carried the run's output failed; `error` is what the destination reported.
+    pub fn final_write<E>(message: impl Into<String>, error: E, kind: OutputKind) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        Self::of_kind(message, RunErrorKind::FinalWrite(kind)).with_source(error)
+    }
+    /// Turning the run's data into bytes failed; `error` is what the renderer or serializer reported.
+    pub fn render<E>(message: impl Into<String>, error: E) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        Self::of_kind(message, RunErrorKind::Render).with_source(error)
+    }
+    /// Resolving the application's configuration failed; `error` is what the resolver reported.
+    pub fn config<E>(message: impl Into<String>, error: E) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        Self::of_kind(message, RunErrorKind::Config).with_source(error)
+    }
+    fn of_kind(message: impl Into<String>, kind: RunErrorKind) -> Self {
         let status = match kind {
             RunErrorKind::ClapUsage => ExitStatus::USAGE_ERROR,
             _ => ExitStatus::FAILURE,
@@ -1065,6 +1093,35 @@ mod tests {
     #[should_panic(expected = "app run errors must be constructed from AppFailure")]
     fn run_error_new_rejects_app_kind() {
         let _ = RunError::new("inconsistent", RunErrorKind::App);
+    }
+    #[test]
+    #[should_panic(expected = "config run errors must be constructed from RunError::config")]
+    fn run_error_new_rejects_config_kind() {
+        let _ = RunError::new("inconsistent", RunErrorKind::Config);
+    }
+    #[test]
+    fn the_cause_carrying_constructors_keep_the_error_a_caller_can_downcast() {
+        let write = RunError::final_write(
+            "Error writing stdout",
+            std::io::Error::from(std::io::ErrorKind::BrokenPipe),
+            OutputKind::Text,
+        );
+        assert_eq!(write.kind(), RunErrorKind::FinalWrite(OutputKind::Text));
+        assert_eq!(
+            std::error::Error::source(&write)
+                .and_then(|source| source.downcast_ref::<std::io::Error>())
+                .map(std::io::Error::kind),
+            Some(std::io::ErrorKind::BrokenPipe)
+        );
+
+        let render = RunError::render("boom", std::io::Error::other("boom"));
+        assert_eq!(render.kind(), RunErrorKind::Render);
+        assert!(std::error::Error::source(&render).is_some());
+
+        let config = RunError::config("boom", std::io::Error::other("boom"));
+        assert_eq!(config.kind(), RunErrorKind::Config);
+        assert_eq!(config.exit_status(), ExitStatus::FAILURE);
+        assert!(std::error::Error::source(&config).is_some());
     }
     #[test]
     fn test_command_context_default() {

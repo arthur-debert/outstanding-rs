@@ -402,7 +402,7 @@ impl App {
         };
         let result = match action.and_then(|action| seam.handle(&action, &overrides)) {
             Ok(result) => result,
-            Err(error) => return DispatchResult::Error(config_run_error(&error)),
+            Err(error) => return DispatchResult::Error(config_run_error(error)),
         };
         let override_path = self.output_file_override(matches);
         let mut ctx = match self.command_context(
@@ -478,11 +478,11 @@ impl App {
         if let Some(path) = override_path.filter(|_| writes_through_the_sink(output_mode)) {
             if output_mode.is_stream() {
                 let file = open_output_file(path).map_err(|e| {
-                    RunError::new(
+                    RunError::final_write(
                         format!("Error writing output: {}", e),
-                        RunErrorKind::FinalWrite(OutputKind::Text),
+                        e,
+                        OutputKind::Text,
                     )
-                    .with_source(e)
                 })?;
                 sink.redirect(file);
             } else {
@@ -533,9 +533,9 @@ impl App {
                     match standout_render::serialize_record_array(records.clone(), output_mode) {
                         Ok(document) => document,
                         Err(error) => {
-                            return DispatchResult::Error(RunError::new(
+                            return DispatchResult::Error(RunError::render(
                                 error.to_string(),
-                                RunErrorKind::Render,
+                                error,
                             ))
                         }
                     };
@@ -573,9 +573,9 @@ impl App {
                         match standout_render::serialize_record_array(records, output_mode) {
                             Ok(document) => document,
                             Err(error) => {
-                                return DispatchResult::Error(RunError::new(
+                                return DispatchResult::Error(RunError::render(
                                     error.to_string(),
-                                    RunErrorKind::Render,
+                                    error,
                                 ))
                             }
                         };
@@ -635,37 +635,31 @@ impl App {
                         .and_then(|()| file.flush())
                     });
                     if let Err(e) = written {
-                        return DispatchResult::Error(
-                            RunError::new(
-                                format!("Error writing output: {}", e),
-                                RunErrorKind::FinalWrite(OutputKind::Text),
-                            )
-                            .with_source(e),
-                        );
+                        return DispatchResult::Error(RunError::final_write(
+                            format!("Error writing output: {}", e),
+                            e,
+                            OutputKind::Text,
+                        ));
                     }
                     final_output = RenderedOutput::Silent;
                 }
                 RenderedOutput::Text(t) => {
                     if let Err(e) = write_output(&t.formatted, &dest) {
-                        return DispatchResult::Error(
-                            RunError::new(
-                                format!("Error writing output: {}", e),
-                                RunErrorKind::FinalWrite(OutputKind::Text),
-                            )
-                            .with_source(e),
-                        );
+                        return DispatchResult::Error(RunError::final_write(
+                            format!("Error writing output: {}", e),
+                            e,
+                            OutputKind::Text,
+                        ));
                     }
                     final_output = RenderedOutput::Silent;
                 }
                 RenderedOutput::Binary(b, _) => {
                     if let Err(e) = write_binary_output(b, &dest) {
-                        return DispatchResult::Error(
-                            RunError::new(
-                                format!("Error writing output: {}", e),
-                                RunErrorKind::FinalWrite(OutputKind::Binary),
-                            )
-                            .with_source(e),
-                        );
+                        return DispatchResult::Error(RunError::final_write(
+                            format!("Error writing output: {}", e),
+                            e,
+                            OutputKind::Binary,
+                        ));
                     }
                     final_output = RenderedOutput::Silent;
                 }
@@ -897,11 +891,11 @@ impl App {
             return Ok(None);
         };
         let overrides = self.config_overrides(matches)?;
-        let dir = std::env::current_dir()
-            .map_err(|error| RunError::new(error.to_string(), RunErrorKind::Config))?;
+        let dir =
+            std::env::current_dir().map_err(|error| RunError::config(error.to_string(), error))?;
         seam.resolve_at(&overrides, &dir)
             .map(Some)
-            .map_err(|error| config_run_error(&error))
+            .map_err(config_run_error)
     }
 
     fn config_overrides(&self, matches: &ArgMatches) -> Result<Vec<(String, String)>, RunError> {
@@ -1082,11 +1076,11 @@ impl App {
                 write_output(page, &OutputDestination::File(path))
                     .err()
                     .map(|error| {
-                        RunError::new(
+                        RunError::final_write(
                             format!("Error writing output: {}", error),
-                            RunErrorKind::FinalWrite(OutputKind::Text),
+                            error,
+                            OutputKind::Text,
                         )
-                        .with_source(error)
                     })
             });
         let paged = help_to_file.is_none() && self.page_delivery(&result);
@@ -1558,12 +1552,8 @@ fn report_envelope(
     report: Option<serde_json::Value>,
     receipt: &ArtifactReceipt,
 ) -> Result<serde_json::Value, RunError> {
-    let receipt = serde_json::to_value(receipt).map_err(|e| {
-        RunError::new(
-            format!("Failed to serialize artifact receipt: {}", e),
-            RunErrorKind::Render,
-        )
-    })?;
+    let receipt = serde_json::to_value(receipt)
+        .map_err(|e| RunError::render(format!("Failed to serialize artifact receipt: {}", e), e))?;
     Ok(serde_json::json!({
         "report": report.unwrap_or(serde_json::Value::Null),
         "receipt": receipt,
@@ -1607,10 +1597,7 @@ impl App {
                 match standout_render::render_request_split(&request) {
                     Ok(rendered) => Some(rendered.formatted),
                     Err(error) => {
-                        return DispatchResult::Error(RunError::new(
-                            error.to_string(),
-                            RunErrorKind::Render,
-                        ))
+                        return DispatchResult::Error(RunError::render(error.to_string(), error))
                     }
                 }
             }
@@ -1623,13 +1610,11 @@ impl App {
         if let ArtifactDestination::File(path) = &destination {
             let dest = OutputDestination::File(path.clone());
             if let Err(e) = write_binary_output(&artifact.bytes, &dest) {
-                return DispatchResult::Error(
-                    RunError::new(
-                        format!("Error writing artifact: {}", e),
-                        RunErrorKind::FinalWrite(OutputKind::Artifact),
-                    )
-                    .with_source(e),
-                );
+                return DispatchResult::Error(RunError::final_write(
+                    format!("Error writing artifact: {}", e),
+                    e,
+                    OutputKind::Artifact,
+                ));
             }
         }
 
