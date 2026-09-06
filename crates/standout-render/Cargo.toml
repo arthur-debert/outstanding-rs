@@ -1,6 +1,6 @@
 [package]
 name = "standout-render"
-version = "13.0.0"
+version.workspace = true
 edition = "2021"
 description = "Styled terminal rendering with templates, themes, and adaptive color support"
 license = "MIT"
@@ -22,8 +22,8 @@ unicode-width = "0.2"
 east-asian-width = "0.1"
 cssparser = "0.31"
 terminal_size = "0.4"
-standout-bbparser = { version = "13.0.0", path = "../standout-bbparser" }
-standout-types = { version = "13.0.0", path = "../standout-types" }
+standout-bbparser = { version = "13.0.2", path = "../standout-bbparser" }
+standout-types = { version = "13.0.2", path = "../standout-types" }
 thiserror = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]

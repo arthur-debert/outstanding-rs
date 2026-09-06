@@ -6,7 +6,7 @@
 //! constructs it from the real process, tests put mocks in the same type;
 //! there is no process-global default-reader override.
 //!
-//! Feature flags: `editor` (default) enables [`EditorCollector`];
+//! Feature flags: `editor` (default) enables [`EditorSource`];
 //! `simple-prompts` (default) enables basic terminal prompts; `inquire`
 //! enables rich TUI prompts.
 

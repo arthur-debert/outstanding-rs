@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -lt 2 || ( $1 != codex && $1 != claude ) ]]; then
+  printf 'Usage: scripts/agent-start codex|claude BRANCH [AGENT_ARGS...]\n' >&2
+  exit 2
+fi
+standout_agent=$1
+standout_branch=$2
+shift 2
+cd "$(git rev-parse --show-toplevel)"
+standout_tree=$(scripts/worktree "$standout_branch")
+cd "$standout_tree"
+source scripts/agent-env
+exec "$standout_agent" "$@"

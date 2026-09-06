@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project_root=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
+# shellcheck source=scripts/agent-env
+source "$project_root/scripts/agent-env"
+keep_server=false
+if [[ ${1:-} == --keep-server ]]; then
+    keep_server=true
+    shift
+fi
+sccache=${SCCACHE_PATH:-sccache}
+if (($# == 0)); then
+    printf 'Usage: scripts/with-sccache [--keep-server] COMMAND [ARG ...]\n' >&2
+    exit 2
+fi
+if [[ -z "${SCCACHE_GCS_KEY:-}" && -z "${SCCACHE_GCS_KEY_PATH:-}" ]]; then
+    exec "$@"
+fi
+
+if "$keep_server" && [[ ! -r ${SCCACHE_GCS_KEY_PATH:-} ]]; then
+    printf '%s\n' '--keep-server requires an existing SCCACHE_GCS_KEY_PATH.' >&2
+    exit 2
+fi
+secret_dir=$(mktemp -d)
+cleanup() {
+    if ! "$keep_server"; then "$sccache" --stop-server >/dev/null 2>&1 || true; fi
+    rm -rf "$secret_dir"
+}
+trap cleanup EXIT
+umask 077
+if [[ -z ${SCCACHE_GCS_KEY_PATH:-} ]]; then
+    printf '%s' "$SCCACHE_GCS_KEY" | base64 --decode > "$secret_dir/key.json"
+    export SCCACHE_GCS_KEY_PATH="$secret_dir/key.json"
+fi
+unset SCCACHE_GCS_KEY
+export SCCACHE_GCS_BUCKET=${SCCACHE_GCS_BUCKET:-code-reviews-gh-sccache}
+cache_os=$(uname -s)
+cache_arch=$(uname -m)
+case $cache_os in Darwin) cache_os=macOS ;; esac
+case $cache_arch in x86_64) cache_arch=X64 ;; aarch64 | arm64) cache_arch=ARM64 ;; esac
+export SCCACHE_GCS_KEY_PREFIX=${SCCACHE_GCS_KEY_PREFIX:-arthur-debert/standout/$cache_os/$cache_arch}
+export SCCACHE_GCS_RW_MODE=READ_WRITE
+if ! "$keep_server"; then
+    export SCCACHE_SERVER_PORT=$((20000 + $$ % 20000))
+fi
+export RUSTC_WRAPPER="$sccache"
+# GCS limits mutations of sccache's shared startup-check object to one per second.
+for attempt in 1 2 3 4 5; do
+    : > "$secret_dir/server.log"
+    if SCCACHE_LOG=sccache::cache::cache=debug SCCACHE_ERROR_LOG="$secret_dir/server.log" \
+        "$sccache" --start-server > "$secret_dir/startup.log" 2>&1 &&
+        grep -q 'storage check result: ReadWrite' "$secret_dir/server.log"; then
+        break
+    fi
+    "$sccache" --stop-server >/dev/null 2>&1 || true
+    if ! grep -q 'RateLimited' "$secret_dir/server.log"; then
+        printf 'sccache could not open GCS for writing; check cache credentials and bucket access.\n' >&2
+        exit 1
+    fi
+    if ((attempt == 5)); then break; fi
+    delay=$((1 << (attempt - 1)))
+    printf 'GCS limited the shared cache startup check; retrying in %ss.\n' "$delay" >&2
+    sleep "$delay"
+done
+if ! grep -q 'storage check result: ReadWrite' "$secret_dir/server.log"; then
+    printf 'GCS cache remained read-only after five startup attempts.\n' >&2
+    exit 1
+fi
+"$@"
+if ! "$keep_server"; then "$sccache" --show-stats; fi

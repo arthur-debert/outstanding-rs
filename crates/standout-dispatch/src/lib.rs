@@ -3,8 +3,7 @@
 //! Routes parsed `ArgMatches` to a [`Handler`], running pre-dispatch, handler,
 //! post-dispatch, and post-output hooks around it, and returns typed
 //! [`HandlerResult`] data — presentation stays with the consuming framework.
-//! The third parameter of [`Handler::handle`] is the typed results channel of
-//! [`results`].
+//! The third parameter of [`Handler::handle`] is the typed [`Results`] channel.
 //!
 //! [`CommandContext`] carries two kinds of injected state: `app_state` is
 //! immutable and app-lifetime, built once and shared via `Rc`; `extensions` is

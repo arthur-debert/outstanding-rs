@@ -1,0 +1,3 @@
+[build]
+rustc-wrapper = "scripts/rustc-wrapper"
+incremental = false

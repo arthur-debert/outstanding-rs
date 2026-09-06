@@ -1,27 +1,26 @@
-name: Quality checks
+name: Publish crates
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
     inputs:
-      macos:
-        description: Run on macOS instead of Linux
-        type: boolean
-        default: false
+      bump:
+        description: Version increment
+        required: true
+        default: patch
+        type: choice
+        options: [patch, minor, major]
 
 concurrency:
-  group: checks-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event.pull_request.head.ref || github.ref_name }}
-  cancel-in-progress: true
+  group: crates-io-publish
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  quality:
-    name: Format, lint, and test
-    runs-on: ${{ inputs.macos && 'macos-15' || 'ubuntu-24.04' }}
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-24.04
     env:
       DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
       CARGO_INCREMENTAL: '0'
@@ -29,28 +28,28 @@ jobs:
       SCCACHE_CLIENT_SIDE: '1'
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
         with:
-          node-version-file: .node-version
-
-      - name: Cache quality tools
-        uses: actions/cache@v5
-        with:
-          path: .quality-tools
-          key: quality-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/install-quality-tools', 'scripts/install-sccache', 'scripts/tool-versions.env', 'scripts/quality-tools/package*.json', '.node-version') }}
-      - name: Install quality tools
-        run: |
-          scripts/install-quality-tools
-          source scripts/tool-versions.env
-          echo "SCCACHE_VERSION=$SCCACHE_VERSION" >> "$GITHUB_ENV"
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Cache Rust toolchain
         uses: actions/cache@v5
         with:
           path: ~/.rustup/toolchains
           key: rust-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}
+
+      - name: Cache release tools
+        uses: actions/cache@v5
+        with:
+          path: .quality-tools
+          key: release-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'scripts/tool-versions.env', 'scripts/install-release-tools') }}
+
       - name: Install repository Rust toolchain
-        run: rustup show
+        run: |
+          rustup show
+          source scripts/tool-versions.env
+          echo "SCCACHE_VERSION=$SCCACHE_VERSION" >> "$GITHUB_ENV"
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -59,7 +58,6 @@ jobs:
           cache-bin: false
 
       - name: Load secrets from Doppler
-        if: env.DOPPLER_TOKEN != ''
         uses: DopplerHQ/secrets-fetch-action@v2.0.0
         with:
           doppler-token: ${{ env.DOPPLER_TOKEN }}
@@ -70,8 +68,13 @@ jobs:
           gcs-key: ${{ env.SCCACHE_GCS_KEY }}
           key-prefix: ${{ github.repository }}/${{ runner.os }}/${{ runner.arch }}
           version: v${{ env.SCCACHE_VERSION }}
-      - name: Run repository quality checks
+      - name: Install release tools
+        run: scripts/with-sccache --keep-server scripts/install-release-tools
+
+      - name: Publish the workspace
+        env:
+          BUMP: ${{ inputs.bump }}
         run: |
-          scripts/with-sccache --keep-server scripts/quality
+          scripts/release/configure-git scripts/release/publish "$BUMP" --execute --no-confirm
           # rust-cache starts unawaited cleanup of both optional test directories.
           mkdir -p target/tests/{target,trybuild}
