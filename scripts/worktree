@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+source scripts/agent-env
+
+if [[ ${1:-} == --hook ]]; then
+  set -- "$(python3 -c 'import json, sys; print(json.load(sys.stdin)["name"])')"
+fi
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+  printf 'Usage: scripts/worktree NAME [BASE]\n' >&2
+  exit 2
+fi
+git check-ref-format --branch "$1" >/dev/null
+
+if [[ -d $WORKSPACES && -w $WORKSPACES ]]; then
+  standout_workspaces=$(cd "$WORKSPACES" && pwd -P)
+else
+  standout_workspaces="${XDG_DATA_HOME:-$HOME/.local/share}/standout/worktrees"
+  mkdir -p "$standout_workspaces"
+  standout_workspaces=$(cd "$standout_workspaces" && pwd -P)
+  printf 'WORKSPACES unavailable; using %s\n' "$standout_workspaces" >&2
+fi
+standout_name=${1//\//-}
+standout_tree=$(mktemp -d "$standout_workspaces/standout-$standout_name-XXXXXX")
+if git show-ref --verify --quiet "refs/heads/$1"; then
+  git worktree add "$standout_tree" "$1" >&2
+else
+  git worktree add -b "$1" "$standout_tree" "${2:-HEAD}" >&2
+fi
+(cd "$standout_tree" && scripts/session-start) >&2
+printf '%s\n' "$standout_tree"

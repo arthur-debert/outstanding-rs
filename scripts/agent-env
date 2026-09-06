@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC1090
+
+standout_root=$(git rev-parse --show-toplevel)
+export PATH="$standout_root/.quality-tools/bin:$PATH"
+
+standout_device_env=/Volumes/code/projects/dotfiles/devdevice/env.sh
+if [[ -z ${CI:-} && -r $standout_device_env ]]; then
+  if [[ -z ${SCCACHE_DIR:-} ]]; then
+    SCCACHE_DIR=$(. "$standout_device_env"; printf '%s' "$SCCACHE_DIR")
+    if [[ -d $SCCACHE_DIR && -w $SCCACHE_DIR ]]; then
+      export SCCACHE_DIR
+    else
+      unset SCCACHE_DIR
+    fi
+  fi
+  export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-$(. "$standout_device_env"; printf '%s' "$SCCACHE_CACHE_SIZE")}"
+  export WORKSPACES="${WORKSPACES:-$(. "$standout_device_env"; printf '%s' "$WORKSPACES")}"
+fi
+
+export WORKSPACES="${WORKSPACES:-/Volumes/workspace/trees}"
+export RUSTC_WRAPPER="${RUSTC_WRAPPER:-sccache}"
+export CARGO_INCREMENTAL=0

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+source scripts/agent-env
+scripts/install-quality-tools >&2
+lefthook install >&2
+
+if [[ -n ${CLAUDE_ENV_FILE:-} ]]; then
+  printf 'source %q\n' "$PWD/scripts/agent-env" >> "$CLAUDE_ENV_FILE"
+fi
+
+printf 'Git pre-commit hook installed. Use scripts/quality for checks and scripts/worktree NAME [BASE] for worktrees.\n'
