@@ -209,6 +209,13 @@ fn input_source_reports_file_kind() {
                 standout::input::InputError::file(path.display().to_string(), error)
             })
         }
+
+        fn bind_sources(
+            &self,
+            _sources: &standout::input::InputSources,
+        ) -> Option<Box<dyn standout::input::InputCollector<String>>> {
+            None
+        }
     }
 
     let dir = tempfile::tempdir().unwrap();

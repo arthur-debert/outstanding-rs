@@ -23,6 +23,10 @@ pub trait InputCollector<T>: Send + Sync {
     /// - Err(e) — Collection failed, abort the chain
     fn collect(&self, matches: &ArgMatches) -> Result<Option<T>, InputError>;
 
+    /// Rebuild this collector over the run's stdin, clipboard and prompt responder.
+    /// Return `None` to keep this collector as it stands.
+    fn bind_sources(&self, sources: &InputSources) -> Option<Box<dyn InputCollector<T>>>;
+
     /// Validate the collected value. Default accepts all values.
     fn validate(&self, _value: &T) -> Result<(), String> {
         Ok(())
@@ -38,7 +42,11 @@ pub trait InputCollector<T>: Send + Sync {
 
 `name()` is not only for humans: the chain turns it into the `InputSourceKind` a handler reads back through `ctx.input_source(...)`, matching `argument`, `flag`, `file`, `stdin`, `environment variable`, `config`, `clipboard`, `editor`, `prompt` and `default`. A name outside that set reports `InputSourceKind::Default`, so a custom source that wants a provenance of its own registers with `try_source_with_kind` instead of `try_source`.
 
-The chain calls `is_available()` first. If it returns `false`, the source is skipped. Otherwise, `collect()` is called. If validation fails and `can_retry()` is `true`, the source is retried (for interactive sources).
+The chain calls `bind_sources()` first, handing it the [`InputSources`](input-sources.md) the run was given, and works with the returned collector when there is one. Then it calls `is_available()`; if that returns `false`, the source is skipped. Otherwise `collect()` is called. If validation fails and `can_retry()` is `true`, the source is retried (for interactive sources).
+
+`bind_sources` has no default: every collector states what it does with the run's sources, so a collector that reads stdin, the clipboard or a prompt cannot silently keep reading the process's own. A collector whose value does not come from any of the three — an argument, an environment variable, a config value, a default — returns `None`. A collector that wraps another one returns a rebuilt copy of itself holding the bound inner collector; returning `None` there leaves the inner collector on the process's streams, which under a `TestHarness` means blocking on the test binary's stdin.
+
+Upgrading a collector written against an earlier release: add `bind_sources` returning `None`, unless it wraps or holds one of the built-in stdin, clipboard or prompt sources, in which case rebuild it over `sources`.
 
 ---
 
@@ -456,7 +464,7 @@ Inquire prompts are interactive and require a real terminal. For testing, use th
 Create custom sources by implementing `InputCollector<T>`:
 
 ```rust
-use standout_input::{InputCollector, InputError};
+use standout_input::{InputCollector, InputError, InputSources};
 use clap::ArgMatches;
 
 /// Read from a configuration file.
@@ -498,6 +506,10 @@ impl InputCollector<String> for ConfigFileSource {
             )),
             None => Ok(None),
         }
+    }
+
+    fn bind_sources(&self, _sources: &InputSources) -> Option<Box<dyn InputCollector<String>>> {
+        None
     }
 }
 
@@ -590,7 +602,7 @@ fn test_config_source() {
 
 All sources follow the same pattern:
 
-1. Implement `InputCollector<T>`
+1. Implement `InputCollector<T>`, including `bind_sources`
 2. Accept a mock via `with_reader()` or `with_runner()`
 3. Return `Ok(None)` to pass to the next source in the chain
 4. Return `Ok(Some(value))` when input is collected
