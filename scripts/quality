@@ -6,8 +6,8 @@ cd "$project_root"
 # shellcheck source=scripts/agent-env
 source scripts/agent-env
 
-for tool in cargo node markdownlint prettier shellcheck sccache; do
-    command -v "$tool" >/dev/null 2>&1 || {
+for tool in node markdownlint prettier shellcheck sccache; do
+    [[ -x "$project_root/.quality-tools/bin/$tool" ]] || {
         printf '%s is required; run scripts/install-quality-tools\n' "$tool" >&2
         exit 1
     }
