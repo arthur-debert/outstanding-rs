@@ -13,12 +13,25 @@ const OUTPUT_TRANSFORM_SUGAR: &[&str] = &[
     "pipe_with",
 ];
 
+const CAPABILITIES: &[&str] = &[
+    "questionnaire",
+    "questionnaire_with_form",
+    "questionnaire_with_form_and_review",
+    "input",
+    "without_config",
+];
+
 const REACHES: &[&str] = &[
     "self.hooks",
     "self.pre_dispatch(",
     "self.post_dispatch(",
     "self.post_output(",
 ];
+
+struct Scan {
+    methods: Vec<String>,
+    offenders: Vec<String>,
+}
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -37,7 +50,8 @@ fn method_name(line: &str) -> Option<&str> {
     Some(&rest[..end])
 }
 
-fn offenders_in(relative: &str, source: &str) -> Vec<String> {
+fn scan_of(relative: &str, source: &str) -> Scan {
+    let mut methods = Vec::new();
     let mut offenders = Vec::new();
     let mut inside = false;
     let mut method: Option<&str> = None;
@@ -53,6 +67,7 @@ fn offenders_in(relative: &str, source: &str) -> Vec<String> {
         }
         if let Some(name) = method_name(line) {
             method = Some(name);
+            methods.push(name.to_string());
         }
         let Some(name) = method else { continue };
         if HOOK_API.contains(&name) || OUTPUT_TRANSFORM_SUGAR.contains(&name) {
@@ -67,23 +82,38 @@ fn offenders_in(relative: &str, source: &str) -> Vec<String> {
         }
     }
 
-    offenders
+    Scan { methods, offenders }
 }
 
 #[test]
 fn only_the_hook_api_registers_through_the_application_hooks_slot() {
     let source = fs::read_to_string(workspace_root().join(OWNER)).unwrap();
-    let offenders = offenders_in(OWNER, &source);
+    let scan = scan_of(OWNER, &source);
+
+    let unread: Vec<&str> = HOOK_API
+        .iter()
+        .chain(OUTPUT_TRANSFORM_SUGAR)
+        .chain(CAPABILITIES)
+        .copied()
+        .filter(|name| !scan.methods.iter().any(|seen| seen == name))
+        .collect();
+    assert!(
+        unread.is_empty(),
+        "this guard reads `{OWNER}` from the line `{IMPL}` to the next line that is `}}`, and that \
+         range did not contain {unread:?}. A where-clause on the impl, a moved brace or a renamed \
+         method leaves the scan with nothing to check and the assertion below passes vacuously; \
+         re-anchor the scan on the current source."
+    );
 
     assert!(
-        offenders.is_empty(),
+        scan.offenders.is_empty(),
         "`CommandConfig::hooks` is the application's registration, and a framework capability \
          that writes into it spends the command's registration for that phase: `build()` then \
          refuses a command that declares the capability and an `AppBuilder::hooks` hook for the \
          same phase, naming a hook the command never wrote. Give the capability its own slot on \
          `CommandConfig` the way `input_chains` and `questionnaire_resolution` have one, threaded \
          through its own `ErasedCommandConfig::take_*` into its own map on `AppBuilder`.\n{}",
-        offenders.join("\n")
+        scan.offenders.join("\n")
     );
 }
 
@@ -114,11 +144,30 @@ impl<F, T> ErasedCommandConfig for ClosureCommandConfig<F, T> {
     }
 }
 ";
+    let scan = scan_of("group.rs", source);
+    assert_eq!(scan.methods, ["questionnaire", "survey", "pre_dispatch"]);
     assert_eq!(
-        offenders_in("group.rs", source),
+        scan.offenders,
         [
             "group.rs:4: `questionnaire`: self.pre_dispatch(move |matches, ctx| resolve(matches, ctx))",
             "group.rs:8: `survey`: self.hooks = Some(Hooks::default());",
         ]
     );
+}
+
+#[test]
+fn a_drifted_impl_header_leaves_the_scan_with_no_methods() {
+    let source = "\
+impl<H> CommandConfig<H>
+where
+    H: Clone,
+{
+    pub fn questionnaire<T>(mut self) -> Self {
+        self.pre_dispatch(move |matches, ctx| resolve(matches, ctx))
+    }
+}
+";
+    let scan = scan_of("group.rs", source);
+    assert!(scan.methods.is_empty());
+    assert!(scan.offenders.is_empty());
 }
