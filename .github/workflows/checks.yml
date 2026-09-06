@@ -66,6 +66,7 @@ jobs:
           key: rust-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'scripts/quality') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ hashFiles('crates/**') }}
           restore-keys: |
             rust-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'scripts/quality') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-
+            rust-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'scripts/quality') }}-
 
       - name: Cache local compiler results
         uses: actions/cache@v5
