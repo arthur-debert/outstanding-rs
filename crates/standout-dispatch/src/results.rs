@@ -17,6 +17,7 @@ use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 
 /// The event type of a command that emits none: uninhabited, so `emit` has no
 /// argument that can be constructed.
@@ -29,16 +30,48 @@ pub fn emits_events<E: 'static>() -> bool {
     TypeId::of::<E>() != TypeId::of::<NoEvents>()
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone)]
 pub enum EmitError {
-    #[error("event does not serialize: {0}")]
-    Serialize(#[from] serde_json::Error),
-    /// The destination could not turn the value into bytes: a render failure
-    /// carrying the message the run reports.
-    #[error("{0}")]
-    Render(String),
-    #[error("event could not be written: {0}")]
-    Write(#[from] std::io::Error),
+    Serialize(Arc<serde_json::Error>),
+    /// The destination could not turn the value into bytes: the message the run
+    /// reports, and the error the renderer raised when there was one.
+    Render {
+        message: String,
+        cause: Option<Arc<dyn std::error::Error + Send + Sync>>,
+    },
+    Write(Arc<std::io::Error>),
+}
+
+impl std::fmt::Display for EmitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Serialize(error) => write!(f, "event does not serialize: {error}"),
+            Self::Render { message, .. } => f.write_str(message),
+            Self::Write(error) => write!(f, "event could not be written: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for EmitError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Serialize(error) => Some(&**error),
+            Self::Render { cause, .. } => cause.as_deref().map(|cause| cause as _),
+            Self::Write(error) => Some(&**error),
+        }
+    }
+}
+
+impl From<serde_json::Error> for EmitError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Serialize(Arc::new(error))
+    }
+}
+
+impl From<std::io::Error> for EmitError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Write(Arc::new(error))
+    }
 }
 
 /// Where the run's rendered bytes went. `Pager` carries the shell word list the
@@ -360,7 +393,7 @@ mod tests {
         struct Refuses;
         impl EventSink for Refuses {
             fn deliver(&self, _: &serde_json::Value) -> Result<(), EmitError> {
-                Err(EmitError::Write(std::io::Error::other("no room")))
+                Err(EmitError::Write(Arc::new(std::io::Error::other("no room"))))
             }
         }
         let mut results = Results::for_run(None, Rc::new(Refuses));
@@ -373,7 +406,7 @@ mod tests {
         struct Refuses;
         impl EventSink for Refuses {
             fn deliver(&self, _: &serde_json::Value) -> Result<(), EmitError> {
-                Err(EmitError::Write(std::io::Error::other("no room")))
+                Err(EmitError::Write(Arc::new(std::io::Error::other("no room"))))
             }
         }
         let recorder = RunRecorder::new();

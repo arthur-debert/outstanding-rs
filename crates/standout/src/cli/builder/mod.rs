@@ -24,7 +24,7 @@ use clap::parser::ValueSource;
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use serde::Serialize;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
 use super::config::{
@@ -336,6 +336,18 @@ pub(crate) enum HookRegistrationSource {
     CommandConfig,
 }
 
+impl HookRegistrationSource {
+    fn describe(self, path: &str) -> String {
+        match self {
+            Self::AppBuilderHooks => format!("`AppBuilder::hooks(\"{path}\", ..)`"),
+            Self::CommandConfig => format!(
+                "the command's own `CommandConfig` (`command_with(\"{path}\", ..)`, or \
+                 `pre_dispatch`/`post_dispatch`/`post_output` on the `#[derive(Dispatch)]` variant)"
+            ),
+        }
+    }
+}
+
 /// Read once at [`AppBuilder::build`]; a truthy value turns strict mode on and never off.
 pub const STRICT_STYLE_TAGS_ENV: &str = "STANDOUT_STRICT_STYLE_TAGS";
 
@@ -367,7 +379,10 @@ pub struct App {
     pending_commands: RefCell<HashMap<String, PendingCommand>>,
     finalized_commands: RefCell<Option<HashMap<String, DispatchFn>>>,
     pub(crate) command_hooks: HashMap<String, Hooks>,
+    pub(crate) command_input_chains: HashMap<String, Hooks>,
+    pub(crate) command_questionnaire_resolution: HashMap<String, Hooks>,
     pub(crate) questionnaire_commands: HashMap<String, QuestionnaireCommand>,
+    pub(crate) config_exempt_commands: HashSet<String>,
     pub(crate) context_registry: ContextRegistry,
     pub(crate) default_command: Option<String>,
     pub(crate) default_command_resolver: Option<crate::cli::DefaultCommandResolver>,
@@ -407,9 +422,12 @@ pub struct AppBuilder {
     pending_commands: RefCell<HashMap<String, PendingCommand>>,
     finalized_commands: RefCell<Option<HashMap<String, DispatchFn>>>,
     pub(crate) command_hooks: HashMap<String, Hooks>,
+    pub(crate) command_input_chains: HashMap<String, Hooks>,
+    pub(crate) command_questionnaire_resolution: HashMap<String, Hooks>,
     pub(crate) hook_phase_sources: HashMap<(String, HookPhase), HookRegistrationSource>,
     pub(crate) setup_errors: Vec<SetupError>,
     pub(crate) questionnaire_commands: HashMap<String, QuestionnaireCommand>,
+    pub(crate) config_exempt_commands: HashSet<String>,
     pub(crate) context_registry: ContextRegistry,
     pub(crate) default_command: Option<String>,
     pub(crate) default_command_resolver: Option<crate::cli::DefaultCommandResolver>,
@@ -461,9 +479,12 @@ impl AppBuilder {
             pending_commands: RefCell::new(HashMap::new()),
             finalized_commands: RefCell::new(None),
             command_hooks: HashMap::new(),
+            command_input_chains: HashMap::new(),
+            command_questionnaire_resolution: HashMap::new(),
             hook_phase_sources: HashMap::new(),
             setup_errors: Vec::new(),
             questionnaire_commands: HashMap::new(),
+            config_exempt_commands: HashSet::new(),
             context_registry: ContextRegistry::new(),
             default_command: None,
             default_command_resolver: None,
@@ -674,7 +695,10 @@ impl AppBuilder {
             pending_commands: self.pending_commands,
             finalized_commands: self.finalized_commands,
             command_hooks: self.command_hooks,
+            command_input_chains: self.command_input_chains,
+            command_questionnaire_resolution: self.command_questionnaire_resolution,
             questionnaire_commands: self.questionnaire_commands,
+            config_exempt_commands: self.config_exempt_commands,
             context_registry: self.context_registry,
             default_command: self.default_command,
             default_command_resolver: self.default_command_resolver,
@@ -904,11 +928,7 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        if let Err(error) = self
-            .config_override_flag_collision(&cmd)
-            .and_then(|()| self.framework_flag_collision(&cmd))
-            .and_then(|()| self.config_command_collision(&cmd))
-        {
+        if let Err(error) = self.validated_parse_surface(&cmd) {
             return HelpResult::Error(clap::Error::raw(
                 clap::error::ErrorKind::ArgumentConflict,
                 format!("{error}\n"),
@@ -1516,9 +1536,12 @@ impl App {
     where
         H: Handler,
     {
-        let config = self
-            .resolve_config(matches)
-            .map_err(|error| HookError::pre_dispatch("Config error").with_source(error))?;
+        let config = if self.config_exempt_commands.contains(path) {
+            None
+        } else {
+            self.resolve_config(matches)
+                .map_err(|error| HookError::pre_dispatch("Config error").with_source(error))?
+        };
         let resolved = self.resolve_run(
             matches,
             config.as_ref().and_then(|config| config.term.as_ref()),
@@ -1535,7 +1558,8 @@ impl App {
         let mut ctx = CommandContext::new(
             path.split('.').map(String::from).collect(),
             self.app_state.clone(),
-        );
+        )
+        .with_presentation(output_mode, color_policy);
         let warnings = WarningBuffer::new();
         self.seed_startup_warnings(&warnings);
         ctx.extensions.insert(InputSources::from_process());
@@ -1545,6 +1569,14 @@ impl App {
         }
 
         let hooks = self.command_hooks.get(path);
+
+        if let Some(chains) = self.command_input_chains.get(path) {
+            chains.run_pre_dispatch(matches, &mut ctx)?;
+        }
+
+        if let Some(resolution) = self.command_questionnaire_resolution.get(path) {
+            resolution.run_pre_dispatch(matches, &mut ctx)?;
+        }
 
         if let Some(hooks) = hooks {
             hooks.run_pre_dispatch(matches, &mut ctx)?;
@@ -1683,13 +1715,7 @@ impl App {
     }
 
     pub fn verify_command(&self, cmd: &Command) -> Result<(), SetupError> {
-        let propagated = super::app::with_globals_propagated(cmd);
-        self.malformed_registrations()?;
-        self.validate_questionnaire_surfaces(&propagated)?;
-        self.unreachable_registrations(cmd)?;
-        self.config_override_flag_collision(cmd)?;
-        self.framework_flag_collision(cmd)?;
-        self.config_command_collision(cmd)?;
+        let propagated = self.validated_command_tree(cmd)?;
         let expected_args: HashMap<String, Vec<ExpectedArg>> = self
             .pending_commands
             .borrow()

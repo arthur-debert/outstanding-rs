@@ -1,1 +1,0 @@
-- `TestHarness::rendering(Representation, ColorPolicy)` names a test's rendering in one call where a suite was writing `.output_mode(...)` and `.color(...)` at every site, and takes the pair as two arguments so a test can parameterize over an array of them. Additive: `output_mode`, `color` and `text_output()` are unchanged, so existing tests need no edit (closes #553).

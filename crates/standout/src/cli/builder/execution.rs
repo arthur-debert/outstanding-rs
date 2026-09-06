@@ -13,6 +13,7 @@ use crate::{
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use standout_render::warnings::WarningBuffer;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use super::{
     output_mode_flag_spelling, App, AppBuilder, HookRegistrationSource, PendingCommand,
@@ -144,9 +145,18 @@ impl AppBuilder {
                             HookRegistrationSource::CommandConfig,
                         )?;
                     }
+                    if let Some(chains) = handler.take_input_chains() {
+                        self.register_command_input_chains(&name, chains);
+                    }
                     if let Some(questionnaire) = handler.take_questionnaire() {
                         self.questionnaire_commands
                             .insert(name.clone(), questionnaire);
+                    }
+                    if let Some(resolution) = handler.take_questionnaire_resolution() {
+                        self.register_command_questionnaire_resolution(&name, resolution);
+                    }
+                    if handler.without_config() {
+                        self.config_exempt_commands.insert(name.clone());
                     }
 
                     let recipe = ErasedConfigRecipe::from_handler(handler);
@@ -311,6 +321,7 @@ impl App {
         let mut ctx = match self.command_context(
             path,
             output_mode,
+            color_policy,
             override_path.as_deref(),
             &sink,
             &recorder,
@@ -327,6 +338,24 @@ impl App {
         let hooks = self.command_hooks.get(&path_str);
         let sub_matches = get_deepest_matches(&matches);
         let emits_events = self.emits_events_for(&path_str);
+
+        if let Some(chains) = self.command_input_chains.get(&path_str) {
+            if let Err(e) = chains.run_pre_dispatch(sub_matches, &mut ctx) {
+                return DispatchResult::Error(super::super::dispatch::hook_run_error(
+                    e,
+                    crate::cli::HookPhase::PreDispatch,
+                ));
+            }
+        }
+
+        if let Some(resolution) = self.command_questionnaire_resolution.get(&path_str) {
+            if let Err(e) = resolution.run_pre_dispatch(sub_matches, &mut ctx) {
+                return DispatchResult::Error(super::super::dispatch::hook_run_error(
+                    e,
+                    crate::cli::HookPhase::PreDispatch,
+                ));
+            }
+        }
 
         if let Some(hooks) = hooks {
             if let Err(e) = hooks.run_pre_dispatch(sub_matches, &mut ctx) {
@@ -401,12 +430,13 @@ impl App {
         };
         let result = match action.and_then(|action| seam.handle(&action, &overrides)) {
             Ok(result) => result,
-            Err(error) => return DispatchResult::Error(config_run_error(&error)),
+            Err(error) => return DispatchResult::Error(config_run_error(error)),
         };
         let override_path = self.output_file_override(matches);
         let mut ctx = match self.command_context(
             path,
             output_mode,
+            color_policy,
             override_path.as_deref(),
             sink,
             recorder,
@@ -465,6 +495,7 @@ impl App {
         &self,
         path: Vec<String>,
         output_mode: Representation,
+        color_policy: ColorPolicy,
         override_path: Option<&std::path::Path>,
         sink: &StreamSink,
         recorder: &RunRecorder,
@@ -477,11 +508,11 @@ impl App {
         if let Some(path) = override_path.filter(|_| writes_through_the_sink(output_mode)) {
             if output_mode.is_stream() {
                 let file = open_output_file(path).map_err(|e| {
-                    RunError::new(
+                    RunError::final_write(
                         format!("Error writing output: {}", e),
-                        RunErrorKind::FinalWrite(OutputKind::Text),
+                        Arc::new(e),
+                        OutputKind::Text,
                     )
-                    .with_source(e)
                 })?;
                 sink.redirect(file);
             } else {
@@ -489,7 +520,8 @@ impl App {
                 sink.redirect_on_first_write(move || open_output_file(&path));
             }
         }
-        let mut ctx = CommandContext::new(path, self.app_state.clone());
+        let mut ctx = CommandContext::new(path, self.app_state.clone())
+            .with_presentation(output_mode, color_policy);
         ctx.extensions.insert(warnings.clone());
         Ok(ctx)
     }
@@ -532,9 +564,9 @@ impl App {
                     match standout_render::serialize_record_array(records.clone(), output_mode) {
                         Ok(document) => document,
                         Err(error) => {
-                            return DispatchResult::Error(RunError::new(
+                            return DispatchResult::Error(RunError::render(
                                 error.to_string(),
-                                RunErrorKind::Render,
+                                Arc::new(error),
                             ))
                         }
                     };
@@ -572,9 +604,9 @@ impl App {
                         match standout_render::serialize_record_array(records, output_mode) {
                             Ok(document) => document,
                             Err(error) => {
-                                return DispatchResult::Error(RunError::new(
+                                return DispatchResult::Error(RunError::render(
                                     error.to_string(),
-                                    RunErrorKind::Render,
+                                    Arc::new(error),
                                 ))
                             }
                         };
@@ -634,37 +666,31 @@ impl App {
                         .and_then(|()| file.flush())
                     });
                     if let Err(e) = written {
-                        return DispatchResult::Error(
-                            RunError::new(
-                                format!("Error writing output: {}", e),
-                                RunErrorKind::FinalWrite(OutputKind::Text),
-                            )
-                            .with_source(e),
-                        );
+                        return DispatchResult::Error(RunError::final_write(
+                            format!("Error writing output: {}", e),
+                            Arc::new(e),
+                            OutputKind::Text,
+                        ));
                     }
                     final_output = RenderedOutput::Silent;
                 }
                 RenderedOutput::Text(t) => {
                     if let Err(e) = write_output(&t.formatted, &dest) {
-                        return DispatchResult::Error(
-                            RunError::new(
-                                format!("Error writing output: {}", e),
-                                RunErrorKind::FinalWrite(OutputKind::Text),
-                            )
-                            .with_source(e),
-                        );
+                        return DispatchResult::Error(RunError::final_write(
+                            format!("Error writing output: {}", e),
+                            Arc::new(e),
+                            OutputKind::Text,
+                        ));
                     }
                     final_output = RenderedOutput::Silent;
                 }
                 RenderedOutput::Binary(b, _) => {
                     if let Err(e) = write_binary_output(b, &dest) {
-                        return DispatchResult::Error(
-                            RunError::new(
-                                format!("Error writing output: {}", e),
-                                RunErrorKind::FinalWrite(OutputKind::Binary),
-                            )
-                            .with_source(e),
-                        );
+                        return DispatchResult::Error(RunError::final_write(
+                            format!("Error writing output: {}", e),
+                            Arc::new(e),
+                            OutputKind::Binary,
+                        ));
                     }
                     final_output = RenderedOutput::Silent;
                 }
@@ -712,14 +738,7 @@ impl App {
         let typed_color = self.typed_color_from_unparsed(&args);
         let color_policy = self.resolve_color_policy(typed_color, named_color, None);
 
-        if let Err(error) = self
-            .malformed_registrations()
-            .and_then(|()| self.validate_questionnaire_surfaces(&cmd))
-            .and_then(|()| self.unreachable_registrations(&cmd))
-            .and_then(|()| self.config_override_flag_collision(&cmd))
-            .and_then(|()| self.framework_flag_collision(&cmd))
-            .and_then(|()| self.config_command_collision(&cmd))
-        {
+        if let Err(error) = self.validated_command_tree(&cmd) {
             return RunOutcome::to_stdout(
                 DispatchResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
                 self.extract_output_mode_from_unparsed(&args),
@@ -882,7 +901,7 @@ impl App {
 
     fn resolve_config_for(&self, matches: &ArgMatches) -> Result<Option<ResolvedConfig>, RunError> {
         let path = extract_command_path(matches).join(".");
-        if !self.get_commands().contains_key(&path) {
+        if !self.get_commands().contains_key(&path) || self.config_exempt_commands.contains(&path) {
             return Ok(None);
         }
         self.resolve_config(matches)
@@ -897,10 +916,10 @@ impl App {
         };
         let overrides = self.config_overrides(matches)?;
         let dir = std::env::current_dir()
-            .map_err(|error| RunError::new(error.to_string(), RunErrorKind::Config))?;
+            .map_err(|error| RunError::config(error.to_string(), Arc::new(error)))?;
         seam.resolve_at(&overrides, &dir)
             .map(Some)
-            .map_err(|error| config_run_error(&error))
+            .map_err(config_run_error)
     }
 
     fn config_overrides(&self, matches: &ArgMatches) -> Result<Vec<(String, String)>, RunError> {
@@ -1081,11 +1100,11 @@ impl App {
                 write_output(page, &OutputDestination::File(path))
                     .err()
                     .map(|error| {
-                        RunError::new(
+                        RunError::final_write(
                             format!("Error writing output: {}", error),
-                            RunErrorKind::FinalWrite(OutputKind::Text),
+                            Arc::new(error),
+                            OutputKind::Text,
                         )
-                        .with_source(error)
                     })
             });
         let paged = help_to_file.is_none() && self.page_delivery(&result);
@@ -1455,6 +1474,22 @@ impl App {
         )))
     }
 
+    pub(crate) fn validated_command_tree(&self, cmd: &Command) -> Result<Command, SetupError> {
+        self.malformed_registrations()?;
+        let propagated = self.validated_parse_surface(cmd)?;
+        self.unreachable_registrations(cmd)?;
+        Ok(propagated)
+    }
+
+    pub(crate) fn validated_parse_surface(&self, cmd: &Command) -> Result<Command, SetupError> {
+        let propagated = crate::cli::app::with_globals_propagated(cmd);
+        self.validate_questionnaire_surfaces(&propagated)?;
+        self.config_override_flag_collision(cmd)?;
+        self.framework_flag_collision(cmd)?;
+        self.config_command_collision(cmd)?;
+        Ok(propagated)
+    }
+
     pub(crate) fn validate_questionnaire_surfaces(&self, cmd: &Command) -> Result<(), SetupError> {
         for path in self.questionnaire_commands.keys() {
             let parts = path.split('.').collect::<Vec<_>>();
@@ -1558,9 +1593,9 @@ fn report_envelope(
     receipt: &ArtifactReceipt,
 ) -> Result<serde_json::Value, RunError> {
     let receipt = serde_json::to_value(receipt).map_err(|e| {
-        RunError::new(
+        RunError::render(
             format!("Failed to serialize artifact receipt: {}", e),
-            RunErrorKind::Render,
+            Arc::new(e),
         )
     })?;
     Ok(serde_json::json!({
@@ -1606,9 +1641,9 @@ impl App {
                 match standout_render::render_request_split(&request) {
                     Ok(rendered) => Some(rendered.formatted),
                     Err(error) => {
-                        return DispatchResult::Error(RunError::new(
+                        return DispatchResult::Error(RunError::render(
                             error.to_string(),
-                            RunErrorKind::Render,
+                            Arc::new(error),
                         ))
                     }
                 }
@@ -1622,13 +1657,11 @@ impl App {
         if let ArtifactDestination::File(path) = &destination {
             let dest = OutputDestination::File(path.clone());
             if let Err(e) = write_binary_output(&artifact.bytes, &dest) {
-                return DispatchResult::Error(
-                    RunError::new(
-                        format!("Error writing artifact: {}", e),
-                        RunErrorKind::FinalWrite(OutputKind::Artifact),
-                    )
-                    .with_source(e),
-                );
+                return DispatchResult::Error(RunError::final_write(
+                    format!("Error writing artifact: {}", e),
+                    Arc::new(e),
+                    OutputKind::Artifact,
+                ));
             }
         }
 

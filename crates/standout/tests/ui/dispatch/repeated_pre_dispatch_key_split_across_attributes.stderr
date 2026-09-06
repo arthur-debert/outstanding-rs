@@ -1,0 +1,14 @@
+error: `pre_dispatch` appears twice on this variant. Name every pre_dispatch hook in one list, in the order they run: `pre_dispatch(first, second)`
+  --> tests/ui/dispatch/repeated_pre_dispatch_key_split_across_attributes.rs:28:5
+   |
+28 |     #[dispatch(pre_dispatch = handlers::load_engine)]
+   |     ^
+
+error[E0599]: no variant, associated function, or constant named `dispatch_config` found for enum `Commands` in the current scope
+  --> tests/ui/dispatch/repeated_pre_dispatch_key_split_across_attributes.rs:33:23
+   |
+26 | enum Commands {
+   | ------------- variant, associated function, or constant `dispatch_config` not found for this enum
+...
+33 |     let _ = Commands::dispatch_config();
+   |                       ^^^^^^^^^^^^^^^ variant, associated function, or constant not found in `Commands`

@@ -426,10 +426,15 @@ pub struct CommandConfig<H> {
     pub(crate) template_name: Option<String>,
     pub(crate) template_absence: Option<TemplateAbsence>,
     pub(crate) hooks: Option<Hooks>,
+    /// Pre-dispatch only, kept apart from `hooks` so declaring a chain leaves
+    /// the command's pre-dispatch registration free. Runs ahead of `hooks`.
+    pub(crate) input_chains: Option<Hooks>,
     pub(crate) questionnaire: Option<QuestionnaireCommand>,
+    pub(crate) questionnaire_resolution: Option<Hooks>,
     pub(crate) questionnaire_settings: Rc<RefCell<QuestionnaireSettings>>,
     pub(crate) structured_output_projection: Option<StructuredOutputProjection>,
     pub(crate) pageable: bool,
+    pub(crate) without_config: bool,
 }
 
 impl<H> CommandConfig<H> {
@@ -439,10 +444,13 @@ impl<H> CommandConfig<H> {
             template_name: None,
             template_absence: None,
             hooks: None,
+            input_chains: None,
             questionnaire: None,
+            questionnaire_resolution: None,
             questionnaire_settings: Rc::new(RefCell::new(QuestionnaireSettings::default())),
             structured_output_projection: None,
             pageable: false,
+            without_config: false,
         }
     }
 
@@ -475,13 +483,23 @@ impl<H> CommandConfig<H> {
         self
     }
 
+    fn resolve_questionnaire<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&ArgMatches, &mut CommandContext) -> Result<(), crate::cli::hooks::HookError>
+            + 'static,
+    {
+        let resolution = self.questionnaire_resolution.take().unwrap_or_default();
+        self.questionnaire_resolution = Some(resolution.pre_dispatch(f));
+        self
+    }
+
     pub fn questionnaire<T>(mut self) -> Self
     where
         T: QuestionnaireInput + Clone + Send + Sync + 'static,
     {
         self.questionnaire = Some(QuestionnaireCommand::new::<T>());
         let settings = Rc::clone(&self.questionnaire_settings);
-        self.pre_dispatch(move |matches, ctx| {
+        self.resolve_questionnaire(move |matches, ctx| {
             questionnaire_pre_dispatch::<T>(matches, ctx, &settings.borrow())
         })
     }
@@ -493,7 +511,7 @@ impl<H> CommandConfig<H> {
     {
         self.questionnaire = Some(QuestionnaireCommand::new::<T>());
         let settings = Rc::clone(&self.questionnaire_settings);
-        self.pre_dispatch(move |matches, ctx| {
+        self.resolve_questionnaire(move |matches, ctx| {
             questionnaire_pre_dispatch_with::<T, _>(matches, ctx, &settings.borrow(), form.clone())
         })
     }
@@ -506,7 +524,7 @@ impl<H> CommandConfig<H> {
     {
         self.questionnaire = Some(QuestionnaireCommand::new::<T>());
         let settings = Rc::clone(&self.questionnaire_settings);
-        self.pre_dispatch(move |matches, ctx| {
+        self.resolve_questionnaire(move |matches, ctx| {
             questionnaire_pre_dispatch_with_review::<T, _, _>(
                 matches,
                 ctx,
@@ -515,6 +533,11 @@ impl<H> CommandConfig<H> {
                 review.clone(),
             )
         })
+    }
+
+    pub fn without_config(mut self) -> Self {
+        self.without_config = true;
+        self
     }
 
     /// Order against the `questionnaire*` calls does not matter.
@@ -582,7 +605,7 @@ impl<H> CommandConfig<H> {
     }
 
     pub fn input<T>(
-        self,
+        mut self,
         name: impl Into<std::borrow::Cow<'static, str>>,
         chain: standout_input::InputChain<T>,
     ) -> Self
@@ -590,7 +613,8 @@ impl<H> CommandConfig<H> {
         T: Clone + Send + Sync + 'static,
     {
         let name = name.into();
-        self.pre_dispatch(move |matches, ctx| {
+        let chains = self.input_chains.take().unwrap_or_default();
+        self.input_chains = Some(chains.pre_dispatch(move |matches, ctx| {
             use crate::cli::CommandContextInput;
             let sub_matches = crate::cli::dispatch::get_deepest_matches(matches);
             let sources = ctx.input_sources();
@@ -614,7 +638,8 @@ impl<H> CommandConfig<H> {
             }
             bag.insert(name.clone(), resolved);
             Ok(())
-        })
+        }));
+        self
     }
 
     pub fn pipe_to(self, command: impl Into<String>) -> Self {
@@ -717,7 +742,10 @@ pub(crate) trait ErasedCommandConfig {
     #[allow(dead_code)]
     fn hooks(&self) -> Option<&Hooks>;
     fn take_hooks(&mut self) -> Option<Hooks>;
+    fn take_input_chains(&mut self) -> Option<Hooks>;
     fn take_questionnaire(&mut self) -> Option<QuestionnaireCommand>;
+    fn take_questionnaire_resolution(&mut self) -> Option<Hooks>;
+    fn without_config(&self) -> bool;
     fn emits_events(&self) -> bool {
         false
     }
@@ -785,9 +813,12 @@ impl GroupBuilder {
                     template_name: config.template_name,
                     template_absence: config.template_absence,
                     hooks: config.hooks,
+                    input_chains: config.input_chains,
                     questionnaire: config.questionnaire,
+                    questionnaire_resolution: config.questionnaire_resolution,
                     structured_output_projection: config.structured_output_projection,
                     pageable: config.pageable,
+                    without_config: config.without_config,
                 }),
             },
         );
@@ -840,9 +871,12 @@ where
     template_name: Option<String>,
     template_absence: Option<TemplateAbsence>,
     hooks: Option<Hooks>,
+    input_chains: Option<Hooks>,
     questionnaire: Option<QuestionnaireCommand>,
+    questionnaire_resolution: Option<Hooks>,
     structured_output_projection: Option<StructuredOutputProjection>,
     pageable: bool,
+    without_config: bool,
 }
 
 impl<F, T> ErasedCommandConfig for ClosureCommandConfig<F, T>
@@ -866,8 +900,20 @@ where
         self.hooks.take()
     }
 
+    fn take_input_chains(&mut self) -> Option<Hooks> {
+        self.input_chains.take()
+    }
+
     fn take_questionnaire(&mut self) -> Option<QuestionnaireCommand> {
         self.questionnaire.take()
+    }
+
+    fn take_questionnaire_resolution(&mut self) -> Option<Hooks> {
+        self.questionnaire_resolution.take()
+    }
+
+    fn without_config(&self) -> bool {
+        self.without_config
     }
 
     fn pageable(&self) -> bool {
@@ -930,8 +976,20 @@ where
         None
     }
 
+    fn take_input_chains(&mut self) -> Option<Hooks> {
+        None
+    }
+
     fn take_questionnaire(&mut self) -> Option<QuestionnaireCommand> {
         None
+    }
+
+    fn take_questionnaire_resolution(&mut self) -> Option<Hooks> {
+        None
+    }
+
+    fn without_config(&self) -> bool {
+        false
     }
 
     fn register(

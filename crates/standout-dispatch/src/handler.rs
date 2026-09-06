@@ -6,6 +6,7 @@ use crate::results::{NoEvents, Results};
 use crate::verify::ExpectedArg;
 use clap::ArgMatches;
 use serde::Serialize;
+use standout_types::{ColorPolicy, Representation};
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::fmt;
@@ -86,6 +87,8 @@ pub struct CommandContext {
     pub command_path: Vec<String>,
     pub app_state: Rc<Extensions>,
     pub extensions: Extensions,
+    representation: Representation,
+    color_policy: ColorPolicy,
 }
 impl CommandContext {
     pub fn new(command_path: Vec<String>, app_state: Rc<Extensions>) -> Self {
@@ -93,16 +96,29 @@ impl CommandContext {
             command_path,
             app_state,
             extensions: Extensions::new(),
+            representation: Representation::default(),
+            color_policy: ColorPolicy::default(),
         }
+    }
+    pub fn with_presentation(
+        mut self,
+        representation: Representation,
+        color_policy: ColorPolicy,
+    ) -> Self {
+        self.representation = representation;
+        self.color_policy = color_policy;
+        self
+    }
+    pub fn representation(&self) -> Representation {
+        self.representation
+    }
+    pub fn color_policy(&self) -> ColorPolicy {
+        self.color_policy
     }
 }
 impl Default for CommandContext {
     fn default() -> Self {
-        Self {
-            command_path: Vec::new(),
-            app_state: Rc::new(Extensions::new()),
-            extensions: Extensions::new(),
-        }
+        Self::new(Vec::new(), Rc::new(Extensions::new()))
     }
 }
 #[derive(Debug)]
@@ -588,6 +604,35 @@ impl RunError {
             kind != RunErrorKind::App,
             "app run errors must be constructed from AppFailure"
         );
+        assert!(
+            kind != RunErrorKind::Config,
+            "config run errors must be constructed from RunError::config"
+        );
+        Self::of_kind(message, kind)
+    }
+    /// A write that carried the run's output failed; `error` is what the destination reported.
+    pub fn final_write(
+        message: impl Into<String>,
+        error: Arc<dyn std::error::Error + Send + Sync>,
+        kind: OutputKind,
+    ) -> Self {
+        Self::of_kind(message, RunErrorKind::FinalWrite(kind)).with_source(error)
+    }
+    /// Turning the run's data into bytes failed; `error` is what the renderer or serializer reported.
+    pub fn render(
+        message: impl Into<String>,
+        error: Arc<dyn std::error::Error + Send + Sync>,
+    ) -> Self {
+        Self::of_kind(message, RunErrorKind::Render).with_source(error)
+    }
+    /// Resolving the application's configuration failed; `error` is what the resolver reported.
+    pub fn config(
+        message: impl Into<String>,
+        error: Arc<dyn std::error::Error + Send + Sync>,
+    ) -> Self {
+        Self::of_kind(message, RunErrorKind::Config).with_source(error)
+    }
+    fn of_kind(message: impl Into<String>, kind: RunErrorKind) -> Self {
         let status = match kind {
             RunErrorKind::ClapUsage => ExitStatus::USAGE_ERROR,
             _ => ExitStatus::FAILURE,
@@ -609,11 +654,8 @@ impl RunError {
         self.status = status;
         self
     }
-    pub fn with_source<E>(mut self, source: E) -> Self
-    where
-        E: std::error::Error + Send + Sync + 'static,
-    {
-        self.source = Some(Arc::new(source));
+    pub fn with_source(mut self, source: Arc<dyn std::error::Error + Send + Sync>) -> Self {
+        self.source = Some(source);
         self
     }
     /// Replaces the summary `diagnostic()` would otherwise derive from the prose message.
@@ -966,11 +1008,10 @@ mod tests {
     use serde_json::json;
     #[test]
     fn test_command_context_creation() {
-        let ctx = CommandContext {
-            command_path: vec!["config".into(), "get".into()],
-            app_state: Rc::new(Extensions::new()),
-            extensions: Extensions::new(),
-        };
+        let ctx = CommandContext::new(
+            vec!["config".into(), "get".into()],
+            Rc::new(Extensions::new()),
+        );
         assert_eq!(ctx.command_path, vec!["config", "get"]);
     }
     #[derive(Debug, thiserror::Error)]
@@ -1067,6 +1108,35 @@ mod tests {
         let _ = RunError::new("inconsistent", RunErrorKind::App);
     }
     #[test]
+    #[should_panic(expected = "config run errors must be constructed from RunError::config")]
+    fn run_error_new_rejects_config_kind() {
+        let _ = RunError::new("inconsistent", RunErrorKind::Config);
+    }
+    #[test]
+    fn the_cause_carrying_constructors_keep_the_error_a_caller_can_downcast() {
+        let write = RunError::final_write(
+            "Error writing stdout",
+            Arc::new(std::io::Error::from(std::io::ErrorKind::BrokenPipe)),
+            OutputKind::Text,
+        );
+        assert_eq!(write.kind(), RunErrorKind::FinalWrite(OutputKind::Text));
+        assert_eq!(
+            std::error::Error::source(&write)
+                .and_then(|source| source.downcast_ref::<std::io::Error>())
+                .map(std::io::Error::kind),
+            Some(std::io::ErrorKind::BrokenPipe)
+        );
+
+        let render = RunError::render("boom", Arc::new(std::io::Error::other("boom")));
+        assert_eq!(render.kind(), RunErrorKind::Render);
+        assert!(std::error::Error::source(&render).is_some());
+
+        let config = RunError::config("boom", Arc::new(std::io::Error::other("boom")));
+        assert_eq!(config.kind(), RunErrorKind::Config);
+        assert_eq!(config.exit_status(), ExitStatus::FAILURE);
+        assert!(std::error::Error::source(&config).is_some());
+    }
+    #[test]
     fn test_command_context_default() {
         let ctx = CommandContext::default();
         assert!(ctx.command_path.is_empty());
@@ -1087,11 +1157,7 @@ mod tests {
         });
         app_state.insert(Config { debug: true });
         let app_state = Rc::new(app_state);
-        let ctx = CommandContext {
-            command_path: vec!["list".into()],
-            app_state: app_state.clone(),
-            extensions: Extensions::new(),
-        };
+        let ctx = CommandContext::new(vec!["list".into()], app_state.clone());
         let db = ctx.app_state.get::<Database>().unwrap();
         assert_eq!(db.url, "postgres://localhost");
         let config = ctx.app_state.get::<Config>().unwrap();
@@ -1103,11 +1169,7 @@ mod tests {
         struct Present;
         let mut app_state = Extensions::new();
         app_state.insert(Present);
-        let ctx = CommandContext {
-            command_path: vec![],
-            app_state: Rc::new(app_state),
-            extensions: Extensions::new(),
-        };
+        let ctx = CommandContext::new(vec![], Rc::new(app_state));
         assert!(ctx.app_state.get_required::<Present>().is_ok());
         #[derive(Debug)]
         struct Missing;

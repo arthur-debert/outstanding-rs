@@ -19,6 +19,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::cli::builder::{SharedTemplateEngine, TemplateRef};
 use crate::cli::handler::{EmitError, EventSink, OutputKind, RunError, RunErrorKind, StreamSink};
@@ -141,20 +142,29 @@ impl EventDestination {
 
     fn render(&self, event: &serde_json::Value) -> Result<String, EmitError> {
         let Some(request) = self.request.as_ref() else {
-            return Err(EmitError::Render(format!(
-                "command `{}` emitted an event but declares no template to render one; \
-                 an incremental command renders each event from `<name>.event` beside its \
-                 own template",
-                self.command_path
-            )));
+            return Err(EmitError::Render {
+                message: format!(
+                    "command `{}` emitted an event but declares no template to render one; \
+                     an incremental command renders each event from `<name>.event` beside its \
+                     own template",
+                    self.command_path
+                ),
+                cause: None,
+            });
         };
         let mut request = request.borrow_mut();
         request.data = serde_json::json!({ "event": event });
         let text = standout_render::render_request_split(&request)
             .map(|rendered| rendered.formatted)
-            .map_err(|error| EmitError::Render(error.to_string()))?;
+            .map_err(|error| EmitError::Render {
+                message: error.to_string(),
+                cause: Some(Arc::new(error)),
+            })?;
         match self.strict_style_tags_error() {
-            Some(error) => Err(EmitError::Render(error.to_string())),
+            Some(error) => Err(EmitError::Render {
+                message: error.to_string(),
+                cause: None,
+            }),
             None => Ok(text),
         }
     }
@@ -168,8 +178,13 @@ impl EventDestination {
             let text = self.render(event)?;
             return Ok(self.sink.write_line(text.as_bytes())?);
         }
-        let line = standout_render::serialize_document(event, self.representation)
-            .map_err(|error| EmitError::Render(error.to_string()))?;
+        let line =
+            standout_render::serialize_document(event, self.representation).map_err(|error| {
+                EmitError::Render {
+                    message: error.to_string(),
+                    cause: Some(Arc::new(error)),
+                }
+            })?;
         Ok(self.sink.with_writer(|writer| {
             writer.write_all(line.as_bytes())?;
             writer.flush()
@@ -181,19 +196,17 @@ impl EventDestination {
 /// failed while rendering; one the destination refused failed the same write
 /// that carries a whole run's text, and reaches machine consumers under the
 /// `final-write` kind rather than `render`.
-fn failure_kind(error: &EmitError) -> RunErrorKind {
+fn emit_failure_error(error: &EmitError) -> RunError {
     match error {
-        EmitError::Serialize(_) | EmitError::Render(_) => RunErrorKind::Render,
-        EmitError::Write(_) => RunErrorKind::FinalWrite(OutputKind::Text),
+        EmitError::Serialize(cause) => RunError::render(error.to_string(), cause.clone()),
+        EmitError::Render { cause, .. } => match cause {
+            Some(cause) => RunError::render(error.to_string(), cause.clone()),
+            None => RunError::new(error.to_string(), RunErrorKind::Render),
+        },
+        EmitError::Write(io) => {
+            RunError::final_write(error.to_string(), io.clone(), OutputKind::Text)
+        }
     }
-}
-
-// Rebuilt, not moved: `record_failure` borrows an error it must also return, and `io::Error` does not clone.
-fn rebuilt(error: &std::io::Error) -> std::io::Error {
-    error.raw_os_error().map_or_else(
-        || std::io::Error::new(error.kind(), error.to_string()),
-        std::io::Error::from_raw_os_error,
-    )
 }
 
 impl EventSink for EventDestination {
@@ -212,11 +225,7 @@ impl EventSink for EventDestination {
     fn record_failure(&self, error: &EmitError) {
         let mut failure = self.failure.borrow_mut();
         if failure.is_none() {
-            let recorded = RunError::new(error.to_string(), failure_kind(error));
-            *failure = Some(match error {
-                EmitError::Write(io) => recorded.with_source(rebuilt(io)),
-                EmitError::Serialize(_) | EmitError::Render(_) => recorded,
-            });
+            *failure = Some(emit_failure_error(error));
         }
     }
 }
@@ -230,22 +239,68 @@ mod tests {
     fn every_emit_failure_keeps_the_phase_it_failed_in() {
         let serialize = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
         let cases = [
-            (EmitError::Serialize(serialize), DiagnosticKind::Render),
             (
-                EmitError::Render("no template".into()),
+                EmitError::Serialize(Arc::new(serialize)),
                 DiagnosticKind::Render,
             ),
             (
-                EmitError::Write(std::io::Error::other("no room")),
+                EmitError::Render {
+                    message: "no template".into(),
+                    cause: None,
+                },
+                DiagnosticKind::Render,
+            ),
+            (
+                EmitError::Write(Arc::new(std::io::Error::other("no room"))),
                 DiagnosticKind::FinalWrite,
             ),
         ];
         for (error, expected) in cases {
             assert_eq!(
-                DiagnosticKind::from(failure_kind(&error)),
+                DiagnosticKind::from(emit_failure_error(&error).kind()),
                 expected,
                 "{error}"
             );
         }
+    }
+
+    #[test]
+    fn every_emit_failure_hands_the_run_the_cause_it_carried() {
+        let serialize = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
+        let reported = (serialize.line(), serialize.column(), serialize.classify());
+        let serialized = emit_failure_error(&EmitError::Serialize(Arc::new(serialize)));
+        let cause = std::error::Error::source(&serialized)
+            .and_then(|source| source.downcast_ref::<serde_json::Error>())
+            .expect("the serde error reaches the run");
+        assert_eq!((cause.line(), cause.column(), cause.classify()), reported);
+
+        let rendered = emit_failure_error(&EmitError::Render {
+            message: "template error: broken".into(),
+            cause: Some(Arc::new(standout_render::RenderError::TemplateError(
+                "broken".into(),
+            ))),
+        });
+        assert!(matches!(
+            std::error::Error::source(&rendered)
+                .and_then(|source| source.downcast_ref::<standout_render::RenderError>()),
+            Some(standout_render::RenderError::TemplateError(_))
+        ));
+
+        let written = emit_failure_error(&EmitError::Write(Arc::new(std::io::Error::from(
+            std::io::ErrorKind::BrokenPipe,
+        ))));
+        assert_eq!(
+            std::error::Error::source(&written)
+                .and_then(|source| source.downcast_ref::<std::io::Error>())
+                .map(std::io::Error::kind),
+            Some(std::io::ErrorKind::BrokenPipe)
+        );
+
+        let causeless = emit_failure_error(&EmitError::Render {
+            message: "no template".into(),
+            cause: None,
+        });
+        assert!(std::error::Error::source(&causeless).is_none());
+        assert_eq!(causeless.as_str(), "no template");
     }
 }

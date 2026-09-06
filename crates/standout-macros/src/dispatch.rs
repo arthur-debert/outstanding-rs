@@ -23,9 +23,9 @@ struct VariantAttrs {
     silent: bool,
     binary: bool,
     structured_only: bool,
-    pre_dispatch: Option<Path>,
-    post_dispatch: Option<Path>,
-    post_output: Option<Path>,
+    pre_dispatch: Option<Vec<Path>>,
+    post_dispatch: Option<Vec<Path>>,
+    post_output: Option<Vec<Path>>,
     questionnaire: Option<Path>,
     nested: bool,
     skip: bool,
@@ -38,6 +38,7 @@ struct VariantAttrs {
     simple: bool,
     pure: bool,
     pageable: bool,
+    no_config: bool,
 }
 
 struct VariantInfo {
@@ -74,6 +75,62 @@ impl Parse for ContainerAttrs {
 
         Ok(attrs)
     }
+}
+
+fn hook_paths(key: &str, meta: &Meta) -> Result<Vec<Path>> {
+    match meta {
+        Meta::NameValue(nv) => match &nv.value {
+            Expr::Path(expr_path) => Ok(vec![expr_path.path.clone()]),
+            other => Err(Error::new(other.span(), "expected path")),
+        },
+        Meta::List(list) => {
+            let paths: Punctuated<Path, Token![,]> =
+                list.parse_args_with(Punctuated::parse_terminated)?;
+            if paths.is_empty() {
+                return Err(Error::new(
+                    list.span(),
+                    format!("`{key}` needs at least one path"),
+                ));
+            }
+            Ok(paths.into_iter().collect())
+        }
+        Meta::Path(path) => Err(Error::new(
+            path.span(),
+            format!("expected `{key} = path` or `{key}(first, second)`"),
+        )),
+    }
+}
+
+fn hook_repeat_error(key: &str, span: proc_macro2::Span) -> Error {
+    Error::new(
+        span,
+        format!(
+            "`{key}` appears twice on this variant. Name every {key} hook in one list, in the \
+             order they run: `{key}(first, second)`"
+        ),
+    )
+}
+
+fn set_hook_paths(slot: &mut Option<Vec<Path>>, key: &str, meta: &Meta) -> Result<()> {
+    if slot.is_some() {
+        return Err(hook_repeat_error(key, meta.span()));
+    }
+    *slot = Some(hook_paths(key, meta)?);
+    Ok(())
+}
+
+fn merge_hook_paths(
+    slot: &mut Option<Vec<Path>>,
+    other: Option<Vec<Path>>,
+    key: &str,
+    span: proc_macro2::Span,
+) -> Result<()> {
+    let Some(paths) = other else { return Ok(()) };
+    if slot.is_some() {
+        return Err(hook_repeat_error(key, span));
+    }
+    *slot = Some(paths);
+    Ok(())
 }
 
 impl Parse for VariantAttrs {
@@ -145,26 +202,17 @@ impl Parse for VariantAttrs {
                 Meta::Path(p) if p.is_ident("pageable") => {
                     attrs.pageable = true;
                 }
-                Meta::NameValue(nv) if nv.path.is_ident("pre_dispatch") => {
-                    if let Expr::Path(expr_path) = &nv.value {
-                        attrs.pre_dispatch = Some(expr_path.path.clone());
-                    } else {
-                        return Err(Error::new(nv.value.span(), "expected path"));
-                    }
+                Meta::Path(p) if p.is_ident("no_config") => {
+                    attrs.no_config = true;
                 }
-                Meta::NameValue(nv) if nv.path.is_ident("post_dispatch") => {
-                    if let Expr::Path(expr_path) = &nv.value {
-                        attrs.post_dispatch = Some(expr_path.path.clone());
-                    } else {
-                        return Err(Error::new(nv.value.span(), "expected path"));
-                    }
+                _ if meta.path().is_ident("pre_dispatch") => {
+                    set_hook_paths(&mut attrs.pre_dispatch, "pre_dispatch", &meta)?;
                 }
-                Meta::NameValue(nv) if nv.path.is_ident("post_output") => {
-                    if let Expr::Path(expr_path) = &nv.value {
-                        attrs.post_output = Some(expr_path.path.clone());
-                    } else {
-                        return Err(Error::new(nv.value.span(), "expected path"));
-                    }
+                _ if meta.path().is_ident("post_dispatch") => {
+                    set_hook_paths(&mut attrs.post_dispatch, "post_dispatch", &meta)?;
+                }
+                _ if meta.path().is_ident("post_output") => {
+                    set_hook_paths(&mut attrs.post_output, "post_output", &meta)?;
                 }
                 Meta::NameValue(nv) if nv.path.is_ident("questionnaire") => {
                     if let Expr::Path(expr_path) = &nv.value {
@@ -230,7 +278,7 @@ impl Parse for VariantAttrs {
                 _ => {
                     return Err(Error::new(
                         meta.span(),
-                        "unknown attribute, expected one of: name, handler, template_name, inputs, silent, binary, structured_only, pageable, pre_dispatch, post_dispatch, post_output, questionnaire, nested, skip, default, list_view, item_type, pipe_to, pipe_through, pipe_to_clipboard, simple, pure",
+                        "unknown attribute, expected one of: name, handler, template_name, inputs, silent, binary, structured_only, pageable, no_config, pre_dispatch, post_dispatch, post_output, questionnaire, nested, skip, default, list_view, item_type, pipe_to, pipe_through, pipe_to_clipboard, simple, pure",
                     ));
                 }
             }
@@ -242,7 +290,7 @@ impl Parse for VariantAttrs {
 
 impl VariantAttrs {
     /// Several `#[dispatch(...)]` on one variant fold into one set before validation.
-    fn merge(&mut self, other: VariantAttrs) {
+    fn merge(&mut self, other: VariantAttrs, span: proc_macro2::Span) -> Result<()> {
         let VariantAttrs {
             name,
             handler,
@@ -266,15 +314,21 @@ impl VariantAttrs {
             simple,
             pure,
             pageable,
+            no_config,
         } = other;
 
         self.name = name.or(self.name.take());
         self.handler = handler.or(self.handler.take());
         self.template_name = template_name.or(self.template_name.take());
         self.inputs = inputs.or(self.inputs.take());
-        self.pre_dispatch = pre_dispatch.or(self.pre_dispatch.take());
-        self.post_dispatch = post_dispatch.or(self.post_dispatch.take());
-        self.post_output = post_output.or(self.post_output.take());
+        merge_hook_paths(&mut self.pre_dispatch, pre_dispatch, "pre_dispatch", span)?;
+        merge_hook_paths(
+            &mut self.post_dispatch,
+            post_dispatch,
+            "post_dispatch",
+            span,
+        )?;
+        merge_hook_paths(&mut self.post_output, post_output, "post_output", span)?;
         self.questionnaire = questionnaire.or(self.questionnaire.take());
         self.item_type = item_type.or(self.item_type.take());
         self.pipe_to = pipe_to.or(self.pipe_to.take());
@@ -290,6 +344,8 @@ impl VariantAttrs {
         self.simple |= simple;
         self.pure |= pure;
         self.pageable |= pageable;
+        self.no_config |= no_config;
+        Ok(())
     }
 
     /// Runs after `merge`, so a conflicting pair split across two attributes is
@@ -364,7 +420,7 @@ fn parse_variant_attrs(attrs: &[syn::Attribute]) -> Result<VariantAttrs> {
 
     for attr in attrs {
         if attr.path().is_ident("dispatch") {
-            merged.merge(attr.parse_args::<VariantAttrs>()?);
+            merged.merge(attr.parse_args::<VariantAttrs>()?, attr.span())?;
             span.get_or_insert_with(|| attr.span());
         }
     }
@@ -522,7 +578,8 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                     || v.attrs.pipe_to.is_some()
                     || v.attrs.pipe_through.is_some()
                     || v.attrs.pipe_to_clipboard
-                    || v.attrs.pageable;
+                    || v.attrs.pageable
+                    || v.attrs.no_config;
 
                 let handler_expr = if v.attrs.list_view {
                      if let Some(item_type_str) = &v.attrs.item_type {
@@ -576,15 +633,27 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                     let inputs_call = v.attrs.inputs.as_ref().map(|p| {
                         quote! { __cfg = #p(__cfg); }
                     });
-                    let pre_dispatch_call = v.attrs.pre_dispatch.as_ref().map(|p| {
-                        quote! { __cfg = __cfg.pre_dispatch(#p); }
-                    });
-                    let post_dispatch_call = v.attrs.post_dispatch.as_ref().map(|p| {
-                        quote! { __cfg = __cfg.post_dispatch(#p); }
-                    });
-                    let post_output_call = v.attrs.post_output.as_ref().map(|p| {
-                        quote! { __cfg = __cfg.post_output(#p); }
-                    });
+                    let pre_dispatch_calls: Vec<TokenStream> = v
+                        .attrs
+                        .pre_dispatch
+                        .iter()
+                        .flatten()
+                        .map(|p| quote! { __cfg = __cfg.pre_dispatch(#p); })
+                        .collect();
+                    let post_dispatch_calls: Vec<TokenStream> = v
+                        .attrs
+                        .post_dispatch
+                        .iter()
+                        .flatten()
+                        .map(|p| quote! { __cfg = __cfg.post_dispatch(#p); })
+                        .collect();
+                    let post_output_calls: Vec<TokenStream> = v
+                        .attrs
+                        .post_output
+                        .iter()
+                        .flatten()
+                        .map(|p| quote! { __cfg = __cfg.post_output(#p); })
+                        .collect();
                     let questionnaire_call = v.attrs.questionnaire.as_ref().map(|p| {
                         quote! { __cfg = __cfg.questionnaire::<#p>(); }
                     });
@@ -602,6 +671,9 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                     let pageable_call = v.attrs.pageable.then(|| {
                         quote! { __cfg = __cfg.pageable(); }
                     });
+                    let no_config_call = v.attrs.no_config.then(|| {
+                        quote! { __cfg = __cfg.without_config(); }
+                    });
 
                     quote! {
                         let __builder = __builder.command_with(#cmd_name, #handler_expr, |mut __cfg| {
@@ -609,13 +681,14 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                             #absence_call
                             #questionnaire_call
                             #inputs_call
-                            #pre_dispatch_call
-                            #post_dispatch_call
-                            #post_output_call
+                            #(#pre_dispatch_calls)*
+                            #(#post_dispatch_calls)*
+                            #(#post_output_calls)*
                             #pipe_to_call
                             #pipe_through_call
                             #pipe_clipboard_call
                             #pageable_call
+                            #no_config_call
                             __cfg
                         });
                     }

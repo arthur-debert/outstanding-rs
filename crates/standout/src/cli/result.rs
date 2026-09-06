@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::cli::handler::{
     Delivery, DispatchResult, ExitStatus, RunError, RunErrorKind, RunOutput, RunRecorder,
 };
@@ -123,7 +125,7 @@ impl From<HelpDisplay> for DispatchResult {
             }
             HelpDisplay::Clap(e) => DispatchResult::Handled(RunOutput::clap_help(e.to_string())),
             HelpDisplay::RenderFailed(e) => {
-                DispatchResult::Error(RunError::new(e.to_string(), RunErrorKind::Render))
+                DispatchResult::Error(RunError::render(e.to_string(), Arc::new(e)))
             }
         }
     }

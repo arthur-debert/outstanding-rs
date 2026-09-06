@@ -6,6 +6,7 @@ use standout::cli::{
     HookPhase, Hooks, Output, OutputKind, RunErrorKind, SuccessKind,
 };
 use standout::EmbeddedTemplates;
+use standout::RenderError;
 
 const TEMPLATES: &[(&str, &str)] = &[("go", "{{ message }}")];
 
@@ -403,4 +404,74 @@ fn output_file_success_is_silent_and_no_match_has_no_status() {
     assert!(matches!(no_match.outcome(), DispatchResult::NoMatch(_)));
     assert_eq!(no_match.exit_status(), None);
     assert_eq!(no_match.error_kind(), None);
+}
+
+#[test]
+fn a_template_render_failure_carries_the_render_error_a_caller_can_inspect() {
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(
+            &[("go", "{{ message | no_such_filter }}")],
+            "",
+        ))
+        .command_with(
+            "go",
+            FnHandler::new(|_matches, _ctx| Ok(Output::Render(json!({ "message": "ok" })))),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let result = app.run_with(
+        command(),
+        ["app", "go"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
+
+    let DispatchResult::Error(error) = result.outcome() else {
+        panic!("expected a render failure, got {:?}", result.error_kind());
+    };
+    assert_eq!(error.kind(), RunErrorKind::Render);
+    let source = std::error::Error::source(error)
+        .and_then(|source| source.downcast_ref::<RenderError>())
+        .expect("a render failure formats its cause but drops it");
+    assert!(
+        matches!(source, RenderError::TemplateError(_)),
+        "{source:?}"
+    );
+}
+
+#[test]
+fn a_handler_serialization_failure_carries_the_serde_error_a_caller_can_inspect() {
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "go",
+            FnHandler::new(
+                |_matches, _ctx| -> HandlerResult<std::collections::HashMap<(u8, u8), u8>> {
+                    Ok(Output::Render([((1u8, 2u8), 3u8)].into_iter().collect()))
+                },
+            ),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let result = app.run_with(
+        command(),
+        ["app", "go"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
+
+    let DispatchResult::Error(error) = result.outcome() else {
+        panic!("expected a render failure, got {:?}", result.error_kind());
+    };
+    assert_eq!(error.kind(), RunErrorKind::Render);
+    let source = std::error::Error::source(error)
+        .and_then(|source| source.downcast_ref::<serde_json::Error>())
+        .expect("a serialization failure formats its cause but drops it");
+    assert_eq!(source.classify(), serde_json::error::Category::Syntax);
 }

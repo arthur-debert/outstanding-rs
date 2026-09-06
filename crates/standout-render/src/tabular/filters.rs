@@ -172,14 +172,26 @@ pub(crate) fn register_tabular_filters_with_source(
         visible_width_with_policy(&stringify(&value), display_policy.ambiguous_width())
     });
 
-    env.add_filter("style_as", |value: Value, style: String| -> String {
-        let text = escape_style_tags(stringify(&value));
-        if style.is_empty() {
-            text.into_owned()
-        } else {
-            format!("[{}]{}[/{}]", style, text, style)
-        }
-    });
+    env.add_filter(
+        "style_as",
+        |value: Value, style: String| -> Result<String, minijinja::Error> {
+            let text = escape_style_tags(stringify(&value));
+            if style.is_empty() {
+                return Ok(text.into_owned());
+            }
+            if !standout_bbparser::is_valid_tag_name(&style) {
+                return Err(minijinja::Error::new(
+                    minijinja::ErrorKind::InvalidOperation,
+                    format!(
+                        "style_as: `{style}` cannot name a style; a style name is \
+                         lowercase ASCII letters, digits, `_` and `-`, starting with \
+                         a letter or `_`"
+                    ),
+                ));
+            }
+            Ok(format!("[{}]{}[/{}]", style, text, style))
+        },
+    );
 
     register_table_functions(env, widths);
 }
@@ -1139,6 +1151,44 @@ mod tests {
             .render(context!(value => "\u{1b}[31malpha\u{1b}[0m"))
             .unwrap();
         assert_eq!(ansi_only, "[row]\u{1b}[31malpha\u{1b}[0m[/row]");
+    }
+
+    #[test]
+    fn filter_style_as_rejects_a_name_that_would_invent_a_tag() {
+        let mut env = setup_env();
+        env.add_template("dynamic", "{{ value | style_as(name) }}")
+            .unwrap();
+
+        for name in [
+            "[error]",
+            "error]",
+            "a/b",
+            "/error",
+            "Error",
+            "1st",
+            "two words",
+            "name.with.dot",
+            "err\u{7}or",
+            "-error",
+        ] {
+            let error = env
+                .get_template("dynamic")
+                .unwrap()
+                .render(context!(value => "text", name => name))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("style_as"), "{error}");
+            assert!(error.contains(name), "{error}");
+        }
+
+        for name in ["error", "my-style2", "_private"] {
+            let rendered = env
+                .get_template("dynamic")
+                .unwrap()
+                .render(context!(value => "text", name => name))
+                .unwrap();
+            assert_eq!(rendered, format!("[{name}]text[/{name}]"));
+        }
     }
 
     #[test]

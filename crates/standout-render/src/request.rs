@@ -51,13 +51,7 @@ impl TargetProperties {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ColorPolicy {
-    #[default]
-    Auto,
-    Always,
-    Never,
-}
+pub use standout_types::ColorPolicy;
 
 // No `Convention` variant: convention names exist only on the glue builder
 // until `build()` materializes them to `Named`.

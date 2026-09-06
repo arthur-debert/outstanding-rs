@@ -97,3 +97,42 @@ should contain is the same request a reviewer makes when it files a documentatio
 finding, and it produces the same result: more prose, which draws the next
 finding. Brief the cap and the ownership rule, then let the author choose the
 content.
+
+### Review rounds: code defects only
+
+A review round is justified by a code defect and nothing else — not style, not
+thoroughness, not a reviewer's preference. When no code defect remains, flip the
+PR. Before briefing a round, read each thread's `severity=` and ask whether a user
+would hit it; if not, it is one reply and a resolve.
+
+Not actionable, ever: a finding about a comment, docstring, module doc or
+documentation completeness; anything under `docs/**`; changelog wording. A
+fragment over the word budget fails CI, and that is the only changelog feedback
+that counts. These rules override any role prompt that says to update a docstring
+in the same diff.
+
+Reviewers are often right about the finding and wrong about the remedy. "Update
+the docs to match" — decline the remedy, keep the finding: a broken contract
+belongs in the CHANGELOG or an ADR. A stale ADR is a false record rather than
+documentation lag, so revise it in the same PR.
+
+One exception runs the other way. When a finding is marked `severity=major` but
+the engine's breaker reports `no-major-finding`, the breaker's premise is false;
+force the re-review with `shipit pr review request N --reviewer X`. A `round-cap`
+breaker is different — it is cost control, so honour it and move the remainder to
+its own issue.
+
+Measure rather than exhort: `rustloc diff --type code,tests,docs,comments,total
+main..<branch>` before and after. Numbers change behaviour; words about brevity
+add words.
+
+### Before you instruct someone, verify
+
+- `gh api .../pulls/N/comments` does not report resolved state. Use the GraphQL
+  `reviewThreads` filtered on `isResolved == false`, or let the shepherd read the
+  threads itself.
+- Re-measure before claiming a file lacks something; a push may be in flight.
+- `gh run rerun --failed` reuses the same merge commit, so it will not pick up a
+  fix that landed on `main`. Merge `main` into the branch instead.
+- `pixi run test` without `--manifest-path <worktree>/pixi.toml` can execute
+  against a different worktree and report a result that is not yours.

@@ -2,6 +2,7 @@ use clap::ArgMatches;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::cli::builder::{SharedTemplateEngine, TemplateAbsence, TemplateRef};
 use crate::cli::handler::Output as HandlerOutput;
@@ -236,7 +237,7 @@ fn render_via_request(request: &RenderRequest) -> Result<(String, String), RunEr
 }
 
 fn render_error(error: standout_render::RenderError) -> RunError {
-    RunError::new(error.to_string(), RunErrorKind::Render)
+    RunError::render(error.to_string(), Arc::new(error))
 }
 
 fn absent_template_render_error(
@@ -385,9 +386,9 @@ pub(crate) fn render_handler_output<T: Serialize>(
 
 fn serialize_handler_data<T: Serialize>(data: &T) -> Result<serde_json::Value, RunError> {
     serde_json::to_value(data).map_err(|e| {
-        RunError::new(
+        RunError::render(
             format!("Failed to serialize handler result: {}", e),
-            RunErrorKind::Render,
+            Arc::new(e),
         )
     })
 }
@@ -424,14 +425,14 @@ pub(crate) fn handler_run_error(error: anyhow::Error) -> RunError {
         Ok(diagnostic) => {
             return RunError::new(frame_diagnostic(&diagnostic), RunErrorKind::Handler)
                 .with_diagnostic(diagnostic.clone())
-                .with_source(diagnostic)
+                .with_source(Arc::new(diagnostic))
         }
         Err(error) => error,
     };
 
     RunError::new(frame_diagnostic(&error), RunErrorKind::Handler)
         .with_diagnostic(Diagnostic::error(error.to_string()))
-        .with_source(HandlerErrorSource(error.into_boxed_dyn_error()))
+        .with_source(Arc::new(HandlerErrorSource(error.into_boxed_dyn_error())))
 }
 
 pub(crate) fn hook_run_error(mut error: HookError, phase: crate::cli::HookPhase) -> RunError {
@@ -457,7 +458,7 @@ pub(crate) fn hook_run_error(mut error: HookError, phase: crate::cli::HookPhase)
         .unwrap_or_else(|| Diagnostic::error(error.message.clone()));
     RunError::new(frame_diagnostic(&error), RunErrorKind::Hook(phase))
         .with_diagnostic(diagnostic)
-        .with_source(error)
+        .with_source(Arc::new(error))
 }
 
 /// The recorder and the sink are parameters rather than `CommandContext`

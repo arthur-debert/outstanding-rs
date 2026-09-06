@@ -4,22 +4,130 @@
 
 ## Unreleased
 
-- **Breaking:** `InputCollector::bind_sources` has no default implementation. Every collector states what it does with the run's `InputSources`: one that reads stdin, the clipboard or a prompt rebuilds itself over them, and one that reads an argument, an environment variable, a config value or a default returns `None`. A collector written against 12.0.1 that omits the method no longer compiles, where it previously inherited a `None` default and silently kept reading the process's own streams. See [Input Backends](crates/standout-input/docs/topics/backends.md) (issue #550).
-- **Breaking:** an unbound `StdinSource` fails instead of reading the process's own stdin. `StdinSource::new()` carries no reader until the chain binds one through `bind_sources`; a source that never reaches that call — used outside a chain, or held by a wrapping collector whose `bind_sources` returns `None` — collects `InputError::StdinNotBound`, a new variant whose message names `bind_sources`, and reports `is_available() == true` so the chain raises that error rather than skipping the source and moving on. `StdinSource::with_reader` and `with_shared_reader` are unchanged, and the chain still leaves a source built either way alone. Those two fallbacks together are what let a wrapper around `StdinSource` compile, pass every test that did not pipe stdin, and block on the test binary's stdin under a `TestHarness` (closes #550).
-- **Breaking:** `ProcessOutcome` gains a third field, `final_write_failure: Option<RunError>`, and is no longer `Copy`, `PartialEq` or `Eq`. `run_emitted` computed the failure that turned a successful run into exit `1` and dropped it, so a caller could not tell a failed final write from any other status-1 exit, nor report the `io::Error` beneath it — the case where a caller's trace is the only remaining witness, because stdout is the stream that could not be written. Read `outcome.final_write_failure` for the cause; its `kind()` says which write failed and its `source()` is the `std::io::Error` the write returned. Callers that constructed `ProcessOutcome` with a struct literal add the field, and callers that compared two outcomes or relied on copying one compare `handled` and `status` instead (closes #564).
-- `AppBuilder::usage_exit_status(u8)` names the status a run exits with when clap rejects the command line. An application that names none exits `2`, as before. An application with a published contract that already spends `2` on a deliberate refusal can now keep `1` for a rejected command line without owning the process edge itself. The error is still `RunErrorKind::ClapUsage` and its diagnostic document is still kind `clap-usage`; only the status moves. `usage_exit_status(0)` fails `build()`, because a rejected command line must not report shell success (closes #545).
-- `AppFailure::framed()` keeps the failure's application-chosen exit status and gives up the verbatim stderr bytes. A framed failure takes the ordinary diagnostic path: `Error: <message>` on stderr under the human representation, and a stdout diagnostic document with stderr silent under `json`, `yaml`, `csv` and `ndjson`. A plain `AppFailure` is unchanged and still writes its bytes to stderr verbatim under every representation, and `ExternalFailure` has no framed form, since relaying another operation's own bytes is what that name is for. Use it for a refusal that is otherwise an ordinary error but must exit with a status your specification pins (closes #546).
-- **Breaking:** the truncation the framework performs on a rendered value — `{{ value | col(10) }}`, `{{ value | truncate_at(10) }}`, a table column narrower than its cell, and `truncate_to_width` — now emits the reset at a cut that falls between a value's ANSI opener and its closer. All four previously kept the opener and dropped the closer, so the color ran on into every line printed afterwards — furthest when the surrounding style tag was unknown and stripped, because then nothing downstream reset either. A snapshot that pinned the truncated bytes of a pre-styled value gains a `\u{1b}[0m` before the ellipsis. Untruncated text is untouched: a value the framework passes through whole keeps the escape sequences the application wrote, unbalanced ones included. `standout-render`'s standalone `truncate_end` / `truncate_middle` helpers cut through a different path and still leave the opener unclosed; #570 tracks that (closes #566, for #568).
-- The `config` command escapes its output line with the same ANSI-aware function the template filters use, rather than a private copy that turned every `[` into `\[` including the ones inside an escape sequence. Config keys and file paths carry no escape sequences, so what `config` prints today is unchanged; the copy that would have mangled the first value carrying one is gone. `escape_style_tags` is now exported from `standout-render`, where the surviving definition lives; `standout` does not re-export it, so it stays internal rather than contract (closes #565).
-- **Breaking:** the text standout composes around application- and argv-supplied strings — a `RunError`'s stderr prose and the `Diagnostic` it produces, `ctx.warn` text, and the clap usage message standout captures — now carries control characters escaped to their Rust codepoint spelling (an `ESC` reads `\u{1b}`): everything `char::is_control()` matches except `\n` and `\t`, so an untrusted path or archive entry cannot paint the terminal through them. An error or warning message that carried its own ANSI now shows it escaped, and styled failure output belongs in `AppFailure` instead; `WarningBuffer::push` stores the escaped text, so a stderr or `TestResult::warnings()` snapshot that pinned a control character changes (for #552).
-- Unchanged: the bytes `AppFailure` and `ExternalFailure` write to stderr stay verbatim, as does the diagnostic derived from them, and handler-rendered template output is untouched — an application that prints untrusted text through its own templates still escapes it itself (closes #552).
-- `TestHarness::rendering(Representation, ColorPolicy)` names a test's rendering in one call where a suite was writing `.output_mode(...)` and `.color(...)` at every site, and takes the pair as two arguments so a test can parameterize over an array of them. Additive: `output_mode`, `color` and `text_output()` are unchanged, so existing tests need no edit (closes #553).
-- **Breaking:** the help-page oracle modules `standout_test::clap_parity` (`clap_facts`, `assert_states_clap_facts`, `assert_page_states_clap_facts`, `Fact`, `Subject`, `Omission`, `DELIBERATE_OMISSIONS`) and `standout_test::invariants` (`assert_every_tag_resolved`, `assert_no_unresolved_tag_markers`, `assert_styling_preserves_layout`, `assert_no_possible_values_for_valueless_args`, `assert_metavar_for_valued_args`, `assert_descriptions_aligned` and their `_in_page(s)` forms) are gone; `TestResult::tag_resolutions()` and `unresolved_tag_names()` remain the way to check style-tag accounting (closes #539).
-- **Breaking:** a `test-support` cargo feature on `standout` and `standout-render`, off by default and enabled by `standout-test`, now gates the harness-only seams: `standout_render::diagnostics::take_captured`, `standout::cli::warnings_delivered_on_stdout`, and the `STANDOUT_QUESTIONNAIRE_TERMINAL` scripted-terminal seam, which an adopter's debug build no longer reads. `CompletedRun::from_dispatch` and `with_entries` are crate-private, as are `diagnostics::is_capturing`, `record` and `drain`. `standout-test` no longer exports `assert_page_snapshot!`, `SnapshotCase`, `matrix`, `MatrixCell` or the `pty` module (closes #540).
-- **Breaking:** `style_as` escapes the style-tag brackets in its value before wrapping it, so `{{ value | style_as('error') }}` on `missing [severity_map] table` renders those brackets literally inside the style; it previously built `[error]...[/error]` from the raw value, so the value opened a `[severity_map]` tag the caller never wrote — stripped with a warning, failing the run under `STANDOUT_STRICT_STYLE_TAGS=1`, or styled if the theme happened to define that name. The same rule now applies to a value that carries style tags on purpose: `{{ styled | col(10) | style_as('row') }}` renders the inner `[bold]...[/bold]` as literal text. Write the outer style as tag syntax around the value to keep the inner tags live. ANSI escape sequences already in the value are the exception — they pass through whole, so a pre-styled value keeps its color and still measures and truncates at its visible width (for #551).
-- A `verbatim` filter escapes the same brackets on demand, so a command that prints a generated file, a JSON Schema, a regex or a TOML snippet through a template writes `{{ body | verbatim }}` and gets rendered bytes equal to what it handed the filter: a `[severity_map]` table header is text rather than a tag, and no longer fails the run under `STANDOUT_STRICT_STYLE_TAGS=1` or degrades to unstyled text plus a warning (closes #551).
-- `verify_command` no longer reports a handler that reads an argument an ancestor command declares `global(true)` as mismatched. It checks handler arguments against a copy of the clap `Command` with those globals copied down the subcommand tree, which is what clap does during `build()` and the reason the argument was invisible before. Verification does not call `build()`, so it neither gains clap's generated `help` subcommand and `--help`/`--version` arguments nor answers differently for a `Command` the caller built first. Reachability and the flag and command collisions read the `Command` as declared, the tree the run path gets (closes #547).
-- **Breaking:** a questionnaire command now reports a `--yes` or `--answers` an ancestor declares `global(true)` as a reserved-name conflict, because that global lands on the questionnaire command alongside the flag standout injects there. Two arguments then claim the same long name and clap's debug assertions reject the parsed tree, so the registration was never runnable; verification names it instead of leaving it to the first invocation (closes #547).
+## 13.0.0 - 2026-09-06
+
+- **Breaking:** configuration, render, final-write and event failures now carry the
+  error underneath them. Downcast `source()` to `clapfig::ClapfigError`,
+  `standout::RenderError`, `serde_json::Error` or `std::io::Error` instead of matching
+  rendered prose (closes #572, #575).
+- **Breaking:** `RunError::render`, `final_write`, `config` and `with_source` take an
+  `Arc<dyn Error + Send + Sync>` cause — wrap yours in `Arc::new`. `RunError::new` refuses
+  `RunErrorKind::Config`; build that one with `RunError::config(message, error)`.
+- **Breaking:** `EmitError` is `Clone` and holds its cause behind an `Arc`:
+  `Serialize(Arc<serde_json::Error>)`, `Write(Arc<std::io::Error>)` and
+  `Render { message, cause }`. Build a render failure with the struct variant;
+  `EmitError::from` still accepts a `serde_json::Error` or an `std::io::Error`.
+- **Breaking:** `ProcessOutcome` gains `final_write_failure: Option<RunError>` and is no
+  longer `Copy`, `PartialEq` or `Eq`. Read it for the failure that turned a successful run
+  into exit `1`: `kind()` says which write failed, `source()` is the `std::io::Error`.
+  Struct-literal constructions add the field; comparisons compare `handled` and `status`
+  (closes #564).
+- `AppBuilder::usage_exit_status(u8)` names the status a run exits with when clap rejects
+  the command line, for an application whose published contract already spends `2`. The
+  default is still `2` and the error is still `RunErrorKind::ClapUsage`;
+  `usage_exit_status(0)` fails `build()` (closes #545).
+- `AppFailure::framed()` keeps the failure's exit status but takes the ordinary diagnostic
+  path instead of writing your bytes verbatim: `Error: <message>` on stderr for humans, a
+  stdout diagnostic document under `json`, `yaml`, `csv` and `ndjson`. A plain `AppFailure`
+  is unchanged (closes #546).
+- **Breaking:** `InputCollector::bind_sources` is required. A collector that reads stdin,
+  the clipboard or a prompt rebuilds itself over the run's `InputSources`; one that reads an
+  argument, environment variable, config value or default returns `None`. A collector
+  written against 12.0.1 that omits it no longer compiles, where before it inherited a
+  `None` default and silently read the process's own streams. See
+  [Input Backends](crates/standout-input/docs/topics/backends.md) (closes #550).
+- **Breaking:** an unbound `StdinSource` fails instead of reading the process's stdin.
+  `StdinSource::new()` carries no reader until the chain binds one through `bind_sources`;
+  a source that never reaches that call fails with the new `InputError::StdinNotBound`.
+  `StdinSource::with_reader` and `with_shared_reader` are unchanged.
+- `#[dispatch(pre_dispatch(first, second))]` names several hooks for one phase and runs them
+  in written order; `post_dispatch` and `post_output` take the same list. The single-path
+  spelling `pre_dispatch = path` is unchanged. Repeating a phase key on one variant now
+  fails expansion and names the key (closes #557).
+- Declaring an input chain or a questionnaire no longer spends the command's pre-dispatch
+  registration, so a command can do either and still register a pre-dispatch hook through
+  `AppBuilder::hooks`. Chain resolution runs before the handler and before the command's own
+  hooks (closes #556, #581).
+- **Breaking:** a command's questionnaire resolves before every pre-dispatch hook, whichever
+  order they were declared in. A hook written ahead of `.questionnaire::<T>()` used to run
+  first; it now runs after the answers are collected and can read them (closes #581).
+- `CommandConfig::without_config()` and `#[dispatch(no_config)]` exempt one command from
+  configuration resolution: it runs even when the configuration file does not load, and
+  `ctx.config::<C>()` returns `MissingConfig`. Use it for a `doctor`, `init` or repair
+  command, which a broken file used to fail before dispatch (closes #581).
+- `questionnaire` is reserved as an input-chain name: a command declaring both
+  `questionnaire::<T>()` and a chain of that name is refused in either declaration order
+  (closes #556).
+- A phase registered from both `CommandConfig` and `AppBuilder::hooks` now names what each
+  side registered, so both call sites are findable from the error alone (closes #556).
+- `verify_command` no longer reports a handler that reads an ancestor's `global(true)`
+  argument as mismatched: it checks handler arguments against a copy of the clap `Command`
+  with those globals propagated down the tree. It still does not call `build()`, so clap's
+  generated `help` subcommand and `--help`/`--version` stay out of verification
+  (closes #547).
+- **Breaking:** a `--yes` or `--answers` that an ancestor declares `global(true)` collides
+  with the flag standout injects into a questionnaire command. `verify_command` now reports
+  the reserved-name conflict, and running such a command is a usage error with exit status
+  `2` rather than a crash on clap's debug assertions (closes #547, #568).
+- **Breaking:** `style_as` escapes the style-tag brackets in its value, so
+  `{{ value | style_as('error') }}` on `missing [severity_map] table` renders them literally
+  instead of opening a tag the caller never wrote. A value carrying style tags on purpose is
+  literal too; write the outer style as tag syntax around the value to keep inner tags live.
+  ANSI escape sequences in the value still pass through whole (for #551).
+- **Breaking:** `style_as` rejects a style name the tag grammar (`[a-z_][a-z0-9_-]*`) does
+  not accept, with a render error naming the filter and the name, rather than emitting
+  markup the parser prints literally. An empty name still passes the value through unstyled
+  (closes #568).
+- A `verbatim` filter escapes the same brackets on demand. A command printing a generated
+  file, a JSON Schema, a regex or a TOML snippet writes `{{ body | verbatim }}` and gets
+  back what it handed the filter, with no warning and no failure under
+  `STANDOUT_STRICT_STYLE_TAGS=1` (closes #551).
+- **Breaking:** truncation closes a style it cuts through — `{{ value | col(10) }}`,
+  `{{ value | truncate_at(10) }}`, a table column narrower than its cell,
+  `truncate_to_width`, and `standout-render`'s `truncate_end` and `truncate_middle`. The
+  colour no longer runs on into everything printed afterwards, and a snapshot pinning the
+  truncated bytes of a pre-styled value gains a `\u{1b}[0m` before the ellipsis. Wrapping
+  still cuts to continue, so a wrapped value keeps its colour across the line break
+  (closes #566, #568).
+- The `config` command escapes its output with the same ANSI-aware function the filters use,
+  rather than a private copy that escaped the `[` inside an escape sequence. What `config`
+  prints today is unchanged. `escape_style_tags` is exported from `standout-render`
+  (closes #565).
+- **Breaking:** the text standout composes around application- and argv-supplied strings — a
+  `RunError`'s stderr prose and `Diagnostic`, `ctx.warn` text, and the captured clap usage
+  message — escapes control characters to their Rust codepoint spelling (an `ESC` reads
+  `\u{1b}`): everything `char::is_control()` matches except `\n` and `\t`, so an untrusted
+  path cannot paint the terminal through them. Put styled failure output in `AppFailure`
+  instead; a stderr or `TestResult::warnings()` snapshot that pinned a control character
+  changes (closes #552).
+- `AppFailure` and `ExternalFailure` still write their bytes to stderr verbatim, and
+  handler-rendered template output is untouched: an application printing untrusted text
+  through its own templates still escapes it itself.
+- `CommandContext::representation()` and `CommandContext::color_policy()` return what the
+  run resolved, so a post-dispatch or post-output hook can decide by encoding instead of
+  re-parsing the injected `_output_mode` argument. Both are read-only (closes #548).
+- `Representation` and `ColorPolicy` now live in the new dependency-free `standout-types`
+  crate, re-exported unchanged from `standout`, `standout-render` and `standout-dispatch`
+  (closes #548).
+- `TestHarness::rendering(Representation, ColorPolicy)` names a test's rendering in one call
+  where a suite was writing `.output_mode(...)` and `.color(...)` at every site, and takes
+  the pair as two arguments so a test can parameterize over an array of them. `output_mode`,
+  `color` and `text_output()` are unchanged (closes #553).
+- **Breaking:** the help-page oracles are gone: `standout_test::clap_parity` (`clap_facts`,
+  `assert_states_clap_facts`, `assert_page_states_clap_facts`, `Fact`, `Subject`,
+  `Omission`, `DELIBERATE_OMISSIONS`) and `standout_test::invariants` (its `assert_*`
+  helpers and their `_in_page(s)` forms). `TestResult::tag_resolutions()` and
+  `unresolved_tag_names()` remain the way to check style-tag accounting (closes #539).
+- **Breaking:** a `test-support` feature on `standout` and `standout-render`, off by default
+  and enabled by `standout-test`, gates the harness-only seams
+  `standout_render::diagnostics::take_captured`,
+  `standout::cli::warnings_delivered_on_stdout` and the
+  `STANDOUT_QUESTIONNAIRE_TERMINAL` scripted terminal, which an adopter's debug build no
+  longer reads. `standout-test` no longer exports `assert_page_snapshot!`, `SnapshotCase`,
+  `matrix`, `MatrixCell` or the `pty` module (closes #540).
+- The `tdoo` worked example declares one `standout` dependency, matching the `Cargo.toml`
+  the guides tell an adopter to write; its tests reach dispatch and input items through
+  `standout::dispatch::` and `standout::input::` (closes #554).
 
 ## 12.0.1 - 2026-09-05
 
