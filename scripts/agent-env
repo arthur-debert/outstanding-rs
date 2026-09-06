@@ -23,5 +23,8 @@ if [[ ${SCCACHE_CACHE_SIZE:-} =~ ^[0-9]+[kKmMgGtT][bB]$ ]]; then
 fi
 
 export WORKSPACES="${WORKSPACES:-/Volumes/workspace/trees}"
-export RUSTC_WRAPPER="${RUSTC_WRAPPER:-$standout_root/scripts/rustc-wrapper}"
+case ${RUSTC_WRAPPER:-} in
+  "" | */scripts/rustc-wrapper) RUSTC_WRAPPER="$standout_root/scripts/rustc-wrapper" ;;
+esac
+export RUSTC_WRAPPER
 export CARGO_INCREMENTAL=0
