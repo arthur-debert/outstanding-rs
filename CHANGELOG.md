@@ -4,11 +4,9 @@
 
 ## Unreleased
 
-- Reading the system light/dark appearance no longer initializes AppKit and CoreUI on
-  macOS: the `dark-light` dependency moves from 0.2 to 3, which reads
-  `AppleInterfaceStyle` from `NSUserDefaults` instead, and drops the unmaintained `objc`
-  crate from the tree. A system that reports no preference resolves to the light scheme,
-  as it did before.
+- On macOS, system appearance detection reads `AppleInterfaceStyle` from
+  `NSUserDefaults` through `dark-light` 3.0.0. Other platforms retain `dark-light`
+  0.2 and their existing detection paths.
 
 ## 13.0.0 - 2026-09-06
 
