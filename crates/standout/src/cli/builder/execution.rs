@@ -718,14 +718,7 @@ impl App {
         let typed_color = self.typed_color_from_unparsed(&args);
         let color_policy = self.resolve_color_policy(typed_color, named_color, None);
 
-        if let Err(error) = self
-            .malformed_registrations()
-            .and_then(|()| self.validate_questionnaire_surfaces(&cmd))
-            .and_then(|()| self.unreachable_registrations(&cmd))
-            .and_then(|()| self.config_override_flag_collision(&cmd))
-            .and_then(|()| self.framework_flag_collision(&cmd))
-            .and_then(|()| self.config_command_collision(&cmd))
-        {
+        if let Err(error) = self.validated_command_tree(&cmd) {
             return RunOutcome::to_stdout(
                 DispatchResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
                 self.extract_output_mode_from_unparsed(&args),
@@ -1459,6 +1452,21 @@ impl App {
              but its clap `Command` declares no such subcommand.{hint}",
             path.replace('.', " "),
         )))
+    }
+
+    pub(crate) fn validated_command_tree(&self, cmd: &Command) -> Result<Command, SetupError> {
+        let propagated = crate::cli::app::with_globals_propagated(cmd);
+        self.malformed_registrations()?;
+        self.validate_questionnaire_surfaces(&propagated)?;
+        self.unreachable_registrations(cmd)?;
+        self.surface_conflicts(cmd)?;
+        Ok(propagated)
+    }
+
+    pub(crate) fn surface_conflicts(&self, cmd: &Command) -> Result<(), SetupError> {
+        self.config_override_flag_collision(cmd)?;
+        self.framework_flag_collision(cmd)?;
+        self.config_command_collision(cmd)
     }
 
     pub(crate) fn validate_questionnaire_surfaces(&self, cmd: &Command) -> Result<(), SetupError> {

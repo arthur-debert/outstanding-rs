@@ -920,11 +920,7 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        if let Err(error) = self
-            .config_override_flag_collision(&cmd)
-            .and_then(|()| self.framework_flag_collision(&cmd))
-            .and_then(|()| self.config_command_collision(&cmd))
-        {
+        if let Err(error) = self.surface_conflicts(&cmd) {
             return HelpResult::Error(clap::Error::raw(
                 clap::error::ErrorKind::ArgumentConflict,
                 format!("{error}\n"),
@@ -1703,13 +1699,7 @@ impl App {
     }
 
     pub fn verify_command(&self, cmd: &Command) -> Result<(), SetupError> {
-        let propagated = super::app::with_globals_propagated(cmd);
-        self.malformed_registrations()?;
-        self.validate_questionnaire_surfaces(&propagated)?;
-        self.unreachable_registrations(cmd)?;
-        self.config_override_flag_collision(cmd)?;
-        self.framework_flag_collision(cmd)?;
-        self.config_command_collision(cmd)?;
+        let propagated = self.validated_command_tree(cmd)?;
         let expected_args: HashMap<String, Vec<ExpectedArg>> = self
             .pending_commands
             .borrow()

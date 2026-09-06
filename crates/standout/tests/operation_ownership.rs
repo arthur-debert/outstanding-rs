@@ -14,6 +14,15 @@ const CONTROL_ESCAPER_COPIES: [&str; 2] = [
     "crates/standout-render/src/escape.rs",
 ];
 
+const SETUP_CHECKS: [&str; 6] = [
+    "malformed_registrations",
+    "validate_questionnaire_surfaces",
+    "unreachable_registrations",
+    "config_override_flag_collision",
+    "framework_flag_collision",
+    "config_command_collision",
+];
+
 const PROPAGATION: &str = "with_globals_propagated";
 const PROPAGATION_OWNER: &str = "crates/standout/src/cli/app.rs";
 
@@ -116,6 +125,27 @@ fn only_the_bbparser_crate_drives_the_ansi_balance() {
         "{BALANCE} belongs to {BALANCE_OWNER}ansi.rs; a cutter outside the crate closes \
          what it cut with `closing_for`:\n{}",
         offenders.join("\n")
+    );
+}
+
+#[test]
+fn each_setup_check_answers_to_one_caller() {
+    let mut wrong = Vec::new();
+    for check in SETUP_CHECKS {
+        let calls = mentions(&format!(".{check}("), |_| false);
+        if calls.len() != 1 {
+            wrong.push(format!(
+                "{check} has {} callers:\n{}",
+                calls.len(),
+                calls.join("\n")
+            ));
+        }
+    }
+
+    assert!(
+        wrong.is_empty(),
+        "a second list of setup checks drifts from the first; compose the one that exists:\n{}",
+        wrong.join("\n")
     );
 }
 
