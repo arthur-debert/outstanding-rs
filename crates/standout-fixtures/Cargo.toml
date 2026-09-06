@@ -7,7 +7,7 @@ license = "MIT"
 repository = "https://github.com/arthur-debert/standout"
 
 [dependencies]
-standout = { path = "../standout", version = "13.0.1" }
+standout = { path = "../standout", version = "13.0.2" }
 anyhow = "1"
 clap = { version = "4", features = ["help"] }
 console = "0.16"
