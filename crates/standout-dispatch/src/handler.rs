@@ -595,24 +595,25 @@ impl RunError {
         Self::of_kind(message, kind)
     }
     /// A write that carried the run's output failed; `error` is what the destination reported.
-    pub fn final_write<E>(message: impl Into<String>, error: E, kind: OutputKind) -> Self
-    where
-        E: std::error::Error + Send + Sync + 'static,
-    {
+    pub fn final_write(
+        message: impl Into<String>,
+        error: Arc<dyn std::error::Error + Send + Sync>,
+        kind: OutputKind,
+    ) -> Self {
         Self::of_kind(message, RunErrorKind::FinalWrite(kind)).with_source(error)
     }
     /// Turning the run's data into bytes failed; `error` is what the renderer or serializer reported.
-    pub fn render<E>(message: impl Into<String>, error: E) -> Self
-    where
-        E: std::error::Error + Send + Sync + 'static,
-    {
+    pub fn render(
+        message: impl Into<String>,
+        error: Arc<dyn std::error::Error + Send + Sync>,
+    ) -> Self {
         Self::of_kind(message, RunErrorKind::Render).with_source(error)
     }
     /// Resolving the application's configuration failed; `error` is what the resolver reported.
-    pub fn config<E>(message: impl Into<String>, error: E) -> Self
-    where
-        E: std::error::Error + Send + Sync + 'static,
-    {
+    pub fn config(
+        message: impl Into<String>,
+        error: Arc<dyn std::error::Error + Send + Sync>,
+    ) -> Self {
         Self::of_kind(message, RunErrorKind::Config).with_source(error)
     }
     fn of_kind(message: impl Into<String>, kind: RunErrorKind) -> Self {
@@ -637,11 +638,8 @@ impl RunError {
         self.status = status;
         self
     }
-    pub fn with_source<E>(mut self, source: E) -> Self
-    where
-        E: std::error::Error + Send + Sync + 'static,
-    {
-        self.source = Some(Arc::new(source));
+    pub fn with_source(mut self, source: Arc<dyn std::error::Error + Send + Sync>) -> Self {
+        self.source = Some(source);
         self
     }
     /// Replaces the summary `diagnostic()` would otherwise derive from the prose message.
@@ -1103,7 +1101,7 @@ mod tests {
     fn the_cause_carrying_constructors_keep_the_error_a_caller_can_downcast() {
         let write = RunError::final_write(
             "Error writing stdout",
-            std::io::Error::from(std::io::ErrorKind::BrokenPipe),
+            Arc::new(std::io::Error::from(std::io::ErrorKind::BrokenPipe)),
             OutputKind::Text,
         );
         assert_eq!(write.kind(), RunErrorKind::FinalWrite(OutputKind::Text));
@@ -1114,11 +1112,11 @@ mod tests {
             Some(std::io::ErrorKind::BrokenPipe)
         );
 
-        let render = RunError::render("boom", std::io::Error::other("boom"));
+        let render = RunError::render("boom", Arc::new(std::io::Error::other("boom")));
         assert_eq!(render.kind(), RunErrorKind::Render);
         assert!(std::error::Error::source(&render).is_some());
 
-        let config = RunError::config("boom", std::io::Error::other("boom"));
+        let config = RunError::config("boom", Arc::new(std::io::Error::other("boom")));
         assert_eq!(config.kind(), RunErrorKind::Config);
         assert_eq!(config.exit_status(), ExitStatus::FAILURE);
         assert!(std::error::Error::source(&config).is_some());

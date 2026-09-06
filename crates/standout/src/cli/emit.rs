@@ -20,6 +20,7 @@
 //! rendering anything to stderr.
 
 use std::io::Write;
+use std::sync::Arc;
 
 use serde::Deserialize;
 
@@ -50,7 +51,7 @@ pub fn emit_run_result<W: Write + ?Sized, E: Write + ?Sized>(
             .map(|error| {
                 RunError::final_write(
                     format!("Error writing binary stdout: {}", error),
-                    error,
+                    Arc::new(error),
                     OutputKind::Binary,
                 )
             }),
@@ -88,7 +89,7 @@ fn emit_failure<W: Write + ?Sized, E: Write + ?Sized>(
     if let Err(write_error) = stderr_prose {
         return Some(RunError::final_write(
             format!("Error writing stderr: {}", write_error),
-            write_error,
+            Arc::new(write_error),
             OutputKind::Text,
         ));
     }
@@ -283,7 +284,7 @@ fn emit_artifact<W: Write + ?Sized, E: Write + ?Sized>(
         if let Err(error) = stdout.write_all(run.bytes()).and_then(|()| stdout.flush()) {
             return Some(RunError::final_write(
                 format!("Error writing artifact stdout: {}", error),
-                error,
+                Arc::new(error),
                 OutputKind::Artifact,
             ));
         }
@@ -300,7 +301,7 @@ fn emit_artifact<W: Write + ?Sized, E: Write + ?Sized>(
     written.err().map(|error| {
         RunError::final_write(
             format!("Error writing artifact report: {}", error),
-            error,
+            Arc::new(error),
             OutputKind::Artifact,
         )
     })
@@ -315,7 +316,7 @@ fn final_write_error_unless_broken_pipe(
     } else {
         Some(RunError::final_write(
             format!("Error writing stdout: {}", error),
-            error,
+            Arc::new(error),
             kind,
         ))
     }

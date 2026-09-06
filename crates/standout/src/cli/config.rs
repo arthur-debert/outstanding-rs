@@ -30,6 +30,7 @@
 
 use std::any::Any;
 use std::path::Path;
+use std::sync::Arc;
 
 use clap::{Arg, Command};
 use clapfig::value::Value;
@@ -351,7 +352,7 @@ impl ResolvedConfig {
 pub(crate) fn config_run_error(error: ClapfigError) -> RunError {
     let prose = clapfig::render::render_plain(&error);
     let position = config_error_position(&error);
-    let run_error = RunError::config(prose, error);
+    let run_error = RunError::config(prose, Arc::new(error));
     match position {
         Some((file, line, column)) => {
             let diagnostic = run_error.diagnostic();

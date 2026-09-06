@@ -1,6 +1,7 @@
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::cli::CommandContextInput;
 use clap::{Arg, ArgAction, ArgMatches, Command};
@@ -514,7 +515,7 @@ pub(crate) fn render_questions_result(
         if let Err(error) = std::fs::write(path, sheet) {
             return crate::cli::handler::DispatchResult::Error(RunError::final_write(
                 format!("Error writing questionnaire answer sheet: {error}"),
-                error,
+                Arc::new(error),
                 crate::cli::handler::OutputKind::Text,
             ));
         }
