@@ -1,8 +1,77 @@
-<!-- generated - do not edit; fragments live in CHANGELOG/ (`shipit changelog render` regenerates this file) -->
-
 # Changelog
 
 ## Unreleased
+
+## 14.0.0 - 2026-09-06
+
+Standout now displays filenames, user input, and other inserted strings literally,
+while preserving deliberate formatting through handlers, templates, and tables.
+Styled values become plain strings in JSON, YAML, CSV, and NDJSON output.
+
+### Breaking changes and migration
+
+- **Strings no longer apply styles.** A value containing `[error]failed[/error]`
+  displays those brackets literally. Terminal controls, including raw ANSI escape
+  sequences, appear as visible spellings such as `\u{1b}`; newline and tab still
+  provide layout. This also applies to table cells and incremental human output,
+  even with color disabled. Remove manual bracket escaping from inserted data.
+- **Move intentional styles into templates or `FormattedText`.** Use
+  `[error]{{ message }}[/error]` for a fixed style, or
+  `{{ message | style_as(style_name) }}` for a dynamic one. Templates that assemble
+  tags with `[{{ style_name }}]` are rejected. Literal fragments between template
+  expressions must contain complete bracket tokens and paired backslash escapes.
+- **Remove `verbatim`.** Replace `{{ value | verbatim }}` with `{{ value }}`.
+  Terminal templates reject `autoescape` blocks. The HTML filters `safe`, `escape`,
+  and `e` do not grant terminal formatting privileges.
+- **Preserve formatting when composing text.** Use `FormattedText::append` in Rust
+  and `join` or `style_as` in templates. Padding, tables, and `truncate_at` preserve
+  styles and measure the text actually displayed. Template `~`, `string`,
+  `replace`, and slicing return plain text and discard styles.
+- **Update rendering extensions to `RenderData`.** Post-dispatch hooks, custom
+  template engines, context providers, render requests, event sinks, and recorded
+  results now carry `RenderData` instead of JSON or MiniJinja values. Convert
+  existing JSON with `.into()`. To retain formatted fields, use
+  `RenderData::from_serialize(&view)?` directly; converting through
+  `serde_json::Value` first discards their formatting. Use `data.to_json()` when
+  you need the plain JSON representation.
+- **Use typed table methods for styled cells.** Ordinary row strings, headers,
+  decorations, and truncation markers are literal text. Use
+  `TabularFormatter::format_formatted_row` or `format_formatted_row_lines` to
+  compose rows from `FormattedText` values.
+
+### Styling values in Rust
+
+Keep formatted fields in your CLI view types and return them through
+`Output::Render(view)` as usual:
+
+```rust
+use serde::Serialize;
+use standout::FormattedText;
+
+#[derive(Serialize)]
+struct View {
+    message: FormattedText,
+}
+
+let view = View {
+    message: FormattedText::text("Could not open ")
+        .append(FormattedText::text("[draft].txt").styled("error")?),
+};
+```
+
+Define `error` in your theme and render `{{ message }}`. The filename keeps its
+literal brackets and receives the selected style. Structured output contains
+`{"message":"Could not open [draft].txt"}` with no style metadata.
+
+To retain colors from an ANSI-producing library, explicitly import supported SGR
+styles with `FormattedText::from_ansi_sgr(colored_text)`. Unsupported sequences,
+including cursor movement and terminal clipboard commands, remain visible text
+when rendered for humans.
+
+See [text and formatted values](crates/standout-render/docs/topics/templating.md#text-and-formatted-values)
+for composition rules and supported ANSI styles, and
+[custom template engines](crates/standout-render/docs/topics/template-engines.md#implementing-a-custom-engine)
+for the updated extension interface.
 
 ## 13.0.0 - 2026-09-06
 
