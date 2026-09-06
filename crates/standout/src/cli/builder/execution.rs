@@ -13,6 +13,7 @@ use crate::{
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use standout_render::warnings::WarningBuffer;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use super::{
     output_mode_flag_spelling, App, AppBuilder, HookRegistrationSource, PendingCommand,
@@ -506,7 +507,7 @@ impl App {
                 let file = open_output_file(path).map_err(|e| {
                     RunError::final_write(
                         format!("Error writing output: {}", e),
-                        e,
+                        Arc::new(e),
                         OutputKind::Text,
                     )
                 })?;
@@ -561,7 +562,7 @@ impl App {
                         Err(error) => {
                             return DispatchResult::Error(RunError::render(
                                 error.to_string(),
-                                error,
+                                Arc::new(error),
                             ))
                         }
                     };
@@ -601,7 +602,7 @@ impl App {
                             Err(error) => {
                                 return DispatchResult::Error(RunError::render(
                                     error.to_string(),
-                                    error,
+                                    Arc::new(error),
                                 ))
                             }
                         };
@@ -663,7 +664,7 @@ impl App {
                     if let Err(e) = written {
                         return DispatchResult::Error(RunError::final_write(
                             format!("Error writing output: {}", e),
-                            e,
+                            Arc::new(e),
                             OutputKind::Text,
                         ));
                     }
@@ -673,7 +674,7 @@ impl App {
                     if let Err(e) = write_output(&t.formatted, &dest) {
                         return DispatchResult::Error(RunError::final_write(
                             format!("Error writing output: {}", e),
-                            e,
+                            Arc::new(e),
                             OutputKind::Text,
                         ));
                     }
@@ -683,7 +684,7 @@ impl App {
                     if let Err(e) = write_binary_output(b, &dest) {
                         return DispatchResult::Error(RunError::final_write(
                             format!("Error writing output: {}", e),
-                            e,
+                            Arc::new(e),
                             OutputKind::Binary,
                         ));
                     }
@@ -917,8 +918,8 @@ impl App {
             return Ok(None);
         };
         let overrides = self.config_overrides(matches)?;
-        let dir =
-            std::env::current_dir().map_err(|error| RunError::config(error.to_string(), error))?;
+        let dir = std::env::current_dir()
+            .map_err(|error| RunError::config(error.to_string(), Arc::new(error)))?;
         seam.resolve_at(&overrides, &dir)
             .map(Some)
             .map_err(config_run_error)
@@ -1104,7 +1105,7 @@ impl App {
                     .map(|error| {
                         RunError::final_write(
                             format!("Error writing output: {}", error),
-                            error,
+                            Arc::new(error),
                             OutputKind::Text,
                         )
                     })
@@ -1578,8 +1579,12 @@ fn report_envelope(
     report: Option<serde_json::Value>,
     receipt: &ArtifactReceipt,
 ) -> Result<serde_json::Value, RunError> {
-    let receipt = serde_json::to_value(receipt)
-        .map_err(|e| RunError::render(format!("Failed to serialize artifact receipt: {}", e), e))?;
+    let receipt = serde_json::to_value(receipt).map_err(|e| {
+        RunError::render(
+            format!("Failed to serialize artifact receipt: {}", e),
+            Arc::new(e),
+        )
+    })?;
     Ok(serde_json::json!({
         "report": report.unwrap_or(serde_json::Value::Null),
         "receipt": receipt,
@@ -1623,7 +1628,10 @@ impl App {
                 match standout_render::render_request_split(&request) {
                     Ok(rendered) => Some(rendered.formatted),
                     Err(error) => {
-                        return DispatchResult::Error(RunError::render(error.to_string(), error))
+                        return DispatchResult::Error(RunError::render(
+                            error.to_string(),
+                            Arc::new(error),
+                        ))
                     }
                 }
             }
@@ -1638,7 +1646,7 @@ impl App {
             if let Err(e) = write_binary_output(&artifact.bytes, &dest) {
                 return DispatchResult::Error(RunError::final_write(
                     format!("Error writing artifact: {}", e),
-                    e,
+                    Arc::new(e),
                     OutputKind::Artifact,
                 ));
             }
