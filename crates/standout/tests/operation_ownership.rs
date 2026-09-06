@@ -17,8 +17,9 @@ const CONTROL_ESCAPER_COPIES: [&str; 2] = [
 const PROPAGATION: &str = "with_globals_propagated";
 const PROPAGATION_OWNER: &str = "crates/standout/src/cli/app.rs";
 
-const SINGLE_DEFINITIONS: [(&str, &str); 4] = [
+const SINGLE_DEFINITIONS: [(&str, &str); 5] = [
     ("pub fn ansi_units", "crates/standout-bbparser/src/ansi.rs"),
+    ("pub fn closing_for", "crates/standout-bbparser/src/ansi.rs"),
     (
         "pub fn escape_style_tags",
         "crates/standout-render/src/util.rs",

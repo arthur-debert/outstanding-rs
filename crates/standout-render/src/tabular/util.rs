@@ -1,6 +1,6 @@
 use crate::width::VisibleTruncateAt;
 use crate::{AmbiguousWidth, WidthCalculator};
-use standout_bbparser::ansi::ansi_units;
+use standout_bbparser::ansi::{ansi_units, closing_for};
 use standout_bbparser::StyledText;
 use std::ops::Range;
 
@@ -497,7 +497,11 @@ fn break_long_word(
 }
 
 fn truncate_to_display_width(s: &str, max_width: usize, calculator: WidthCalculator) -> String {
-    take_prefix_to_display_width(s, max_width, calculator).0
+    let (mut prefix, consumed_bytes) = take_prefix_to_display_width(s, max_width, calculator);
+    if consumed_bytes < s.len() {
+        prefix.push_str(closing_for(&prefix));
+    }
+    prefix
 }
 
 fn take_prefix_to_display_width(
@@ -573,6 +577,23 @@ fn find_suffix_with_width(s: &str, max_width: usize, calculator: WidthCalculator
 mod tests {
     use super::*;
     use console::strip_ansi_codes;
+
+    #[test]
+    fn truncating_a_styled_value_closes_the_colour_it_cut() {
+        let styled = "\u{1b}[31mabcdefghijklmno\u{1b}[0m";
+
+        assert_eq!(truncate_end(styled, 6, "…"), "\u{1b}[31mabcde\u{1b}[0m…");
+        assert_eq!(
+            truncate_middle(styled, 8, "…"),
+            "\u{1b}[31mabc\u{1b}[0m…lmno\u{1b}[0m"
+        );
+        assert_eq!(truncate_end(styled, 20, "…"), styled);
+        assert_eq!(
+            truncate_end("\u{1b}[31mred\u{1b}[0m ok", 5, "…"),
+            "\u{1b}[31mred\u{1b}[0m …"
+        );
+        assert_eq!(truncate_end("abcdefgh", 5, "…"), "abcd…");
+    }
 
     #[test]
     fn wrapping_a_styled_value_reads_the_same_across_the_line_break() {

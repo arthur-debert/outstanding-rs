@@ -23,15 +23,12 @@
 //! terminal output.
 //!
 //! Reaching for the balance is still each cutter's decision, and not every
-//! cutter should. `StyledText::render_range` cuts to discard, so it closes what
-//! it cuts. `take_prefix_to_display_width` in `standout-render` serves two
-//! callers that want opposite things: wrapping continues the value on the next
-//! line, where a reset would break it mid-colour, while truncation discards the
-//! remainder and wants the reset. It also returns the byte length of what it
-//! produced, which the wrapping caller uses as a source offset, so appending a
-//! reset there would corrupt that arithmetic. Separating those two uses is the
-//! prerequisite for balancing in it, and until then it walks here without
-//! balancing.
+//! cutter should. `StyledText::render_range` and `standout-render`'s
+//! `truncate_to_display_width` cut to discard, so they close what they cut —
+//! the second through `closing_for`. Wrapping cuts to continue the value on the
+//! next line, where a reset would both break it mid-colour and corrupt the byte
+//! length the caller reads back as a source offset, so it takes its prefix
+//! unbalanced.
 
 use console::AnsiCodeIterator;
 
@@ -149,6 +146,16 @@ impl AnsiBalance {
     }
 }
 
+pub fn closing_for(text: &str) -> &'static str {
+    let mut balance = AnsiBalance::default();
+    for unit in ansi_units(text) {
+        if unit.is_escape {
+            balance.observe(unit.text);
+        }
+    }
+    balance.closing()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,6 +172,17 @@ mod tests {
         "escaped \\[not a tag\\] \u{1b}[31mred",
         "\u{1b}[38;2;255;0;0mtruecolor\u{1b}[0m",
     ];
+
+    #[test]
+    fn closing_for_reads_the_whole_prefix_a_cut_kept() {
+        assert_eq!(closing_for(""), "");
+        assert_eq!(closing_for("plain"), "");
+        assert_eq!(closing_for("\u{1b}[31mred"), ANSI_RESET);
+        assert_eq!(closing_for("\u{1b}[31mred\u{1b}[0m"), "");
+        assert_eq!(closing_for("\u{1b}[1mbold\u{1b}[22m"), "");
+        assert_eq!(closing_for("\u{1b}[1;31mboth\u{1b}[22m"), ANSI_RESET);
+        assert_eq!(closing_for("\u{1b}[38;2;255;0;0mtruecolor"), ANSI_RESET);
+    }
 
     #[test]
     fn units_reconstruct_the_source_at_the_offsets_they_report() {
