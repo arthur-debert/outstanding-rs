@@ -12,6 +12,13 @@ fn an_unsupported_pair_split_across_two_attributes_is_still_rejected() {
 }
 
 #[test]
+fn a_hook_key_repeated_on_one_variant_is_rejected() {
+    let cases = trybuild::TestCases::new();
+    cases.compile_fail("tests/ui/dispatch/repeated_pre_dispatch_key.rs");
+    cases.compile_fail("tests/ui/dispatch/repeated_pre_dispatch_key_split_across_attributes.rs");
+}
+
+#[test]
 fn a_name_carrying_the_path_separator_is_rejected() {
     let cases = trybuild::TestCases::new();
     cases.compile_fail("tests/ui/dispatch/name_with_dot.rs");

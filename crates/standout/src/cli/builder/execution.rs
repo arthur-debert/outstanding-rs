@@ -145,6 +145,9 @@ impl AppBuilder {
                             HookRegistrationSource::CommandConfig,
                         )?;
                     }
+                    if let Some(chains) = handler.take_input_chains() {
+                        self.register_command_input_chains(&name, chains);
+                    }
                     if let Some(questionnaire) = handler.take_questionnaire() {
                         self.questionnaire_commands
                             .insert(name.clone(), questionnaire);
@@ -328,6 +331,15 @@ impl App {
         let hooks = self.command_hooks.get(&path_str);
         let sub_matches = get_deepest_matches(&matches);
         let emits_events = self.emits_events_for(&path_str);
+
+        if let Some(chains) = self.command_input_chains.get(&path_str) {
+            if let Err(e) = chains.run_pre_dispatch(sub_matches, &mut ctx) {
+                return DispatchResult::Error(super::super::dispatch::hook_run_error(
+                    e,
+                    crate::cli::HookPhase::PreDispatch,
+                ));
+            }
+        }
 
         if let Some(hooks) = hooks {
             if let Err(e) = hooks.run_pre_dispatch(sub_matches, &mut ctx) {

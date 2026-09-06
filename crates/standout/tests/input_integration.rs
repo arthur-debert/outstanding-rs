@@ -1,5 +1,6 @@
 use clap::{Arg, Command};
 use serde_json::json;
+use standout::cli::hooks::Hooks;
 use standout::cli::FnHandler;
 use standout::cli::{App, CommandContextInput, DispatchResult, Output};
 use standout::input::{
@@ -9,7 +10,7 @@ use standout::input::{
 use standout::ColorPolicy;
 use standout::EmbeddedTemplates;
 use standout::{AmbiguousWidth, ColorMode, IconMode, TargetProperties};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 const TEMPLATES: &[(&str, &str)] = &[
     ("create", "{{ echo }}"),
@@ -636,4 +637,93 @@ fn type_mismatch_lookup_returns_descriptive_error() {
     } else {
         panic!("expected Handled, got {:?}", result);
     }
+}
+
+#[test]
+fn an_input_chain_leaves_the_pre_dispatch_registration_free() {
+    let seen = Arc::new(Mutex::new(None::<String>));
+    let recorded = Arc::clone(&seen);
+    let reported = Arc::clone(&seen);
+
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "create",
+            FnHandler::new(move |_m, ctx| {
+                let body: &String = ctx.input("body").expect("body should be resolved");
+                let hook_saw = reported.lock().unwrap().clone();
+                Ok(Output::Render(json!({
+                    "kind": hook_saw.unwrap_or_else(|| "the hook did not run".to_string()),
+                    "echo": body,
+                })))
+            }),
+            |cfg| {
+                cfg.template_name("create-3").input(
+                    "body",
+                    InputChain::<String>::new()
+                        .try_source(ArgSource::new("body"))
+                        .default("FALLBACK".to_string()),
+                )
+            },
+        )
+        .unwrap()
+        .hooks(
+            "create",
+            Hooks::new().pre_dispatch(move |_m, ctx| {
+                let body: &String = ctx
+                    .input("body")
+                    .expect("the chain resolves before the command's pre-dispatch hooks");
+                *recorded.lock().unwrap() = Some(body.clone());
+                Ok(())
+            }),
+        )
+        .build()
+        .unwrap();
+
+    let result = run_create(&app, vec!["test", "create", "--body", "hello"], None);
+    match result {
+        DispatchResult::Handled(out) => assert_eq!(out, "hello: hello"),
+        other => panic!("expected Handled, got {:?}", other),
+    }
+}
+
+#[test]
+fn two_chains_claiming_one_input_name_are_rejected() {
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "create",
+            FnHandler::new(
+                |_m, _ctx| -> standout::cli::HandlerResult<serde_json::Value> {
+                    panic!("handler must not run when an input name collides");
+                },
+            ),
+            |cfg| {
+                cfg.input(
+                    "body",
+                    InputChain::<String>::new().default("first".to_string()),
+                )
+                .input(
+                    "body",
+                    InputChain::<String>::new().default("second".to_string()),
+                )
+            },
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let result = run_create(&app, vec!["test", "create"], None);
+    let out = match result {
+        DispatchResult::Error(s) => s,
+        other => panic!("expected Error, got {:?}", other),
+    };
+    assert!(
+        out.contains("input `body` is already resolved"),
+        "got: {out}"
+    );
+    assert!(
+        out.contains("duplicate input names are not supported"),
+        "got: {out}"
+    );
 }

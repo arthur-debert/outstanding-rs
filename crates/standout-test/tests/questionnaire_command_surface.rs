@@ -401,7 +401,7 @@ fn questionnaire_rejects_existing_input_name() {
 }
 #[test]
 #[serial(questionnaire)]
-fn generic_input_rejects_questionnaire_name_after_questionnaire() {
+fn questionnaire_rejects_existing_input_name_declared_after_it() {
     let calls = Arc::new(AtomicUsize::new(0));
     let app = App::builder()
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
@@ -424,7 +424,7 @@ fn generic_input_rejects_questionnaire_name_after_questionnaire() {
         );
     let error = error_text(&result);
     assert!(
-        error.contains("duplicate input names are not supported"),
+        error.contains("reserved for command questionnaires"),
         "{error}"
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);

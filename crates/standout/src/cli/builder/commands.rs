@@ -35,6 +35,9 @@ impl AppBuilder {
                             HookRegistrationSource::CommandConfig,
                         )?;
                     }
+                    if let Some(chains) = handler.take_input_chains() {
+                        self.register_command_input_chains(&path, chains);
+                    }
                     if let Some(questionnaire) = handler.take_questionnaire() {
                         self.questionnaire_commands
                             .insert(path.clone(), questionnaire);
@@ -95,6 +98,9 @@ impl AppBuilder {
 
         if let Some(hooks) = config.hooks.take() {
             self.register_command_hooks(path, hooks, HookRegistrationSource::CommandConfig)?;
+        }
+        if let Some(chains) = config.input_chains.take() {
+            self.register_command_input_chains(path, chains);
         }
         if let Some(questionnaire) = config.questionnaire.take() {
             self.questionnaire_commands
@@ -169,8 +175,10 @@ impl AppBuilder {
             let key = (path.to_string(), *phase);
             if let Some(existing_source) = self.hook_phase_sources.get(&key) {
                 if *existing_source != source {
+                    let first = existing_source.describe(path);
+                    let second = source.describe(path);
                     return Err(SetupError::Config(format!(
-                        "command `{path}` registers {phase} hooks through both CommandConfig and AppBuilder::hooks; keep each (path, phase) in one registration path"
+                        "command `{path}` registers {phase} hooks twice: once from {first}, once from {second}; keep each (path, phase) in one registration path"
                     )));
                 }
             }
@@ -187,6 +195,16 @@ impl AppBuilder {
         };
         self.command_hooks.insert(key, hooks);
         Ok(())
+    }
+
+    /// No `HookRegistrationSource`: this registration is the framework's own and
+    /// never collides with what the application registers for the same phase.
+    pub(super) fn register_command_input_chains(&mut self, path: &str, chains: Hooks) {
+        let (key, chains) = match self.command_input_chains.remove_entry(path) {
+            Some((key, existing)) => (key, existing.append(chains)),
+            None => (path.to_string(), chains),
+        };
+        self.command_input_chains.insert(key, chains);
     }
 }
 
