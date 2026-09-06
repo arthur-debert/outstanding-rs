@@ -5,8 +5,16 @@ project_root=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
 cd "$project_root"
 # shellcheck source=scripts/tool-versions.env
 source scripts/tool-versions.env
+case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64 | Darwin-aarch64) platform=darwin.aarch64 ;;
+    Darwin-x86_64) platform=darwin.x86_64 ;;
+    Linux-arm64 | Linux-aarch64) platform=linux.aarch64 ;;
+    Linux-x86_64) platform=linux.x86_64 ;;
+    *) printf 'Unsupported platform\n' >&2; exit 1 ;;
+esac
 fingerprint=$(cat scripts/install-quality-tools scripts/install-sccache \
     .node-version scripts/tool-versions.env scripts/quality-tools/package{,-lock}.json | shasum -a 256 | awk '{print $1}')
+fingerprint="$platform-$fingerprint"
 if [[ "${1:-}" == --cache-key ]]; then
     printf '%s\n' "$fingerprint"
     exit 0
@@ -21,13 +29,6 @@ if [[ -f "$prefix/.installed" && "$(cat "$prefix/.installed")" == "$fingerprint"
     exit 0
 fi
 
-case "$(uname -s)-$(uname -m)" in
-    Darwin-arm64 | Darwin-aarch64) platform=darwin.aarch64 ;;
-    Darwin-x86_64) platform=darwin.x86_64 ;;
-    Linux-arm64 | Linux-aarch64) platform=linux.aarch64 ;;
-    Linux-x86_64) platform=linux.x86_64 ;;
-    *) printf 'Unsupported platform\n' >&2; exit 1 ;;
-esac
 work_dir=$(mktemp -d)
 trap 'rm -rf "$work_dir"' EXIT
 archive="shellcheck-v${SHELLCHECK_VERSION}.${platform}.tar.gz"
