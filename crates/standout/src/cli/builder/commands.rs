@@ -42,6 +42,12 @@ impl AppBuilder {
                         self.questionnaire_commands
                             .insert(path.clone(), questionnaire);
                     }
+                    if let Some(resolution) = handler.take_questionnaire_resolution() {
+                        self.register_command_questionnaire_resolution(&path, resolution);
+                    }
+                    if handler.without_config() {
+                        self.config_exempt_commands.insert(path.clone());
+                    }
 
                     let recipe = ErasedConfigRecipe::from_handler(handler);
 
@@ -105,6 +111,12 @@ impl AppBuilder {
         if let Some(questionnaire) = config.questionnaire.take() {
             self.questionnaire_commands
                 .insert(path.to_string(), questionnaire);
+        }
+        if let Some(resolution) = config.questionnaire_resolution.take() {
+            self.register_command_questionnaire_resolution(path, resolution);
+        }
+        if config.without_config {
+            self.config_exempt_commands.insert(path.to_string());
         }
 
         let mut recipe = StructRecipe::new(config.handler);
@@ -205,6 +217,19 @@ impl AppBuilder {
             None => (path.to_string(), chains),
         };
         self.command_input_chains.insert(key, chains);
+    }
+
+    pub(super) fn register_command_questionnaire_resolution(
+        &mut self,
+        path: &str,
+        resolution: Hooks,
+    ) {
+        let (key, resolution) = match self.command_questionnaire_resolution.remove_entry(path) {
+            Some((key, existing)) => (key, existing.append(resolution)),
+            None => (path.to_string(), resolution),
+        };
+        self.command_questionnaire_resolution
+            .insert(key, resolution);
     }
 }
 

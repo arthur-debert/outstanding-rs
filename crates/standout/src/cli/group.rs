@@ -430,9 +430,11 @@ pub struct CommandConfig<H> {
     /// the command's pre-dispatch registration free. Runs ahead of `hooks`.
     pub(crate) input_chains: Option<Hooks>,
     pub(crate) questionnaire: Option<QuestionnaireCommand>,
+    pub(crate) questionnaire_resolution: Option<Hooks>,
     pub(crate) questionnaire_settings: Rc<RefCell<QuestionnaireSettings>>,
     pub(crate) structured_output_projection: Option<StructuredOutputProjection>,
     pub(crate) pageable: bool,
+    pub(crate) without_config: bool,
 }
 
 impl<H> CommandConfig<H> {
@@ -444,9 +446,11 @@ impl<H> CommandConfig<H> {
             hooks: None,
             input_chains: None,
             questionnaire: None,
+            questionnaire_resolution: None,
             questionnaire_settings: Rc::new(RefCell::new(QuestionnaireSettings::default())),
             structured_output_projection: None,
             pageable: false,
+            without_config: false,
         }
     }
 
@@ -479,13 +483,23 @@ impl<H> CommandConfig<H> {
         self
     }
 
+    fn resolve_questionnaire<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&ArgMatches, &mut CommandContext) -> Result<(), crate::cli::hooks::HookError>
+            + 'static,
+    {
+        let resolution = self.questionnaire_resolution.take().unwrap_or_default();
+        self.questionnaire_resolution = Some(resolution.pre_dispatch(f));
+        self
+    }
+
     pub fn questionnaire<T>(mut self) -> Self
     where
         T: QuestionnaireInput + Clone + Send + Sync + 'static,
     {
         self.questionnaire = Some(QuestionnaireCommand::new::<T>());
         let settings = Rc::clone(&self.questionnaire_settings);
-        self.pre_dispatch(move |matches, ctx| {
+        self.resolve_questionnaire(move |matches, ctx| {
             questionnaire_pre_dispatch::<T>(matches, ctx, &settings.borrow())
         })
     }
@@ -497,7 +511,7 @@ impl<H> CommandConfig<H> {
     {
         self.questionnaire = Some(QuestionnaireCommand::new::<T>());
         let settings = Rc::clone(&self.questionnaire_settings);
-        self.pre_dispatch(move |matches, ctx| {
+        self.resolve_questionnaire(move |matches, ctx| {
             questionnaire_pre_dispatch_with::<T, _>(matches, ctx, &settings.borrow(), form.clone())
         })
     }
@@ -510,7 +524,7 @@ impl<H> CommandConfig<H> {
     {
         self.questionnaire = Some(QuestionnaireCommand::new::<T>());
         let settings = Rc::clone(&self.questionnaire_settings);
-        self.pre_dispatch(move |matches, ctx| {
+        self.resolve_questionnaire(move |matches, ctx| {
             questionnaire_pre_dispatch_with_review::<T, _, _>(
                 matches,
                 ctx,
@@ -519,6 +533,11 @@ impl<H> CommandConfig<H> {
                 review.clone(),
             )
         })
+    }
+
+    pub fn without_config(mut self) -> Self {
+        self.without_config = true;
+        self
     }
 
     /// Order against the `questionnaire*` calls does not matter.
@@ -725,6 +744,8 @@ pub(crate) trait ErasedCommandConfig {
     fn take_hooks(&mut self) -> Option<Hooks>;
     fn take_input_chains(&mut self) -> Option<Hooks>;
     fn take_questionnaire(&mut self) -> Option<QuestionnaireCommand>;
+    fn take_questionnaire_resolution(&mut self) -> Option<Hooks>;
+    fn without_config(&self) -> bool;
     fn emits_events(&self) -> bool {
         false
     }
@@ -794,8 +815,10 @@ impl GroupBuilder {
                     hooks: config.hooks,
                     input_chains: config.input_chains,
                     questionnaire: config.questionnaire,
+                    questionnaire_resolution: config.questionnaire_resolution,
                     structured_output_projection: config.structured_output_projection,
                     pageable: config.pageable,
+                    without_config: config.without_config,
                 }),
             },
         );
@@ -850,8 +873,10 @@ where
     hooks: Option<Hooks>,
     input_chains: Option<Hooks>,
     questionnaire: Option<QuestionnaireCommand>,
+    questionnaire_resolution: Option<Hooks>,
     structured_output_projection: Option<StructuredOutputProjection>,
     pageable: bool,
+    without_config: bool,
 }
 
 impl<F, T> ErasedCommandConfig for ClosureCommandConfig<F, T>
@@ -881,6 +906,14 @@ where
 
     fn take_questionnaire(&mut self) -> Option<QuestionnaireCommand> {
         self.questionnaire.take()
+    }
+
+    fn take_questionnaire_resolution(&mut self) -> Option<Hooks> {
+        self.questionnaire_resolution.take()
+    }
+
+    fn without_config(&self) -> bool {
+        self.without_config
     }
 
     fn pageable(&self) -> bool {
@@ -949,6 +982,14 @@ where
 
     fn take_questionnaire(&mut self) -> Option<QuestionnaireCommand> {
         None
+    }
+
+    fn take_questionnaire_resolution(&mut self) -> Option<Hooks> {
+        None
+    }
+
+    fn without_config(&self) -> bool {
+        false
     }
 
     fn register(

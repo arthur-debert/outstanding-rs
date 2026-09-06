@@ -3,14 +3,18 @@ use clapfig::{Clapfig, SearchPath};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use standout::cli::{
-    App, AppBuilder, CommandContextInput, DiagnosticKind, DispatchResult, ExitStatus, FnHandler,
-    HelpResult, MissingConfig, Output, RunErrorKind, StreamSink, TermSettings,
+    App, AppBuilder, CommandContext, CommandContextInput, DiagnosticKind, Dispatch, DispatchResult,
+    ExitStatus, FnHandler, HandlerResult, HelpResult, MissingConfig, Output, RunErrorKind,
+    StreamSink, TermSettings,
 };
 use standout::ColorPolicy;
 use standout::{EmbeddedTemplates, InputSources, Representation, SetupError, TemplateRef};
 use standout_test::{serial, TestHarness};
 
-const TEMPLATES: &[(&str, &str)] = &[("show", "index at {{ index_dir }}")];
+const TEMPLATES: &[(&str, &str)] = &[
+    ("show", "index at {{ index_dir }}"),
+    ("doctor", "config {{ state }}"),
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize, clapfig::Schema)]
 struct FixtureConfig {
@@ -50,6 +54,48 @@ fn configured_app() -> App {
 
 fn cfgapp() -> Command {
     Command::new("cfgapp").subcommand(Command::new("show"))
+}
+
+mod handlers {
+    use super::*;
+
+    pub fn doctor(_matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<serde_json::Value> {
+        let state = match ctx.config::<FixtureConfig>() {
+            Ok(_) => "resolved",
+            Err(MissingConfig { .. }) => "missing",
+        };
+        Ok(Output::Render(json!({ "state": state })))
+    }
+}
+
+#[derive(clap::Subcommand, Dispatch)]
+#[dispatch(handlers = handlers)]
+enum DoctorCommands {
+    #[dispatch(no_config, template_name = "doctor")]
+    Doctor,
+}
+
+fn doctor_app(derived: bool) -> App {
+    let builder = show_command(App::builder());
+    let builder = if derived {
+        builder.commands(DoctorCommands::dispatch_config()).unwrap()
+    } else {
+        builder
+            .command_with("doctor", FnHandler::new(handlers::doctor), |cfg| {
+                cfg.template_name("doctor").without_config()
+            })
+            .unwrap()
+    };
+    builder
+        .config(fixture_builder())
+        .term_settings(|config: &FixtureConfig| &config.term)
+        .config_override_flag("set")
+        .build()
+        .unwrap()
+}
+
+fn cfgapp_with_doctor() -> Command {
+    cfgapp().subcommand(Command::new("doctor"))
 }
 
 const BAD_FILE: &str = "index_dir = \"/from-file\"\nbogus_key = 1\n";
@@ -592,4 +638,52 @@ fn an_accessor_over_another_type_fails_build() {
         .build()
         .err();
     assert!(matches!(result, Some(SetupError::Config(_))), "{result:?}");
+}
+
+#[test]
+#[serial]
+fn a_command_declining_config_runs_when_the_file_does_not_load() {
+    for derived in [false, true] {
+        let result = TestHarness::new().fixture("cfgapp.toml", BAD_FILE).run(
+            &doctor_app(derived),
+            cfgapp_with_doctor(),
+            ["cfgapp", "doctor"],
+        );
+
+        result.assert_success();
+        result.assert_stdout_contains("config missing");
+    }
+}
+
+#[test]
+#[serial]
+fn a_command_declining_config_reads_none_from_a_file_that_loads() {
+    for derived in [false, true] {
+        let result = TestHarness::new()
+            .fixture("cfgapp.toml", "index_dir = \"/from-file\"\n")
+            .run(
+                &doctor_app(derived),
+                cfgapp_with_doctor(),
+                ["cfgapp", "doctor"],
+            );
+
+        result.assert_success();
+        result.assert_stdout_contains("config missing");
+    }
+}
+
+#[test]
+#[serial]
+fn a_sibling_of_a_declining_command_still_fails_on_the_broken_file() {
+    for derived in [false, true] {
+        let result = TestHarness::new().fixture("cfgapp.toml", BAD_FILE).run(
+            &doctor_app(derived),
+            cfgapp_with_doctor(),
+            ["cfgapp", "show"],
+        );
+
+        result.assert_exit_status(ExitStatus::FAILURE);
+        result.assert_error_kind(RunErrorKind::Config);
+        result.assert_error_contains("bogus_key");
+    }
 }
