@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-pub(crate) fn escape_control_characters(text: String) -> String {
+pub fn escape_control_characters(text: String) -> String {
     let Some(first) = text.find(needs_escape) else {
         return text;
     };

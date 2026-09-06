@@ -15,7 +15,8 @@ fn request(format: Representation) -> RenderRequest {
             "zone": "us-east1-b",
             "machine_type": "n2-standard-2",
             "status": "RUNNING",
-        }),
+        })
+        .into(),
         template: TemplateRef::Absent,
         theme: Theme::new(),
         format,

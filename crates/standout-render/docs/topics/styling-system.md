@@ -231,7 +231,8 @@ Aliases can chain: `a` → `b` → `c` → concrete style. Cycles are detected a
 
 ## Unknown Style Tags
 
-When a template references a style tag not defined in the active theme,
+When a literal template tag or an explicit formatted value names a style absent
+from the active theme,
 `standout-render` degrades it to unstyled text instead of failing the render.
 `Ansi` and `Plain` style modes treat unknown tags identically; the difference
 between them is only whether *known* tags render as ANSI (`Ansi`) or as plain
@@ -258,9 +259,9 @@ selected is unresolved in that theme and degrades the same way; the warning
 does not distinguish a never-defined tag name from one merely missing in the
 active theme.
 
-To emit a literal `[` that must not be read as a tag, escape it as `\[` (and
-`\]` for `]`). See [Literal brackets](templating.md#literal-brackets) in the
-templating topic.
+Ordinary inserted values display their brackets literally and produce no style
+warnings. In literal template source, escape brackets as `\[` and `\]`; see
+[Literal brackets](templating.md#literal-brackets).
 
 ### Unresolved-tag warning
 

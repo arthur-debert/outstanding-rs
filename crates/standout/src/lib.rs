@@ -87,3 +87,5 @@ pub use standout_input as input;
 pub use standout_macros::{Questionnaire, QuestionnaireChoices, Seekable};
 
 pub mod cli;
+
+pub use standout_render::{escape_control_characters, FormattedText, RenderData};

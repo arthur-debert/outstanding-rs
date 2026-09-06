@@ -1,11 +1,13 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::formatter::{CellValue, OwnedCellValue, TabularFormatter};
+use super::formatter::{CellValue, MarkupCellValue, OwnedCellValue, TabularFormatter};
 use super::traits::{Tabular, TabularRow};
 use super::types::{FlatDataSpec, TabularSpec};
-use super::util::display_width_with_policy;
-use crate::template::stringify;
-use crate::{AmbiguousWidth, WidthCalculator};
+use crate::template::presentation::{escape_text, fragment, markup, parse_markup};
+fn stringify(value: &minijinja::Value) -> std::borrow::Cow<'_, str> {
+    std::borrow::Cow::Owned(markup(value))
+}
+use crate::{AmbiguousWidth, FormattedText, WidthCalculator};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BorderStyle {
@@ -128,7 +130,7 @@ pub struct Table {
     formatter: TabularFormatter,
     spec: FlatDataSpec,
     requested_width: usize,
-    headers: Option<Vec<String>>,
+    headers: Option<Vec<FormattedText>>,
     border: BorderStyle,
     header_style: Option<String>,
     row_separator: bool,
@@ -179,7 +181,15 @@ impl Table {
         total_width: usize,
         policy: AmbiguousWidth,
     ) -> Self {
-        let formatter = TabularFormatter::with_ambiguous_width(&spec, total_width, policy);
+        Self::from_prepared_spec(spec.prepared_text(), total_width, policy)
+    }
+
+    pub(crate) fn from_prepared_spec(
+        spec: TabularSpec,
+        total_width: usize,
+        policy: AmbiguousWidth,
+    ) -> Self {
+        let formatter = TabularFormatter::from_prepared_spec(&spec, total_width, policy);
         Table {
             formatter,
             spec,
@@ -256,19 +266,17 @@ impl Table {
 
         self.formatter = match &self.data_widths {
             Some(measured) => {
-                let resolved = self.spec.resolve_widths_measured_with_policy(
-                    formatter_width,
-                    measured,
-                    policy,
-                );
-                TabularFormatter::from_resolved_with_width_and_policy(
+                let resolved =
+                    self.spec
+                        .resolve_prepared_widths_measured(formatter_width, measured, policy);
+                TabularFormatter::from_prepared_resolved(
                     &self.spec,
                     resolved,
                     formatter_width,
                     policy,
                 )
             }
-            None => TabularFormatter::with_ambiguous_width(&self.spec, formatter_width, policy),
+            None => TabularFormatter::from_prepared_spec(&self.spec, formatter_width, policy),
         };
         if policy == AmbiguousWidth::Wide && self.border != BorderStyle::None {
             self.formatter.limit_to_width(formatter_width);
@@ -276,13 +284,23 @@ impl Table {
     }
 
     pub fn header<S: Into<String>, I: IntoIterator<Item = S>>(mut self, headers: I) -> Self {
-        self.headers = Some(headers.into_iter().map(|s| s.into()).collect());
+        self.headers = Some(
+            headers
+                .into_iter()
+                .map(|text| FormattedText::text(text.into()))
+                .collect(),
+        );
         self
     }
 
-    pub fn header_from_columns(mut self) -> Self {
-        self.headers = Some(self.formatter.extract_headers());
+    pub fn header_formatted(mut self, headers: impl IntoIterator<Item = FormattedText>) -> Self {
+        self.headers = Some(headers.into_iter().collect());
         self
+    }
+
+    pub fn header_from_columns(self) -> Self {
+        let headers = self.formatter.extract_headers();
+        self.header(headers)
     }
 
     pub fn header_style(mut self, style: impl Into<String>) -> Self {
@@ -322,6 +340,19 @@ impl Table {
         self.wrap_data_row(&content)
     }
 
+    pub fn row_formatted(&self, values: &[FormattedText]) -> FormattedText {
+        let content = self.formatter.formatted_row_markup(values);
+        parse_markup(&self.wrap_data_row(&content))
+    }
+
+    fn row_markup<S: AsRef<str>>(&self, values: &[S]) -> String {
+        self.wrap_data_row(&self.formatter.format_markup_row(values))
+    }
+
+    fn row_markup_cells(&self, values: &[MarkupCellValue<'_>]) -> String {
+        self.wrap_data_row(&self.formatter.format_markup_row_cells(values))
+    }
+
     pub fn row_from<T: serde::Serialize>(&self, value: &T) -> String {
         let content = self.formatter.row_from(value);
         self.wrap_data_row(&content)
@@ -335,9 +366,13 @@ impl Table {
     pub fn header_row(&self) -> String {
         match &self.headers {
             Some(headers) => {
-                let content = self.formatter.format_row(headers);
+                let content = self.formatter.formatted_row_markup(headers);
 
-                let styled_content = if let Some(style) = &self.header_style {
+                let styled_content = if let Some(style) = self
+                    .header_style
+                    .as_ref()
+                    .filter(|style| standout_bbparser::is_valid_tag_name(style))
+                {
                     format!("[{}]{}[/{}]", style, content, style)
                 } else {
                     content
@@ -370,7 +405,11 @@ impl Table {
             } else {
                 odd_style
             };
-            format!("[{}]{}[/{}]", style, bordered, style)
+            if standout_bbparser::is_valid_tag_name(style) {
+                format!("[{}]{}[/{}]", style, bordered, style)
+            } else {
+                bordered
+            }
         } else {
             bordered
         }
@@ -391,26 +430,7 @@ impl Table {
         }
 
         let chars = self.border.chars();
-        let widths = self.formatter.widths();
-
-        let content_width: usize = widths.iter().sum();
-        let sep_width = display_width_with_policy(
-            &self.formatter_separator(),
-            self.formatter.ambiguous_width(),
-        );
-        let num_seps = widths.len().saturating_sub(1);
-        let total_content = if self.formatter.ambiguous_width() == AmbiguousWidth::Wide
-            && matches!(
-                self.border,
-                BorderStyle::Light
-                    | BorderStyle::Heavy
-                    | BorderStyle::Double
-                    | BorderStyle::Rounded
-            ) {
-            self.formatter.rendered_width()
-        } else {
-            content_width + (num_seps * sep_width)
-        };
+        let total_content = self.formatter.rendered_width();
 
         let (left, _joint, right) = match line_type {
             LineType::Top => (chars.top_left, chars.top_t, chars.top_right),
@@ -418,45 +438,31 @@ impl Table {
             LineType::Bottom => (chars.bottom_left, chars.bottom_t, chars.bottom_right),
         };
 
-        let mut line = String::new();
-        line.push(left);
-
-        for (i, &width) in widths.iter().enumerate() {
-            if i > 0 {
-                for _ in 0..sep_width {
-                    line.push(chars.horizontal);
-                }
-            }
-            for _ in 0..width {
-                line.push(chars.horizontal);
-            }
-        }
-
         let horizontal_width = WidthCalculator::new(self.formatter.ambiguous_width())
             .char_width(chars.horizontal)
             .max(1);
-        line = format!(
+        format!(
             "{}{}{}",
             left,
             std::iter::repeat_n(chars.horizontal, total_content / horizontal_width)
                 .collect::<String>(),
             right
-        );
-
-        line
-    }
-
-    fn formatter_separator(&self) -> String {
-        use minijinja::value::{Object, Value};
-        use std::sync::Arc;
-        let arc_formatter = Arc::new(self.formatter.clone());
-        arc_formatter
-            .get_value(&Value::from("separator"))
-            .map(|v| stringify(&v).into_owned())
-            .unwrap_or_default()
+        )
     }
 
     pub fn render<S: AsRef<str>>(&self, rows: &[Vec<S>]) -> String {
+        let rows: Vec<Vec<_>> = rows
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|value| escape_text(value.as_ref()))
+                    .collect()
+            })
+            .collect();
+        self.render_markup(&rows)
+    }
+
+    fn render_markup<S: AsRef<str>>(&self, rows: &[Vec<S>]) -> String {
         self.row_counter.store(0, Ordering::Relaxed);
         let mut output = Vec::new();
 
@@ -492,7 +498,7 @@ impl Table {
                     output.push(sep.clone());
                 }
             }
-            output.push(self.row(row));
+            output.push(self.row_markup(row));
         }
 
         let bottom = self.bottom_border();
@@ -546,7 +552,7 @@ impl minijinja::value::Object for Table {
                         Ok(iter) => iter,
                         Err(_) => {
                             let values = vec![stringify(values_arg).into_owned()];
-                            return Ok(minijinja::Value::from(self.row(&values)));
+                            return Ok(fragment(self.row_markup(&values)));
                         }
                     };
 
@@ -573,26 +579,21 @@ impl minijinja::value::Object for Table {
                         }
                     }
 
-                    let cell_values: Vec<CellValue<'_>> = owned_values
+                    let cell_values: Vec<_> = owned_values
                         .iter()
-                        .map(|ov| match ov {
-                            OwnedCellValue::Single(s) => CellValue::Single(s.as_str()),
-                            OwnedCellValue::Sub(v) => {
-                                CellValue::Sub(v.iter().map(|s| s.as_str()).collect())
-                            }
-                        })
+                        .map(OwnedCellValue::as_borrowed)
                         .collect();
 
-                    let formatted = self.row_cells(&cell_values);
-                    Ok(minijinja::Value::from(formatted))
+                    let formatted = self.row_markup_cells(&cell_values);
+                    Ok(fragment(formatted))
                 } else {
                     let values: Vec<String> = match values_arg.try_iter() {
                         Ok(iter) => iter.map(|v| stringify(&v).into_owned()).collect(),
                         Err(_) => vec![stringify(values_arg).into_owned()],
                     };
 
-                    let formatted = self.row(&values);
-                    Ok(minijinja::Value::from(formatted))
+                    let formatted = self.row_markup(&values);
+                    Ok(fragment(formatted))
                 }
             }
             "row_from" => {
@@ -603,14 +604,20 @@ impl minijinja::value::Object for Table {
                     ));
                 }
 
-                let json_value = minijinja::value::Value::from_serialize(&args[0]);
-                let formatted = self.formatter.row_from(&json_value);
-                Ok(minijinja::Value::from(self.wrap_data_row(&formatted)))
+                let value =
+                    crate::RenderData::from_template_value(args[0].clone()).map_err(|error| {
+                        minijinja::Error::new(
+                            minijinja::ErrorKind::InvalidOperation,
+                            error.to_string(),
+                        )
+                    })?;
+                let formatted = self.formatter.row_from(&value);
+                Ok(fragment(self.wrap_data_row(&formatted)))
             }
-            "header_row" => Ok(minijinja::Value::from(self.header_row())),
-            "separator_row" => Ok(minijinja::Value::from(self.separator_row())),
-            "top_border" => Ok(minijinja::Value::from(self.top_border())),
-            "bottom_border" => Ok(minijinja::Value::from(self.bottom_border())),
+            "header_row" => Ok(fragment(self.header_row())),
+            "separator_row" => Ok(fragment(self.separator_row())),
+            "top_border" => Ok(fragment(self.top_border())),
+            "bottom_border" => Ok(fragment(self.bottom_border())),
             "render_all" => {
                 if args.is_empty() {
                     return Err(minijinja::Error::new(
@@ -634,8 +641,8 @@ impl minijinja::value::Object for Table {
                     })
                     .collect();
 
-                let formatted = Table::render(self, &rows);
-                Ok(minijinja::Value::from(formatted))
+                let formatted = self.render_markup(&rows);
+                Ok(fragment(formatted))
             }
             _ => Err(minijinja::Error::new(
                 minijinja::ErrorKind::UnknownMethod,

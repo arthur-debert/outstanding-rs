@@ -64,6 +64,7 @@ fn nl_filter() {
 
 #[test]
 fn sequence_and_map_literals() {
+    let render = |template| standout_bbparser::strip_tags(&render(template));
     assert_eq!(render("{{ flags }}"), "[true, false, none]");
     assert_eq!(render("{{ [1, 'a', flag] }}"), r#"[1, "a", true]"#);
     assert_eq!(render(r#"{{ {"k": flag} }}"#), r#"{"k": true}"#);
@@ -113,7 +114,7 @@ fn width_and_padding_filters() {
 #[test]
 fn minijinja_engine_runtime_path() {
     let engine = MiniJinjaEngine::new();
-    let data = json!({ "flag": true, "off": false, "nothing": null });
+    let data = json!({ "flag": true, "off": false, "nothing": null }).into();
     assert_eq!(
         engine
             .render_template("{{ flag }} {{ off }} {{ nothing }}", &data)

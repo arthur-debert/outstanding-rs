@@ -51,7 +51,6 @@ fn run(strict: bool, subcommand: &str) -> standout_test::TestResult {
         .run(&app(strict), command(), ["app", subcommand])
 }
 
-// `bogus` in the root `about` leaves framework help, rendered before dispatch, unresolved.
 fn help_app(strict: bool) -> App {
     App::builder()
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
@@ -214,38 +213,28 @@ fn strict_failure_leaves_a_preexisting_output_file_untouched() {
 }
 
 #[test]
-fn strict_on_fails_on_an_unresolved_tag_in_the_help_page() {
+fn strict_on_preserves_literal_brackets_in_the_help_page() {
     let result = TestHarness::new().color(ColorPolicy::Never).run(
         &help_app(true),
         help_command(),
         ["app", "--help"],
     );
-    result.assert_exit_status(ExitStatus::FAILURE);
-    result.assert_error_kind(RunErrorKind::Render);
-    result.assert_stdout_eq("");
-    assert!(
-        result.error().unwrap().contains("bogus"),
-        "error should name the unresolved help tag: {:?}",
-        result.error()
-    );
+    result.assert_success();
+    result.assert_stdout_contains("[bogus]a summary the theme cannot style[/bogus]");
+    assert!(result.warnings().is_empty());
 }
 
 #[test]
-fn strict_on_fails_on_an_unresolved_tag_in_the_help_word_page() {
+fn strict_on_preserves_literal_brackets_in_the_help_word_page() {
     // The `help` word takes a different interception path than `--help`.
     let result = TestHarness::new().color(ColorPolicy::Never).run(
         &help_app(true),
         help_command(),
         ["app", "help"],
     );
-    result.assert_exit_status(ExitStatus::FAILURE);
-    result.assert_error_kind(RunErrorKind::Render);
-    result.assert_stdout_eq("");
-    assert!(
-        result.error().unwrap().contains("bogus"),
-        "error should name the unresolved help tag: {:?}",
-        result.error()
-    );
+    result.assert_success();
+    result.assert_stdout_contains("[bogus]a summary the theme cannot style[/bogus]");
+    assert!(result.warnings().is_empty());
 }
 
 #[test]
@@ -257,7 +246,9 @@ fn strict_off_still_renders_the_help_page() {
     );
     result.assert_success();
     assert!(
-        result.stdout().contains("summary"),
+        result
+            .stdout()
+            .contains("[bogus]a summary the theme cannot style[/bogus]"),
         "the help page should still render its about text: {:?}",
         result.stdout()
     );

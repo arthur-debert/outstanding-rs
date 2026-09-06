@@ -45,7 +45,7 @@ use crate::cli::builder::TemplateRef;
 use crate::cli::handler::{Artifact, Diagnostic, Extensions, Output, RunError};
 use crate::setup::SetupError;
 use crate::Representation;
-use standout_render::{escape_style_tags, ColorPolicy};
+use standout_render::ColorPolicy;
 
 pub(crate) const CONFIG_COMMAND: &str = "config";
 
@@ -163,7 +163,7 @@ pub(crate) fn config_result_output(
     let data = if output_mode.is_structured() {
         structured
     } else {
-        json!({ "line": escape_style_tags(line.into()).into_owned() })
+        json!({ "line": line })
     };
     (
         Output::Render(data),

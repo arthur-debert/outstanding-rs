@@ -41,11 +41,12 @@ pub fn apply_style_tags_with(
     }
     crate::diagnostics::resolve_tags_with(
         output,
-        resolved,
+        resolved.clone(),
         transform,
         UnknownTagBehavior::Strip,
         warnings,
-    )
+    );
+    super::presentation::render_final(&super::presentation::parse_markup(output), &resolved, style)
 }
 
 #[derive(Debug, Clone)]
@@ -76,7 +77,7 @@ pub fn validate_template<T: Serialize>(
     let styles = theme.resolve_styles(Some(color_mode));
 
     let engine = MiniJinjaEngine::new();
-    let data_value = serde_json::to_value(data)?;
+    let data_value = standout_types::RenderData::from_serialize(data)?;
     let minijinja_output = engine.render_template(template, &data_value)?;
 
     let resolved_styles = styles.to_resolved_map();
@@ -112,7 +113,7 @@ fn detect_then_render<T: Serialize>(
     overlay(&mut target);
     let request = convenience_request(
         TemplateRef::Inline(template.to_string()),
-        serde_json::to_value(data)?,
+        standout_types::RenderData::from_serialize(data)?,
         theme.clone(),
         format,
         color_policy,
@@ -165,16 +166,16 @@ pub fn render_with_vars<T, K, V, I>(
 where
     T: Serialize,
     K: AsRef<str>,
-    V: Into<serde_json::Value>,
+    V: Into<standout_types::RenderData>,
     I: IntoIterator<Item = (K, V)>,
 {
     let mut registry = ContextRegistry::new();
     for (key, value) in vars {
-        registry.add_static(key.as_ref(), minijinja::Value::from_serialize(value.into()));
+        registry.add_static(key.as_ref(), value.into());
     }
     let request = convenience_request(
         TemplateRef::Inline(template.to_string()),
-        serde_json::to_value(data)?,
+        standout_types::RenderData::from_serialize(data)?,
         theme.clone(),
         representation,
         color_policy,
@@ -206,13 +207,14 @@ pub fn render_auto_with_spec<T: Serialize>(
 ) -> Result<String, RenderError> {
     if representation == Representation::Csv {
         if let Some(s) = spec {
-            let value = serde_json::to_value(data)?;
+            let value = standout_types::RenderData::from_serialize(data)?;
             let headers = s.extract_header();
             let rows: Vec<Vec<String>> = match value {
-                serde_json::Value::Array(items) => {
-                    items.iter().map(|item| s.extract_row(item)).collect()
-                }
-                _ => vec![s.extract_row(&value)],
+                standout_types::RenderData::Array(items) => items
+                    .iter()
+                    .map(|item| s.extract_row(&item.to_json()))
+                    .collect(),
+                _ => vec![s.extract_row(&value.to_json())],
             };
             let mut wtr = csv::Writer::from_writer(Vec::new());
             wtr.write_record(&headers)?;
@@ -248,7 +250,7 @@ pub fn render_with_context<T: Serialize>(
     };
     let mut request = convenience_request(
         template_ref,
-        serde_json::to_value(data)?,
+        standout_types::RenderData::from_serialize(data)?,
         theme.clone(),
         representation,
         color_policy,
@@ -284,13 +286,19 @@ pub fn render_auto_with_context<T: Serialize>(
     )
 }
 
-fn build_icon_context(theme: &Theme, icon_mode: IconMode) -> HashMap<String, serde_json::Value> {
+fn build_icon_context(
+    theme: &Theme,
+    icon_mode: IconMode,
+) -> HashMap<String, standout_types::RenderData> {
     if theme.icons().is_empty() {
         return HashMap::new();
     }
     let resolved = theme.resolve_icons(icon_mode);
     let mut ctx = HashMap::new();
-    ctx.insert("icons".to_string(), serde_json::to_value(resolved).unwrap());
+    ctx.insert(
+        "icons".to_string(),
+        standout_types::RenderData::from_serialize(resolved).unwrap(),
+    );
     ctx
 }
 
@@ -298,18 +306,16 @@ fn build_combined_context<T: Serialize>(
     data: &T,
     context_registry: &ContextRegistry,
     render_context: &RenderContext,
-    icon_context: HashMap<String, serde_json::Value>,
-) -> Result<HashMap<String, serde_json::Value>, RenderError> {
+    icon_context: HashMap<String, standout_types::RenderData>,
+) -> Result<HashMap<String, standout_types::RenderData>, RenderError> {
     let context_values = context_registry.resolve(render_context);
 
-    let data_value = serde_json::to_value(data)?;
+    let data_value = standout_types::RenderData::from_serialize(data)?;
 
-    let mut combined: HashMap<String, serde_json::Value> = icon_context;
+    let mut combined: HashMap<String, standout_types::RenderData> = icon_context;
 
     for (key, value) in context_values {
-        let json_val =
-            serde_json::to_value(value).map_err(|e| RenderError::ContextError(e.to_string()))?;
-        combined.insert(key, json_val);
+        combined.insert(key, value);
     }
 
     if let Some(obj) = data_value.as_object() {
@@ -324,7 +330,7 @@ fn build_combined_context<T: Serialize>(
 pub fn render_auto_with_engine(
     engine: &dyn super::TemplateEngine,
     template: &str,
-    data: &serde_json::Value,
+    data: &standout_types::RenderData,
     theme: &Theme,
     style: StyleMode,
     context_registry: &ContextRegistry,
@@ -345,7 +351,7 @@ pub fn render_auto_with_engine(
 pub fn render_auto_with_engine_split(
     engine: &dyn super::TemplateEngine,
     template: &str,
-    data: &serde_json::Value,
+    data: &standout_types::RenderData,
     theme: &Theme,
     style: StyleMode,
     context_registry: &ContextRegistry,
@@ -368,7 +374,7 @@ pub fn render_auto_with_engine_split(
 pub fn render_auto_with_engine_split_inline(
     engine: &dyn super::TemplateEngine,
     template: &str,
-    data: &serde_json::Value,
+    data: &standout_types::RenderData,
     theme: &Theme,
     style: StyleMode,
     context_registry: &ContextRegistry,
@@ -392,7 +398,7 @@ pub fn render_auto_with_engine_split_inline(
 pub(crate) fn render_engine_split_inline(
     engine: &dyn super::TemplateEngine,
     template: &str,
-    data: &serde_json::Value,
+    data: &standout_types::RenderData,
     theme: &Theme,
     style: StyleMode,
     context_registry: &ContextRegistry,
@@ -416,7 +422,7 @@ pub(crate) fn render_engine_split_inline(
 pub fn render_auto_with_engine_split_named(
     engine: &dyn super::TemplateEngine,
     name: &str,
-    data: &serde_json::Value,
+    data: &standout_types::RenderData,
     theme: &Theme,
     style: StyleMode,
     context_registry: &ContextRegistry,
@@ -440,7 +446,7 @@ pub fn render_auto_with_engine_split_named(
 pub(crate) fn render_engine_split_named(
     engine: &dyn super::TemplateEngine,
     name: &str,
-    data: &serde_json::Value,
+    data: &standout_types::RenderData,
     theme: &Theme,
     style: StyleMode,
     context_registry: &ContextRegistry,
@@ -471,7 +477,7 @@ enum TemplateIdentity<'a> {
 fn render_auto_with_engine_split_kind(
     engine: &dyn super::TemplateEngine,
     template: TemplateIdentity<'_>,
-    data: &serde_json::Value,
+    data: &standout_types::RenderData,
     theme: &Theme,
     style: StyleMode,
     context_registry: &ContextRegistry,
@@ -490,7 +496,7 @@ fn render_auto_with_engine_split_kind(
         let context_map =
             build_combined_context(data, context_registry, render_context, icon_context)?;
 
-        let combined_value = serde_json::Value::Object(context_map.into_iter().collect());
+        let combined_value = standout_types::RenderData::Object(context_map.into_iter().collect());
 
         let raw_output = match template {
             TemplateIdentity::Auto(template) if engine.has_template(template) => engine
@@ -533,11 +539,10 @@ fn render_auto_with_engine_split_kind(
 mod tests {
     use super::*;
     use crate::tabular::{Column, FlatDataSpec, Width};
+    use crate::test_data as json;
     use crate::{ColorPolicy, Theme};
     use console::Style;
-    use minijinja::Value;
     use serde::Serialize;
-    use serde_json::json;
 
     #[derive(Serialize)]
     struct SimpleData {
@@ -833,7 +838,7 @@ mod tests {
 
     #[test]
     fn test_render_auto_json_mode() {
-        use serde_json::json;
+        use crate::test_data as json;
 
         let theme = Theme::new();
         let data = json!({"name": "test", "count": 42});
@@ -853,7 +858,7 @@ mod tests {
 
     #[test]
     fn test_render_auto_text_mode_uses_template() {
-        use serde_json::json;
+        use crate::test_data as json;
 
         let theme = Theme::new();
         let data = json!({"name": "test"});
@@ -872,7 +877,7 @@ mod tests {
 
     #[test]
     fn test_render_auto_term_mode_uses_template() {
-        use serde_json::json;
+        use crate::test_data as json;
 
         let theme = Theme::new().add("bold", Style::new().bold().force_styling(true));
         let data = json!({"name": "test"});
@@ -926,7 +931,7 @@ mod tests {
 
         let output = render_with_output(
             r#"[alias]text[/alias]"#,
-            &serde_json::json!({}),
+            &crate::test_data!({}),
             &theme,
             Representation::Human,
             ColorPolicy::Never,
@@ -945,7 +950,7 @@ mod tests {
 
         let output = render_with_output(
             r#"[timestamp]12:00[/timestamp]"#,
-            &serde_json::json!({}),
+            &crate::test_data!({}),
             &theme,
             Representation::Human,
             ColorPolicy::Never,
@@ -961,7 +966,7 @@ mod tests {
 
         let result = render_with_output(
             r#"[orphan]text[/orphan]"#,
-            &serde_json::json!({}),
+            &crate::test_data!({}),
             &theme,
             Representation::Human,
             ColorPolicy::Never,
@@ -979,7 +984,7 @@ mod tests {
 
         let result = render_with_output(
             r#"[a]text[/a]"#,
-            &serde_json::json!({}),
+            &crate::test_data!({}),
             &theme,
             Representation::Human,
             ColorPolicy::Never,
@@ -1006,7 +1011,7 @@ mod tests {
 
         let output = render_with_output(
             r#"[timestamp]{{ time }}[/timestamp] - [title]{{ name }}[/title]"#,
-            &serde_json::json!({"time": "12:00", "name": "Report"}),
+            &crate::test_data!({"time": "12:00", "name": "Report"}),
             &theme,
             Representation::Human,
             ColorPolicy::Never,
@@ -1018,7 +1023,7 @@ mod tests {
 
     #[test]
     fn test_render_auto_yaml_mode() {
-        use serde_json::json;
+        use crate::test_data as json;
 
         let theme = Theme::new();
         let data = json!({"name": "test", "count": 42});
@@ -1038,7 +1043,7 @@ mod tests {
 
     #[test]
     fn test_render_auto_csv_mode_flat_records() {
-        use serde_json::json;
+        use crate::test_data as json;
 
         let theme = Theme::new();
         let data = json!([
@@ -1060,7 +1065,7 @@ mod tests {
 
     #[test]
     fn test_render_auto_csv_mode_refuses_a_nested_value() {
-        use serde_json::json;
+        use crate::test_data as json;
 
         let theme = Theme::new();
         let data = json!([
@@ -1128,10 +1133,10 @@ mod tests {
         let data = Data {
             name: "Alice".into(),
         };
-        let json_data = serde_json::to_value(&data).unwrap();
+        let json_data = standout_types::RenderData::from_serialize(&data).unwrap();
 
         let mut registry = ContextRegistry::new();
-        registry.add_static("version", Value::from("1.0.0"));
+        registry.add_static("version", standout_types::RenderData::from("1.0.0"));
 
         let render_ctx = RenderContext::new(
             Representation::Human,
@@ -1164,7 +1169,7 @@ mod tests {
         let data = json!({"name": "Ada"});
         let mut registry = ContextRegistry::new();
         registry.add_provider("label", |ctx: &RenderContext| {
-            Value::from(ctx.get_extra("label").unwrap_or("missing"))
+            standout_types::RenderData::from(ctx.get_extra("label").unwrap_or("missing"))
         });
         let render_ctx = RenderContext::new(
             Representation::Human,
@@ -1201,11 +1206,11 @@ mod tests {
         let data = Data {
             message: "Hello".into(),
         };
-        let json_data = serde_json::to_value(&data).unwrap();
+        let json_data = standout_types::RenderData::from_serialize(&data).unwrap();
 
         let mut registry = ContextRegistry::new();
         registry.add_provider("terminal_width", |ctx: &RenderContext| {
-            Value::from(ctx.terminal_width.unwrap_or(80))
+            standout_types::RenderData::from(ctx.terminal_width.unwrap_or(80))
         });
 
         let render_ctx = RenderContext::new(
@@ -1244,10 +1249,10 @@ mod tests {
         let data = Data {
             value: "from_data".into(),
         };
-        let json_data = serde_json::to_value(&data).unwrap();
+        let json_data = standout_types::RenderData::from_serialize(&data).unwrap();
 
         let mut registry = ContextRegistry::new();
-        registry.add_static("value", Value::from("from_context"));
+        registry.add_static("value", standout_types::RenderData::from("from_context"));
 
         let render_ctx = RenderContext::new(
             Representation::Human,
@@ -1285,7 +1290,7 @@ mod tests {
         let data = Data {
             name: "Test".into(),
         };
-        let json_data = serde_json::to_value(&data).unwrap();
+        let json_data = standout_types::RenderData::from_serialize(&data).unwrap();
 
         let registry = ContextRegistry::new();
         let render_ctx = RenderContext::new(
@@ -1322,10 +1327,10 @@ mod tests {
 
         let theme = Theme::new();
         let data = Data { count: 42 };
-        let json_data = serde_json::to_value(&data).unwrap();
+        let json_data = standout_types::RenderData::from_serialize(&data).unwrap();
 
         let mut registry = ContextRegistry::new();
-        registry.add_static("extra", Value::from("ignored"));
+        registry.add_static("extra", standout_types::RenderData::from("ignored"));
 
         let render_ctx = RenderContext::new(
             Representation::Json,
@@ -1362,10 +1367,10 @@ mod tests {
 
         let theme = Theme::new();
         let data = Data { count: 42 };
-        let json_data = serde_json::to_value(&data).unwrap();
+        let json_data = standout_types::RenderData::from_serialize(&data).unwrap();
 
         let mut registry = ContextRegistry::new();
-        registry.add_static("label", Value::from("Items"));
+        registry.add_static("label", standout_types::RenderData::from("Items"));
 
         let render_ctx = RenderContext::new(
             Representation::Human,
@@ -1399,11 +1404,11 @@ mod tests {
 
         let theme = Theme::new();
         let data = Data {};
-        let json_data = serde_json::to_value(&data).unwrap();
+        let json_data = standout_types::RenderData::from_serialize(&data).unwrap();
 
         let mut registry = ContextRegistry::new();
         registry.add_provider("mode", |ctx: &RenderContext| {
-            Value::from(format!("{:?}", ctx.representation))
+            standout_types::RenderData::from(format!("{:?}", ctx.representation))
         });
 
         let render_ctx = RenderContext::new(
@@ -1447,10 +1452,10 @@ mod tests {
         let data = Data {
             items: vec![Item { name: "one".into() }, Item { name: "two".into() }],
         };
-        let json_data = serde_json::to_value(&data).unwrap();
+        let json_data = standout_types::RenderData::from_serialize(&data).unwrap();
 
         let mut registry = ContextRegistry::new();
-        registry.add_static("prefix", Value::from("- "));
+        registry.add_static("prefix", standout_types::RenderData::from("- "));
 
         let render_ctx = RenderContext::new(
             Representation::Human,
@@ -1872,7 +1877,7 @@ mod tests {
     #[test]
     fn test_render_auto_with_context_yaml_mode() {
         use crate::context::{ContextRegistry, RenderContext};
-        use serde_json::json;
+        use crate::test_data as json;
 
         let theme = Theme::new();
         let data = json!({"name": "test", "count": 42});
@@ -1915,7 +1920,7 @@ mod tests {
             .add_icon("arrow", IconDefinition::new(">>"));
 
         let request = crate::RenderRequest {
-            data: serde_json::to_value(SimpleData {
+            data: standout_types::RenderData::from_serialize(SimpleData {
                 message: "done".into(),
             })
             .unwrap(),
@@ -1956,7 +1961,7 @@ mod tests {
         );
 
         let request = crate::RenderRequest {
-            data: serde_json::to_value(SimpleData {
+            data: standout_types::RenderData::from_serialize(SimpleData {
                 message: "done".into(),
             })
             .unwrap(),
@@ -2064,9 +2069,9 @@ mod tests {
         };
 
         let mut registry = ContextRegistry::new();
-        registry.add_static("extra", Value::from("ctx"));
+        registry.add_static("extra", standout_types::RenderData::from("ctx"));
 
-        let json_data = serde_json::to_value(&data).unwrap();
+        let json_data = standout_types::RenderData::from_serialize(&data).unwrap();
         let render_ctx = RenderContext::new(
             Representation::Human,
             StyleMode::Plain,

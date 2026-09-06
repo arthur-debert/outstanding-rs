@@ -13,8 +13,10 @@ use super::util::{
     truncate_visible_end_with_policy, truncate_visible_middle_with_policy,
     truncate_visible_start_with_policy, visible_width_with_policy,
 };
-use crate::template::stringify;
-use crate::util::escape_style_tags;
+use crate::template::presentation::{fragment, markup, parse_markup};
+fn stringify(value: &minijinja::Value) -> std::borrow::Cow<'_, str> {
+    std::borrow::Cow::Owned(markup(value))
+}
 use crate::width::RenderWidthSource;
 
 const DEFAULT_TABULAR_WIDTH: usize = 80;
@@ -49,7 +51,7 @@ pub(crate) fn register_tabular_filters_with_source(
         move |value: Value,
               width_val: Value,
               kwargs: minijinja::value::Kwargs|
-              -> Result<String, minijinja::Error> {
+              -> Result<Value, minijinja::Error> {
             let text = stringify(&value).into_owned();
 
             let width = if let Some(w) = width_val.as_i64() {
@@ -84,51 +86,57 @@ pub(crate) fn register_tabular_filters_with_source(
                 .unwrap_or_else(|| "…".to_string());
 
             kwargs.assert_all_used()?;
+            let ellipsis = crate::template::presentation::escape_text(&ellipsis);
 
-            Ok(format_col_with_policy(
+            Ok(fragment(format_col_with_policy(
                 &text,
                 width,
                 &align,
                 &truncate,
                 &ellipsis,
                 col_policy.ambiguous_width(),
-            ))
+            )))
         },
     );
 
     let pad_left_policy = widths.clone();
-    env.add_filter("pad_left", move |value: Value, width: usize| -> String {
+    env.add_filter("pad_left", move |value: Value, width: usize| -> Value {
         let text = stringify(&value).into_owned();
         let visible_width = visible_width_with_policy(&text, pad_left_policy.ambiguous_width());
         if visible_width >= width {
-            text
+            fragment(text)
         } else {
-            format!("{}{}", " ".repeat(width - visible_width), text)
+            fragment(format!("{}{}", " ".repeat(width - visible_width), text))
         }
     });
 
     let pad_right_policy = widths.clone();
-    env.add_filter("pad_right", move |value: Value, width: usize| -> String {
+    env.add_filter("pad_right", move |value: Value, width: usize| -> Value {
         let text = stringify(&value).into_owned();
         let visible_width = visible_width_with_policy(&text, pad_right_policy.ambiguous_width());
         if visible_width >= width {
-            text
+            fragment(text)
         } else {
-            format!("{}{}", text, " ".repeat(width - visible_width))
+            fragment(format!("{}{}", text, " ".repeat(width - visible_width)))
         }
     });
 
     let pad_center_policy = widths.clone();
-    env.add_filter("pad_center", move |value: Value, width: usize| -> String {
+    env.add_filter("pad_center", move |value: Value, width: usize| -> Value {
         let text = stringify(&value).into_owned();
         let visible_width = visible_width_with_policy(&text, pad_center_policy.ambiguous_width());
         if visible_width >= width {
-            text
+            fragment(text)
         } else {
             let padding = width - visible_width;
             let left_pad = padding / 2;
             let right_pad = padding - left_pad;
-            format!("{}{}{}", " ".repeat(left_pad), text, " ".repeat(right_pad))
+            fragment(format!(
+                "{}{}{}",
+                " ".repeat(left_pad),
+                text,
+                " ".repeat(right_pad)
+            ))
         }
     });
 
@@ -139,12 +147,14 @@ pub(crate) fn register_tabular_filters_with_source(
               width: usize,
               position: Option<String>,
               ellipsis: Option<String>|
-              -> String {
+              -> Value {
             let text = stringify(&value).into_owned();
             let pos = position.as_deref().unwrap_or("end");
-            let ell = ellipsis.as_deref().unwrap_or("…");
+            let ellipsis =
+                crate::template::presentation::escape_text(ellipsis.as_deref().unwrap_or("…"));
+            let ell = &ellipsis;
 
-            match pos {
+            fragment(match pos {
                 "start" => truncate_visible_start_with_policy(
                     &text,
                     width,
@@ -163,7 +173,7 @@ pub(crate) fn register_tabular_filters_with_source(
                     ell,
                     truncate_policy.ambiguous_width(),
                 ),
-            }
+            })
         },
     );
 
@@ -174,10 +184,10 @@ pub(crate) fn register_tabular_filters_with_source(
 
     env.add_filter(
         "style_as",
-        |value: Value, style: String| -> Result<String, minijinja::Error> {
-            let text = escape_style_tags(stringify(&value));
+        |value: Value, style: String| -> Result<Value, minijinja::Error> {
+            let text = stringify(&value);
             if style.is_empty() {
-                return Ok(text.into_owned());
+                return Ok(fragment(text.into_owned()));
             }
             if !standout_bbparser::is_valid_tag_name(&style) {
                 return Err(minijinja::Error::new(
@@ -189,7 +199,7 @@ pub(crate) fn register_tabular_filters_with_source(
                     ),
                 ));
             }
-            Ok(format!("[{}]{}[/{}]", style, text, style))
+            Ok(fragment(format!("[{}]{}[/{}]", style, text, style)))
         },
     );
 
@@ -217,7 +227,7 @@ fn register_table_functions(env: &mut Environment<'static>, widths: RenderWidthS
                 builder = builder.column(col);
             }
             if !separator.is_empty() {
-                builder = builder.separator(&separator);
+                builder = builder.separator(crate::template::presentation::escape_text(&separator));
             }
 
             let spec = builder.build();
@@ -225,12 +235,10 @@ fn register_table_functions(env: &mut Environment<'static>, widths: RenderWidthS
             let formatter = match rows {
                 Some(rows) => {
                     let data = measurable_rows(&spec.columns, &rows, "tabular")?;
-                    let resolved = spec.resolve_widths_from_data_with_policy(width, &data, policy);
-                    TabularFormatter::from_resolved_with_width_and_policy(
-                        &spec, resolved, width, policy,
-                    )
+                    let resolved = spec.resolve_prepared_widths_from_data(width, &data, policy);
+                    TabularFormatter::from_prepared_resolved(&spec, resolved, width, policy)
                 }
-                None => TabularFormatter::with_ambiguous_width(&spec, width, policy),
+                None => TabularFormatter::from_prepared_spec(&spec, width, policy),
             };
             Ok(Value::from_object(formatter))
         },
@@ -261,12 +269,12 @@ fn register_table_functions(env: &mut Environment<'static>, widths: RenderWidthS
                 builder = builder.column(col);
             }
             if !separator.is_empty() {
-                builder = builder.separator(&separator);
+                builder = builder.separator(crate::template::presentation::escape_text(&separator));
             }
 
             let spec = builder.build();
             let columns = spec.columns.clone();
-            let mut table = Table::with_ambiguous_width(
+            let mut table = Table::from_prepared_spec(
                 spec,
                 width,
                 table_widths.ambiguous_width(),
@@ -286,7 +294,7 @@ fn register_table_functions(env: &mut Environment<'static>, widths: RenderWidthS
                     .map(|v| stringify(v).into_owned())
                     .collect();
                 headers = Some(parsed.clone());
-                table = table.header(parsed);
+                table = table.header_formatted(parsed.iter().map(|text| parse_markup(text)));
             }
 
             if let Some(rows) = rows {
@@ -298,6 +306,7 @@ fn register_table_functions(env: &mut Environment<'static>, widths: RenderWidthS
             }
 
             if let Some(style) = header_style {
+                validate_style(&style)?;
                 table = table.header_style(style);
             }
 
@@ -315,12 +324,16 @@ fn register_table_functions(env: &mut Environment<'static>, widths: RenderWidthS
                             let tint = rs.to_string();
                             let even = format!("table_row_even_{}", tint);
                             let odd = format!("table_row_odd_{}", tint);
+                            validate_style(&even)?;
+                            validate_style(&odd)?;
                             table = table.row_styles(even, odd);
                         }
                         _ => {
                             if let Ok(iter) = rs.try_iter() {
                                 let names: Vec<String> = iter.map(|v| v.to_string()).collect();
                                 if names.len() == 2 {
+                                    validate_style(&names[0])?;
+                                    validate_style(&names[1])?;
                                     table = table.row_styles(&names[0], &names[1]);
                                 } else {
                                     return Err(minijinja::Error::new(
@@ -401,6 +414,16 @@ fn measurable_row(columns: &[Column], cells: impl IntoIterator<Item = String>) -
         .collect()
 }
 
+fn validate_style(name: &str) -> Result<(), minijinja::Error> {
+    if name.is_empty() || standout_bbparser::is_valid_tag_name(name) {
+        return Ok(());
+    }
+    Err(minijinja::Error::new(
+        minijinja::ErrorKind::InvalidOperation,
+        format!("invalid style name: {name:?}"),
+    ))
+}
+
 fn parse_columns(columns: &Value) -> Result<Vec<Column>, minijinja::Error> {
     let columns = columns
         .get_attr("columns")
@@ -460,6 +483,7 @@ fn parse_column(value: &Value) -> Result<Column, minijinja::Error> {
 
     if let Ok(style_val) = value.get_attr("style") {
         if !style_val.is_none() && !style_val.is_undefined() {
+            validate_style(&style_val.to_string())?;
             col = col.style(style_val.to_string());
         }
     }
@@ -598,6 +622,7 @@ fn parse_sub_column(value: &Value) -> Result<SubColumn, minijinja::Error> {
 
     if let Ok(style_val) = value.get_attr("style") {
         if !style_val.is_none() && !style_val.is_undefined() {
+            validate_style(&style_val.to_string())?;
             sub_col = sub_col.style(style_val.to_string());
         }
     }
@@ -1100,7 +1125,9 @@ mod tests {
             "{{ value | style_as('row') | truncate_at(8, 'end', '') }}",
         )
         .unwrap();
-        let value = "\u{1b}[31m[boom] alpha\u{1b}[0m";
+        let value = Value::from(crate::FormattedText::from_ansi_sgr(
+            "\u{1b}[31m[boom] alpha\u{1b}[0m",
+        ));
 
         let width = env
             .get_template("measure")
@@ -1115,8 +1142,15 @@ mod tests {
             .render(context!(value))
             .unwrap();
         assert!(
-            truncated.contains("\u{1b}[31m"),
-            "the sequence is not escaped: {truncated:?}"
+            crate::FormattedText::from_ansi_sgr(&truncated)
+                .nodes()
+                .iter()
+                .any(|node| {
+                    matches!(node, standout_types::PresentationNode::Styled {
+                    style: standout_types::PresentationStyle::Sgr(style), ..
+                } if style.foreground == Some(standout_types::SgrColor::Indexed(1)))
+                }),
+            "truncation preserves the imported red style: {truncated:?}"
         );
         let sequences_are_whole = |text: &str| {
             standout_bbparser::ansi::ansi_units(text)
@@ -1150,7 +1184,10 @@ mod tests {
             .unwrap()
             .render(context!(value => "\u{1b}[31malpha\u{1b}[0m"))
             .unwrap();
-        assert_eq!(ansi_only, "[row]\u{1b}[31malpha\u{1b}[0m[/row]");
+        assert_eq!(
+            standout_bbparser::strip_tags(&ansi_only),
+            r"\u{1b}[31malpha\u{1b}[0m"
+        );
     }
 
     #[test]
@@ -1225,7 +1262,7 @@ mod tests {
         let result = env
             .get_template("test")
             .unwrap()
-            .render(context!(value => "[additions]+32[/additions]/[deletions]-0[/deletions]/32"))
+            .render(context!(value => Value::from(crate::FormattedText::text("+32").styled("additions").unwrap().append("/").append(crate::FormattedText::text("-0").styled("deletions").unwrap()).append("/32"))))
             .unwrap();
         assert!(result.contains("+32"));
         assert!(result.contains("-0"));
@@ -1244,7 +1281,7 @@ mod tests {
         let result = env
             .get_template("test")
             .unwrap()
-            .render(context!(value => "[bold]hi[/bold]"))
+            .render(context!(value => Value::from(crate::FormattedText::text("hi").styled("bold").unwrap())))
             .unwrap();
         assert!(result.contains("[bold]hi[/bold]"));
         assert_eq!(result, "[bold]hi[/bold]        ");
@@ -1262,7 +1299,7 @@ mod tests {
         let result = env
             .get_template("test")
             .unwrap()
-            .render(context!(value => "[bold]hi[/bold]"))
+            .render(context!(value => Value::from(crate::FormattedText::text("hi").styled("bold").unwrap())))
             .unwrap();
         assert!(result.starts_with("        "));
         assert!(result.contains("[bold]hi[/bold]"));
@@ -1276,7 +1313,7 @@ mod tests {
         let result = env
             .get_template("test")
             .unwrap()
-            .render(context!(value => "[bold]hello world[/bold]"))
+            .render(context!(value => Value::from(crate::FormattedText::text("hello world").styled("bold").unwrap())))
             .unwrap();
         assert_eq!(
             visible_width_with_policy(&result, crate::AmbiguousWidth::Narrow),
@@ -1292,7 +1329,7 @@ mod tests {
         let result = env
             .get_template("test")
             .unwrap()
-            .render(context!(value => "[match]日本語[/match]"))
+            .render(context!(value => Value::from(crate::FormattedText::text("日本語").styled("match").unwrap())))
             .unwrap();
 
         assert_eq!(result, "[match]日[/match]… ");
@@ -1309,7 +1346,7 @@ mod tests {
         let result = env
             .get_template("test")
             .unwrap()
-            .render(context!(value => "[bold]hello[/bold]"))
+            .render(context!(value => Value::from(crate::FormattedText::text("hello").styled("bold").unwrap())))
             .unwrap();
         assert_eq!(result, "[bold]hello[/bold]");
     }
@@ -1334,7 +1371,7 @@ mod tests {
         let result = env
             .get_template("test")
             .unwrap()
-            .render(context!(value => "[bold]hello[/bold]"))
+            .render(context!(value => Value::from(crate::FormattedText::text("hello").styled("bold").unwrap())))
             .unwrap();
         assert_eq!(result, "5");
     }
@@ -1347,7 +1384,7 @@ mod tests {
         let result = env
             .get_template("test")
             .unwrap()
-            .render(context!(value => "[bold]hi[/bold]"))
+            .render(context!(value => Value::from(crate::FormattedText::text("hi").styled("bold").unwrap())))
             .unwrap();
         assert!(result.starts_with("      "));
         assert!(result.contains("[bold]hi[/bold]"));
@@ -1361,7 +1398,7 @@ mod tests {
         let result = env
             .get_template("test")
             .unwrap()
-            .render(context!(value => "[bold]hi[/bold]"))
+            .render(context!(value => Value::from(crate::FormattedText::text("hi").styled("bold").unwrap())))
             .unwrap();
         assert!(result.contains("[bold]hi[/bold]"));
         assert_eq!(
@@ -1378,7 +1415,7 @@ mod tests {
         let result = env
             .get_template("test")
             .unwrap()
-            .render(context!(value => "[bold]hi[/bold]"))
+            .render(context!(value => Value::from(crate::FormattedText::text("hi").styled("bold").unwrap())))
             .unwrap();
         assert!(result.contains("[bold]hi[/bold]"));
         assert_eq!(
@@ -1395,7 +1432,7 @@ mod tests {
         let result = env
             .get_template("test")
             .unwrap()
-            .render(context!(value => "[bold]hello world[/bold]"))
+            .render(context!(value => Value::from(crate::FormattedText::text("hello world").styled("bold").unwrap())))
             .unwrap();
         assert_eq!(
             visible_width_with_policy(&result, crate::AmbiguousWidth::Narrow),
@@ -1439,7 +1476,7 @@ mod tests {
         let widths = render_with_rows(
             r#"{% set fmt = tabular([{"width": {"min": 0}}, {"width": {"min": 0}}, {"width": {"min": 0}}], separator="  ", width=60) %}{{ fmt.widths }}"#,
         );
-        assert_eq!(widths, "[0, 0, 56]");
+        assert_eq!(standout_bbparser::strip_tags(&widths), "[0, 0, 56]");
     }
 
     #[test]
@@ -1447,7 +1484,7 @@ mod tests {
         let widths = render_with_rows(
             r#"{% set fmt = tabular([{"width": {"min": 0}}, {"width": {"min": 0}}, {"width": {"min": 0}}], separator="  ", width=60, rows=rows) %}{{ fmt.widths }}"#,
         );
-        assert_eq!(widths, "[3, 6, 47]");
+        assert_eq!(standout_bbparser::strip_tags(&widths), "[3, 6, 47]");
     }
 
     #[test]
@@ -1468,7 +1505,7 @@ mod tests {
         let widths = render_with_rows(
             r#"{% set fmt = tabular([{"width": {"min": 0, "max": 2}}, {"width": {"min": 0}}, {"width": "fill"}], separator="  ", width=60, rows=rows) %}{{ fmt.widths }}"#,
         );
-        assert_eq!(widths, "[2, 6, 48]");
+        assert_eq!(standout_bbparser::strip_tags(&widths), "[2, 6, 48]");
     }
 
     #[test]
@@ -1476,7 +1513,7 @@ mod tests {
         let widths = render_with_rows(
             r#"{% set fmt = tabular([{"width": {"min": 4}}, {"width": {"min": 0}, "sub_columns": {"columns": [{"width": "fill"}, {"width": 6}]}}], separator="  ", width=40, rows=rows) %}{{ fmt.widths }}"#,
         );
-        assert_eq!(widths, "[4, 34]");
+        assert_eq!(standout_bbparser::strip_tags(&widths), "[4, 34]");
     }
 
     #[test]
@@ -1511,7 +1548,7 @@ mod tests {
             .render(context!(rows => vec![vec!["#12"], vec!["#7"]]))
             .unwrap();
         let (widths, row) = rendered.split_once('|').unwrap();
-        assert_eq!(widths, "[3, 7, 46]");
+        assert_eq!(standout_bbparser::strip_tags(widths), "[3, 7, 46]");
         assert!(
             row.contains("unknown"),
             "the omitted cell renders `null_repr` in full: {row:?}"
@@ -2012,6 +2049,7 @@ mod tests {
             .unwrap()
             .render(context!())
             .unwrap();
+        let result = standout_bbparser::strip_tags(&result);
         assert!(result.contains("Gallery Navigation"));
         assert!(result.contains("[feature]"));
         assert!(result.contains("1."));
@@ -2114,6 +2152,7 @@ mod tests {
             .unwrap()
             .render(context!())
             .unwrap();
+        let result = standout_bbparser::strip_tags(&result);
         assert!(result.starts_with('│'));
         assert!(result.ends_with('│'));
         assert!(result.contains("My Title"));

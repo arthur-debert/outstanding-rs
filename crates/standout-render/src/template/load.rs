@@ -214,7 +214,7 @@ mod tests {
 
         load_named_template(&mut *engine, &registry, "list").unwrap();
         assert_eq!(
-            engine.render_named("list", &serde_json::json!({})).unwrap(),
+            engine.render_named("list", &crate::test_data!({})).unwrap(),
             "yesend"
         );
     }
@@ -235,7 +235,7 @@ mod tests {
 
         load_named_template(&mut *engine, &registry, "list").unwrap();
         assert_eq!(
-            engine.render_named("list", &serde_json::json!({})).unwrap(),
+            engine.render_named("list", &crate::test_data!({})).unwrap(),
             "chosen"
         );
     }
@@ -275,7 +275,7 @@ mod tests {
         load_named_template(&mut *engine, &second, "shared").unwrap();
         assert_eq!(
             engine
-                .render_named("shared", &serde_json::json!({}))
+                .render_named("shared", &crate::test_data!({}))
                 .unwrap(),
             "from-b"
         );
@@ -289,7 +289,7 @@ mod tests {
         load_named_template(&mut *engine, &first, "show.j2").unwrap();
         assert_eq!(
             engine
-                .render_named("show.j2", &serde_json::json!({}))
+                .render_named("show.j2", &crate::test_data!({}))
                 .unwrap(),
             "stale"
         );
@@ -299,7 +299,7 @@ mod tests {
         load_named_template(&mut *engine, &second, "show.j2").unwrap();
         assert_eq!(
             engine
-                .render_named("show.j2", &serde_json::json!({}))
+                .render_named("show.j2", &crate::test_data!({}))
                 .unwrap(),
             "fresh"
         );
@@ -312,14 +312,14 @@ mod tests {
         registry.add_inline("list", "one");
         load_named_template(&mut *engine, &registry, "list").unwrap();
         assert_eq!(
-            engine.render_named("list", &serde_json::json!({})).unwrap(),
+            engine.render_named("list", &crate::test_data!({})).unwrap(),
             "one"
         );
 
         registry.add_inline("list", "two");
         load_named_template(&mut *engine, &registry, "list").unwrap();
         assert_eq!(
-            engine.render_named("list", &serde_json::json!({})).unwrap(),
+            engine.render_named("list", &crate::test_data!({})).unwrap(),
             "two"
         );
     }
@@ -335,12 +335,12 @@ mod tests {
 
         load_named_template(&mut *engine, &first, "x").unwrap();
         assert_eq!(
-            engine.render_named("x", &serde_json::json!({})).unwrap(),
+            engine.render_named("x", &crate::test_data!({})).unwrap(),
             "from-a"
         );
         load_named_template(&mut *engine, &second, "x").unwrap();
         assert_eq!(
-            engine.render_named("x", &serde_json::json!({})).unwrap(),
+            engine.render_named("x", &crate::test_data!({})).unwrap(),
             "from-b"
         );
     }
@@ -353,14 +353,14 @@ mod tests {
         registry.add_inline("partial", "old");
         load_named_template(&mut *engine, &registry, "list").unwrap();
         assert_eq!(
-            engine.render_named("list", &serde_json::json!({})).unwrap(),
+            engine.render_named("list", &crate::test_data!({})).unwrap(),
             "old"
         );
 
         registry.add_inline("partial", "new");
         load_named_template(&mut *engine, &registry, "list").unwrap();
         assert_eq!(
-            engine.render_named("list", &serde_json::json!({})).unwrap(),
+            engine.render_named("list", &crate::test_data!({})).unwrap(),
             "new"
         );
 
@@ -368,7 +368,7 @@ mod tests {
         load_named_template(&mut *engine, &registry, "standout/x").unwrap();
         assert_eq!(
             engine
-                .render_named("standout/x", &serde_json::json!({}))
+                .render_named("standout/x", &crate::test_data!({}))
                 .unwrap(),
             "fw-one"
         );
@@ -377,7 +377,7 @@ mod tests {
         load_named_template(&mut *engine, &registry, "standout/x").unwrap();
         assert_eq!(
             engine
-                .render_named("standout/x", &serde_json::json!({}))
+                .render_named("standout/x", &crate::test_data!({}))
                 .unwrap(),
             "fw-two"
         );
@@ -406,7 +406,7 @@ mod tests {
         load_named_template(&mut *engine, &registry, "standout/help").unwrap();
         assert_eq!(
             engine
-                .render_named("standout/help", &serde_json::json!({}))
+                .render_named("standout/help", &crate::test_data!({}))
                 .unwrap(),
             "from-disk"
         );

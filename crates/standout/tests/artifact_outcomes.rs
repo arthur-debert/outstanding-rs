@@ -372,7 +372,7 @@ fn post_dispatch_hooks_see_the_report_like_any_handler_data() {
         .hooks(
             "export",
             Hooks::new().post_dispatch(|_matches, _ctx, mut data| {
-                data["entries"] = json!(42);
+                data["entries"] = json!(42).into();
                 Ok(data)
             }),
         )
@@ -649,7 +649,7 @@ fn a_post_output_hook_can_add_a_report_to_an_artifact_that_returned_without_one(
             "export",
             Hooks::new().post_output(|_matches, _ctx, mut output| {
                 let artifact = output.as_artifact_mut().expect("artifact output");
-                artifact.report = Some(json!({ "entries": 1, "warnings": [] }));
+                artifact.report = Some(json!({ "entries": 1, "warnings": [] }).into());
                 Ok(output)
             }),
         )

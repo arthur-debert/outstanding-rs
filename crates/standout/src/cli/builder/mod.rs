@@ -1619,32 +1619,33 @@ impl App {
         };
         reject_status_without_a_carrier(output.is_binary(), output.is_artifact())?;
 
-        let render_value = |data: serde_json::Value| -> Result<RenderedOutput, HookError> {
-            let request = RenderRequest {
-                data,
-                template: template.clone(),
-                theme: self.theme.clone(),
-                format: output_mode,
-                color_policy,
-                target,
-                engine: self.template_engine.clone(),
-                registry: self.template_registry.clone(),
-                context_registry: Some(self.context_registry.clone()),
-                csv_projection: self.csv_projection_for(path),
-                extras: HashMap::new(),
-                warnings: Some(warnings.clone()),
+        let render_value =
+            |data: standout_render::RenderData| -> Result<RenderedOutput, HookError> {
+                let request = RenderRequest {
+                    data,
+                    template: template.clone(),
+                    theme: self.theme.clone(),
+                    format: output_mode,
+                    color_policy,
+                    target,
+                    engine: self.template_engine.clone(),
+                    registry: self.template_registry.clone(),
+                    context_registry: Some(self.context_registry.clone()),
+                    csv_projection: self.csv_projection_for(path),
+                    extras: HashMap::new(),
+                    warnings: Some(warnings.clone()),
+                };
+                render_request_split(&request)
+                    .map(|rendered| {
+                        RenderedOutput::Text(TextOutput::new(rendered.formatted, rendered.raw))
+                    })
+                    .map_err(|e| HookError::post_output("Render error").with_source(e))
             };
-            render_request_split(&request)
-                .map(|rendered| {
-                    RenderedOutput::Text(TextOutput::new(rendered.formatted, rendered.raw))
-                })
-                .map_err(|e| HookError::post_output("Render error").with_source(e))
-        };
         let event_rows = output_mode == crate::Representation::Csv;
 
         let output = match output {
             HandlerOutput::Render(data) => {
-                let mut json_data = serde_json::to_value(&data)
+                let mut json_data = standout_render::RenderData::from_serialize(&data)
                     .map_err(|e| HookError::post_dispatch("Serialization error").with_source(e))?;
 
                 if let Some(hooks) = hooks {
@@ -1656,13 +1657,13 @@ impl App {
                         records.push(standout_render::result_record(json_data));
                         run_document(records, output_mode)?
                     }
-                    Some(records) => render_value(serde_json::Value::Array(records))?,
+                    Some(records) => render_value(standout_render::RenderData::Array(records))?,
                     None => render_value(json_data)?,
                 }
             }
             HandlerOutput::Silent => match document_records {
                 Some(records) if !event_rows => run_document(records, output_mode)?,
-                Some(records) => render_value(serde_json::Value::Array(records))?,
+                Some(records) => render_value(standout_render::RenderData::Array(records))?,
                 None => RenderedOutput::Silent,
             },
             HandlerOutput::Binary { data, filename } => RenderedOutput::Binary(data, filename),
@@ -1670,9 +1671,10 @@ impl App {
                 let (bytes, suggested_destination, stdout_allowed, report) = artifact.into_parts();
                 let report = match report {
                     Some(report) => {
-                        let mut json = serde_json::to_value(&report).map_err(|e| {
-                            HookError::post_dispatch("Serialization error").with_source(e)
-                        })?;
+                        let mut json = standout_render::RenderData::from_serialize(&report)
+                            .map_err(|e| {
+                                HookError::post_dispatch("Serialization error").with_source(e)
+                            })?;
                         if let Some(hooks) = hooks {
                             json = hooks.run_post_dispatch(matches, &ctx, json)?;
                         }
@@ -1729,7 +1731,7 @@ impl App {
 /// The one document an incremental command ends in under `json` or `yaml`. No
 /// warning record joins the array: `run_command` owns no stdout of its own.
 fn run_document(
-    records: Vec<serde_json::Value>,
+    records: Vec<standout_render::RenderData>,
     output_mode: crate::Representation,
 ) -> Result<RenderedOutput, HookError> {
     let document = standout_render::serialize_record_array(records, output_mode)

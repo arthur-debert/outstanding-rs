@@ -61,9 +61,7 @@ fn help_path_uses_the_app_engine_from_build() {
     std::fs::write(nested.join("help.jinja"), "{{ 'custom' | shout }}\n").unwrap();
 
     let mut engine = MiniJinjaEngine::new();
-    engine
-        .environment_mut()
-        .add_filter("shout", |value: String| value.to_uppercase());
+    engine.add_filter("shout", |value: String| value.to_uppercase());
 
     let app = App::builder()
         .help_handling(true)

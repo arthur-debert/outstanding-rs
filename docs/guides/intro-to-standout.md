@@ -264,7 +264,7 @@ pub fn render_list(result: TodoResult) {
     {{ message }}
 {% endif %}
 {% for todo in todos %}
-    {{ loop.index }}. [{{ todo.status }}] {{ todo.title }}
+    {{ loop.index }}. {{ '[' ~ todo.status ~ ']' }} {{ todo.title }}
 {% endfor %}
 "#;
 
@@ -286,7 +286,7 @@ Create `src/templates/list.jinja`:
 ```jinja
 {% if message %}{{ message }} {% endif %}
 {% for todo in todos %}
-    {{ loop.index }}. [{{ todo.status }}] {{ todo.title }}
+    {{ loop.index }}. {{ '[' ~ todo.status ~ ']' }} {{ todo.title }}
 {% endfor %}
 ```
 
@@ -627,13 +627,13 @@ Update `src/templates/list.jinja` with style tags:
 {% if message %}[message]{{ message }}[/message]
 {% endif %}
 {% for todo in todos %}
-[index]{{ loop.index }}.[/index] [{{ todo.status }}]{{ todo.title }}[/{{ todo.status }}]
+[index]{{ loop.index }}.[/index] {{ todo.title | style_as(todo.status) }}
 {% endfor %}
 ```
 
 The style tags use BBCode-like syntax: `[style-name]content[/style-name]`
 
-Notice how we use `[{{ todo.status }}]` dynamically - if `todo.status` is "done", it applies the `.done` style; if it's "pending", it applies the `.pending` style.
+`style_as(todo.status)` validates the style name and applies `.done` or `.pending` to the literal title.
 
 > **Verify:** The template file is updated.
 

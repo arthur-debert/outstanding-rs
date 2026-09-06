@@ -64,7 +64,8 @@ impl App {
     ) -> Result<String, SetupError> {
         let theme = self.theme.clone();
         let request = RenderRequest {
-            data: serde_json::to_value(data).map_err(|e| SetupError::Config(e.to_string()))?,
+            data: standout_render::RenderData::from_serialize(data)
+                .map_err(|e| SetupError::Config(e.to_string()))?,
             template,
             theme,
             format: mode,

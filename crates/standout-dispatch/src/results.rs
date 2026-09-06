@@ -100,7 +100,7 @@ impl Delivery {
 /// returns `Err` for every reason the event did not reach the destination, so
 /// the handler's `?` stops at the emit that failed.
 pub trait EventSink {
-    fn deliver(&self, event: &serde_json::Value) -> Result<(), EmitError>;
+    fn deliver(&self, event: &standout_types::RenderData) -> Result<(), EmitError>;
 
     /// False once the destination has gone away; nothing further is written.
     fn is_open(&self) -> bool {
@@ -115,7 +115,7 @@ pub trait EventSink {
 
 #[derive(Debug)]
 struct RunRecord {
-    records: Vec<serde_json::Value>,
+    records: Vec<standout_types::RenderData>,
     delivery: Delivery,
     retain_events: bool,
 }
@@ -150,7 +150,7 @@ impl RunRecorder {
         })))
     }
 
-    pub fn record(&self, value: serde_json::Value) {
+    pub fn record(&self, value: standout_types::RenderData) {
         self.0.borrow_mut().records.push(value);
     }
 
@@ -162,7 +162,7 @@ impl RunRecorder {
         self.0.borrow_mut().delivery = delivery;
     }
 
-    pub fn records(&self) -> Vec<serde_json::Value> {
+    pub fn records(&self) -> Vec<standout_types::RenderData> {
         self.0.borrow().records.clone()
     }
 
@@ -231,7 +231,7 @@ impl<E: Serialize> Results<E> {
         if retaining.is_none() && open.is_none() {
             return Ok(());
         }
-        let value = match serde_json::to_value(&event) {
+        let value = match standout_types::RenderData::from_serialize(&event) {
             Ok(value) => value,
             Err(error) => {
                 let error = EmitError::from(error);
@@ -257,12 +257,12 @@ mod tests {
 
     #[derive(Default)]
     struct Delivered {
-        values: RefCell<Vec<serde_json::Value>>,
+        values: RefCell<Vec<standout_types::RenderData>>,
         open: bool,
     }
 
     impl EventSink for Delivered {
-        fn deliver(&self, event: &serde_json::Value) -> Result<(), EmitError> {
+        fn deliver(&self, event: &standout_types::RenderData) -> Result<(), EmitError> {
             self.values.borrow_mut().push(event.clone());
             Ok(())
         }
@@ -281,11 +281,11 @@ mod tests {
     #[test]
     fn a_recorder_retains_values_in_order() {
         let recorder = RunRecorder::new();
-        recorder.record(serde_json::json!({"n": 1}));
-        recorder.record(serde_json::json!({"n": 2}));
+        recorder.record(crate::test_data!({"n": 1}));
+        recorder.record(crate::test_data!({"n": 2}));
         assert_eq!(
             recorder.records(),
-            vec![serde_json::json!({"n": 1}), serde_json::json!({"n": 2})]
+            vec![crate::test_data!({"n": 1}), crate::test_data!({"n": 2})]
         );
     }
 
@@ -304,7 +304,7 @@ mod tests {
         let sink = open();
         let mut results = Results::for_run(Some(recorder.clone()), sink.clone());
         results
-            .emit(serde_json::json!({"type": "apply_start"}))
+            .emit(crate::test_data!({"type": "apply_start"}))
             .unwrap();
         assert_eq!(recorder.records().len(), 1);
         assert_eq!(sink.values.borrow().len(), 1);
@@ -329,11 +329,11 @@ mod tests {
         let sink = open();
         let mut results = Results::for_run(Some(recorder.clone()), sink.clone());
         for n in 0..3 {
-            results.emit(serde_json::json!({ "n": n })).unwrap();
+            results.emit(crate::test_data!({ "n": n })).unwrap();
         }
-        recorder.record(serde_json::json!({"total": 3}));
+        recorder.record(crate::test_data!({"total": 3}));
         assert_eq!(sink.values.borrow().len(), 3);
-        assert_eq!(recorder.records(), vec![serde_json::json!({"total": 3})]);
+        assert_eq!(recorder.records(), vec![crate::test_data!({"total": 3})]);
     }
 
     #[test]
@@ -354,7 +354,7 @@ mod tests {
             open: false,
         });
         let mut results = Results::for_run(Some(recorder.clone()), closed.clone());
-        results.emit(serde_json::json!({"n": 1})).unwrap();
+        results.emit(crate::test_data!({"n": 1})).unwrap();
         assert_eq!(recorder.records().len(), 1);
         assert!(closed.values.borrow().is_empty());
     }
@@ -373,7 +373,7 @@ mod tests {
         #[derive(Default)]
         struct Remembers(RefCell<Vec<String>>);
         impl EventSink for Remembers {
-            fn deliver(&self, _: &serde_json::Value) -> Result<(), EmitError> {
+            fn deliver(&self, _: &standout_types::RenderData) -> Result<(), EmitError> {
                 Ok(())
             }
             fn record_failure(&self, error: &EmitError) {
@@ -392,12 +392,12 @@ mod tests {
     fn a_destination_that_refuses_the_bytes_is_an_emit_error() {
         struct Refuses;
         impl EventSink for Refuses {
-            fn deliver(&self, _: &serde_json::Value) -> Result<(), EmitError> {
+            fn deliver(&self, _: &standout_types::RenderData) -> Result<(), EmitError> {
                 Err(EmitError::Write(Arc::new(std::io::Error::other("no room"))))
             }
         }
         let mut results = Results::for_run(None, Rc::new(Refuses));
-        let error = results.emit(serde_json::json!({"n": 1})).unwrap_err();
+        let error = results.emit(crate::test_data!({"n": 1})).unwrap_err();
         assert!(matches!(error, EmitError::Write(_)), "{error}");
     }
 
@@ -405,13 +405,13 @@ mod tests {
     fn an_event_the_destination_refused_is_not_retained() {
         struct Refuses;
         impl EventSink for Refuses {
-            fn deliver(&self, _: &serde_json::Value) -> Result<(), EmitError> {
+            fn deliver(&self, _: &standout_types::RenderData) -> Result<(), EmitError> {
                 Err(EmitError::Write(Arc::new(std::io::Error::other("no room"))))
             }
         }
         let recorder = RunRecorder::new();
         let mut results = Results::for_run(Some(recorder.clone()), Rc::new(Refuses));
-        results.emit(serde_json::json!({"n": 1})).unwrap_err();
+        results.emit(crate::test_data!({"n": 1})).unwrap_err();
         assert!(recorder.records().is_empty());
     }
 }

@@ -105,7 +105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```jinja
 [title]My Todos[/title]
 {% for todo in todos %}
-[index]{{ loop.index }}.[/index] [{{ todo.status }}]{{ todo.title }}[/{{ todo.status }}]
+[index]{{ loop.index }}.[/index] {{ todo.title | style_as(todo.status) }}
 {% endfor %}
 ```
 

@@ -69,7 +69,7 @@ Create a templates/list.jinja and styles/default.css:
         [message]{{ message }} [/message]
     {% endif %}
     {% for todo in todos %}
-        [index]{{ loop.index }}.[/index] [{{ todo.status }}]{{ todo.title }}[/{{ todo.status }}]
+        [index]{{ loop.index }}.[/index] {{ todo.title | style_as(todo.status) }}
     {% endfor %}
 ```
 

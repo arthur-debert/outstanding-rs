@@ -1,6 +1,6 @@
+use crate::RenderData as JsonValue;
 use minijinja::value::{Enumerator, Object, Value};
 use serde::Serialize;
-use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
 use super::resolve::ResolvedWidths;
@@ -12,8 +12,11 @@ use super::util::{
     truncate_visible_end_with_policy, truncate_visible_middle_with_policy,
     truncate_visible_start_with_policy, visible_width_with_policy, wrap_visible_indent_with_policy,
 };
-use crate::template::stringify;
-use crate::AmbiguousWidth;
+use crate::template::presentation::{escape_text, fragment, markup, parse_markup};
+fn stringify(value: &minijinja::Value) -> std::borrow::Cow<'_, str> {
+    std::borrow::Cow::Owned(markup(value))
+}
+use crate::{AmbiguousWidth, FormattedText};
 
 #[derive(Clone, Debug)]
 pub struct TabularFormatter {
@@ -36,8 +39,16 @@ impl TabularFormatter {
         total_width: usize,
         policy: AmbiguousWidth,
     ) -> Self {
-        let resolved = spec.resolve_widths_with_policy(total_width, policy);
-        Self::from_resolved_with_width_and_policy(spec, resolved, total_width, policy)
+        Self::from_prepared_spec(&spec.prepared_text(), total_width, policy)
+    }
+
+    pub(crate) fn from_prepared_spec(
+        spec: &FlatDataSpec,
+        total_width: usize,
+        policy: AmbiguousWidth,
+    ) -> Self {
+        let resolved = spec.resolve_prepared_widths(total_width, policy);
+        Self::from_prepared_resolved(spec, resolved, total_width, policy)
     }
 
     pub fn from_resolved(spec: &FlatDataSpec, resolved: ResolvedWidths) -> Self {
@@ -66,6 +77,15 @@ impl TabularFormatter {
         total_width: usize,
         policy: AmbiguousWidth,
     ) -> Self {
+        Self::from_prepared_resolved(&spec.prepared_text(), resolved, total_width, policy)
+    }
+
+    pub(crate) fn from_prepared_resolved(
+        spec: &FlatDataSpec,
+        resolved: ResolvedWidths,
+        total_width: usize,
+        policy: AmbiguousWidth,
+    ) -> Self {
         TabularFormatter {
             columns: spec.columns.clone(),
             widths: resolved.widths,
@@ -88,7 +108,7 @@ impl TabularFormatter {
     ) -> Self {
         let total_width = widths.iter().sum();
         TabularFormatter {
-            columns,
+            columns: columns.iter().map(Column::prepared_text).collect(),
             widths,
             separator: String::new(),
             prefix: String::new(),
@@ -116,27 +136,72 @@ impl TabularFormatter {
     }
 
     pub fn separator(mut self, sep: impl Into<String>) -> Self {
-        self.separator = sep.into();
+        self.separator = escape_text(&sep.into());
         self
     }
 
     pub fn prefix(mut self, prefix: impl Into<String>) -> Self {
-        self.prefix = prefix.into();
+        self.prefix = escape_text(&prefix.into());
         self
     }
 
     pub fn suffix(mut self, suffix: impl Into<String>) -> Self {
-        self.suffix = suffix.into();
+        self.suffix = escape_text(&suffix.into());
         self
     }
 
     pub fn format_row<S: AsRef<str>>(&self, values: &[S]) -> String {
+        let values: Vec<_> = values
+            .iter()
+            .map(|value| escape_text(value.as_ref()))
+            .collect();
+        self.format_markup_row(&values)
+    }
+
+    pub fn format_formatted_row(&self, values: &[FormattedText]) -> FormattedText {
+        parse_markup(&self.formatted_row_markup(values))
+    }
+
+    pub(crate) fn formatted_row_markup(&self, values: &[FormattedText]) -> String {
+        let values: Vec<_> = values
+            .iter()
+            .map(|value| markup(&Value::from(value.clone())))
+            .collect();
+        self.format_markup_row(&values)
+    }
+
+    pub fn format_row_cells(&self, values: &[CellValue<'_>]) -> String {
+        let values: Vec<_> = values.iter().map(CellValue::to_markup).collect();
+        let cells: Vec<_> = values.iter().map(OwnedCellValue::as_borrowed).collect();
+        self.format_markup_row_cells(&cells)
+    }
+
+    pub fn format_row_lines<S: AsRef<str>>(&self, values: &[S]) -> Vec<String> {
+        let values: Vec<_> = values
+            .iter()
+            .map(|value| escape_text(value.as_ref()))
+            .collect();
+        self.format_markup_row_lines(&values)
+    }
+
+    pub fn format_formatted_row_lines(&self, values: &[FormattedText]) -> Vec<FormattedText> {
+        let values: Vec<_> = values
+            .iter()
+            .map(|value| markup(&Value::from(value.clone())))
+            .collect();
+        self.format_markup_row_lines(&values)
+            .iter()
+            .map(|line| parse_markup(line))
+            .collect()
+    }
+
+    pub(crate) fn format_markup_row<S: AsRef<str>>(&self, values: &[S]) -> String {
         if self.columns.iter().any(|c| c.sub_columns.is_some()) {
-            let cell_values: Vec<CellValue<'_>> = values
+            let cell_values: Vec<MarkupCellValue<'_>> = values
                 .iter()
-                .map(|s| CellValue::Single(s.as_ref()))
+                .map(|s| MarkupCellValue::Single(s.as_ref()))
                 .collect();
-            return self.format_row_cells(&cell_values);
+            return self.format_markup_row_cells(&cell_values);
         }
 
         let mut result = String::new();
@@ -164,7 +229,7 @@ impl TabularFormatter {
         result
     }
 
-    pub fn format_row_cells(&self, values: &[CellValue<'_>]) -> String {
+    pub(crate) fn format_markup_row_cells(&self, values: &[MarkupCellValue<'_>]) -> String {
         let mut result = String::new();
         result.push_str(&self.prefix);
 
@@ -183,8 +248,8 @@ impl TabularFormatter {
 
             if let Some(sub_cols) = &col.sub_columns {
                 let sub_values: Vec<&str> = match values.get(i) {
-                    Some(CellValue::Sub(v)) => v.clone(),
-                    Some(CellValue::Single(s)) => vec![s],
+                    Some(MarkupCellValue::Sub(v)) => v.clone(),
+                    Some(MarkupCellValue::Single(s)) => vec![s],
                     None => vec![],
                 };
                 let formatted = format_sub_cells_with_policy(
@@ -196,8 +261,8 @@ impl TabularFormatter {
                 result.push_str(&formatted);
             } else {
                 let value = match values.get(i) {
-                    Some(CellValue::Single(s)) => *s,
-                    Some(CellValue::Sub(v)) => v.first().copied().unwrap_or(&col.null_repr),
+                    Some(MarkupCellValue::Single(s)) => *s,
+                    Some(MarkupCellValue::Sub(v)) => v.first().copied().unwrap_or(&col.null_repr),
                     None => &col.null_repr,
                 };
                 let formatted = format_cell_with_policy(value, width, col, self.ambiguous_width);
@@ -239,7 +304,7 @@ impl TabularFormatter {
         rows.iter().map(|row| self.format_row(row)).collect()
     }
 
-    pub fn format_row_lines<S: AsRef<str>>(&self, values: &[S]) -> Vec<String> {
+    pub(crate) fn format_markup_row_lines<S: AsRef<str>>(&self, values: &[S]) -> Vec<String> {
         let cell_outputs: Vec<CellOutput> = self
             .columns
             .iter()
@@ -258,7 +323,7 @@ impl TabularFormatter {
             .unwrap_or(1);
 
         if max_lines == 1 {
-            return vec![self.format_row(values)];
+            return vec![self.format_markup_row(values)];
         }
 
         let (anchor_gap, anchor_transition) = self.calculate_anchor_gap();
@@ -360,13 +425,13 @@ impl TabularFormatter {
     pub fn row_from<T: Serialize>(&self, value: &T) -> String {
         let values = self.extract_values(value);
         let string_refs: Vec<&str> = values.iter().map(|s| s.as_str()).collect();
-        self.format_row(&string_refs)
+        self.format_markup_row(&string_refs)
     }
 
     pub fn row_lines_from<T: Serialize>(&self, value: &T) -> Vec<String> {
         let values = self.extract_values(value);
         let string_refs: Vec<&str> = values.iter().map(|s| s.as_str()).collect();
-        self.format_row_lines(&string_refs)
+        self.format_markup_row_lines(&string_refs)
     }
 
     pub fn row_from_trait<T: TabularRow>(&self, value: &T) -> String {
@@ -380,7 +445,7 @@ impl TabularFormatter {
     }
 
     fn extract_values<T: Serialize>(&self, value: &T) -> Vec<String> {
-        let json = match serde_json::to_value(value) {
+        let json = match crate::RenderData::from_serialize(value) {
             Ok(v) => v,
             Err(_) => return vec![String::new(); self.columns.len()],
         };
@@ -425,11 +490,11 @@ fn extract_field(value: &JsonValue, path: &str) -> String {
     }
 
     match current {
-        JsonValue::String(s) => s.clone(),
+        JsonValue::String(s) => crate::template::presentation::escape_text(s),
         JsonValue::Number(n) => n.to_string(),
         JsonValue::Bool(b) => b.to_string(),
         JsonValue::Null => String::new(),
-        _ => current.to_string(),
+        _ => markup(&current.to_template_value()),
     }
 }
 
@@ -441,7 +506,7 @@ impl Object for TabularFormatter {
                 let widths: Vec<Value> = self.widths.iter().map(|&w| Value::from(w)).collect();
                 Some(Value::from(widths))
             }
-            "separator" => Some(Value::from(self.separator.clone())),
+            "separator" => Some(fragment(self.separator.clone())),
             _ => None,
         }
     }
@@ -473,8 +538,8 @@ impl Object for TabularFormatter {
                         Ok(iter) => iter,
                         Err(_) => {
                             let values = vec![stringify(values_arg).into_owned()];
-                            let formatted = self.format_row(&values);
-                            return Ok(Value::from(formatted));
+                            let formatted = self.format_markup_row(&values);
+                            return Ok(fragment(formatted));
                         }
                     };
 
@@ -500,26 +565,21 @@ impl Object for TabularFormatter {
                         }
                     }
 
-                    let cell_values: Vec<CellValue<'_>> = owned_values
+                    let cell_values: Vec<_> = owned_values
                         .iter()
-                        .map(|ov| match ov {
-                            OwnedCellValue::Single(s) => CellValue::Single(s.as_str()),
-                            OwnedCellValue::Sub(v) => {
-                                CellValue::Sub(v.iter().map(|s| s.as_str()).collect())
-                            }
-                        })
+                        .map(OwnedCellValue::as_borrowed)
                         .collect();
 
-                    let formatted = self.format_row_cells(&cell_values);
-                    Ok(Value::from(formatted))
+                    let formatted = self.format_markup_row_cells(&cell_values);
+                    Ok(fragment(formatted))
                 } else {
                     let values: Vec<String> = match values_arg.try_iter() {
                         Ok(iter) => iter.map(|v| stringify(&v).into_owned()).collect(),
                         Err(_) => vec![stringify(values_arg).into_owned()],
                     };
 
-                    let formatted = self.format_row(&values);
-                    Ok(Value::from(formatted))
+                    let formatted = self.format_markup_row(&values);
+                    Ok(fragment(formatted))
                 }
             }
             "row_from" => {
@@ -530,7 +590,14 @@ impl Object for TabularFormatter {
                     ));
                 }
 
-                Ok(Value::from(self.row_from(&args[0])))
+                let value =
+                    crate::RenderData::from_template_value(args[0].clone()).map_err(|error| {
+                        minijinja::Error::new(
+                            minijinja::ErrorKind::InvalidOperation,
+                            error.to_string(),
+                        )
+                    })?;
+                Ok(fragment(self.row_from(&value)))
             }
             "column_width" => {
                 if args.is_empty() {
@@ -652,17 +719,52 @@ fn pad_visible_value(value: &str, width: usize, align: Align, policy: AmbiguousW
 pub enum CellValue<'a> {
     Single(&'a str),
     Sub(Vec<&'a str>),
+    Formatted(&'a FormattedText),
+    SubFormatted(Vec<&'a FormattedText>),
+}
+
+impl CellValue<'_> {
+    fn to_markup(&self) -> OwnedCellValue {
+        match self {
+            Self::Single(text) => OwnedCellValue::Single(escape_text(text)),
+            Self::Sub(values) => {
+                OwnedCellValue::Sub(values.iter().map(|text| escape_text(text)).collect())
+            }
+            Self::Formatted(text) => OwnedCellValue::Single(markup(&Value::from((*text).clone()))),
+            Self::SubFormatted(values) => OwnedCellValue::Sub(
+                values
+                    .iter()
+                    .map(|text| markup(&Value::from((*text).clone())))
+                    .collect(),
+            ),
+        }
+    }
 }
 
 impl<'a> From<&'a str> for CellValue<'a> {
-    fn from(s: &'a str) -> Self {
-        CellValue::Single(s)
+    fn from(text: &'a str) -> Self {
+        Self::Single(text)
     }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum MarkupCellValue<'a> {
+    Single(&'a str),
+    Sub(Vec<&'a str>),
 }
 
 pub(crate) enum OwnedCellValue {
     Single(String),
     Sub(Vec<String>),
+}
+
+impl OwnedCellValue {
+    pub(crate) fn as_borrowed(&self) -> MarkupCellValue<'_> {
+        match self {
+            Self::Single(text) => MarkupCellValue::Single(text),
+            Self::Sub(values) => MarkupCellValue::Sub(values.iter().map(String::as_str).collect()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -855,7 +957,7 @@ impl CellOutput {
 
 fn apply_style(content: &str, style: Option<&str>) -> String {
     match style {
-        Some(s) if !s.is_empty() => format!("[{}]{}[/{}]", s, content, s),
+        Some(s) if standout_bbparser::is_valid_tag_name(s) => format!("[{}]{}[/{}]", s, content, s),
         _ => content.to_string(),
     }
 }
@@ -1080,10 +1182,18 @@ mod tests {
         let formatter = TabularFormatter::new(&spec, 80);
 
         let styled = "\x1b[31mred\x1b[0m";
-        let output = formatter.format_row(&[styled]);
+        let output = formatter.format_formatted_row(&[FormattedText::from_ansi_sgr(styled)]);
 
-        assert!(output.contains("\x1b[31m"));
-        assert_eq!(display_width(&output), 10);
+        let output = crate::render_with_output(
+            "{{ value }}",
+            &crate::RenderData::Object([("value".into(), output.into())].into_iter().collect()),
+            &crate::Theme::new(),
+            crate::Representation::Human,
+            crate::ColorPolicy::Always,
+        )
+        .unwrap();
+        assert!(output.contains('\x1b'));
+        assert_eq!(console::strip_ansi_codes(&output), "red       ");
     }
 
     #[test]
@@ -1137,7 +1247,7 @@ mod tests {
         let formatter = Arc::new(TabularFormatter::new(&spec, 80));
 
         let value = formatter.get_value(&Value::from("separator"));
-        assert_eq!(value, Some(Value::from(" | ")));
+        assert_eq!(value.unwrap().to_string(), " | ");
     }
 
     #[test]
@@ -1689,7 +1799,7 @@ mod tests {
 
     #[test]
     fn extract_field_simple() {
-        let json = serde_json::json!({
+        let json = crate::test_data!({
             "name": "Alice",
             "age": 30
         });
@@ -1701,7 +1811,7 @@ mod tests {
 
     #[test]
     fn extract_field_nested() {
-        let json = serde_json::json!({
+        let json = crate::test_data!({
             "user": {
                 "profile": {
                     "email": "test@example.com"
@@ -1718,7 +1828,7 @@ mod tests {
 
     #[test]
     fn extract_field_array() {
-        let json = serde_json::json!({
+        let json = crate::test_data!({
             "items": ["a", "b", "c"]
         });
 
@@ -1927,6 +2037,8 @@ mod tests {
             CellValue::Single("4d"),
         ]);
 
+        let row =
+            crate::template::apply_style_tags(&row, &crate::Styles::new(), crate::StyleMode::Plain);
         assert!(row.contains("Gallery Navigation"));
         assert!(row.contains("[feature]"));
         assert!(row.contains("1."));
@@ -2095,6 +2207,11 @@ mod tests {
             CellValue::Single("1."),
             CellValue::Sub(vec!["Title", "[bug]"]),
         ]);
+        let row1 = crate::template::apply_style_tags(
+            &row1,
+            &crate::Styles::new(),
+            crate::StyleMode::Plain,
+        );
         assert_eq!(display_width(&row1), 50);
         assert!(row1.contains("Title"));
         assert!(row1.contains("[bug]"));
@@ -2128,6 +2245,7 @@ mod tests {
             .render(minijinja::context! { t => Value::from_object(formatter) })
             .unwrap();
 
+        let output = standout_bbparser::strip_tags(&output);
         assert_eq!(display_width(&output), 50);
         assert!(output.contains("My Title"));
         assert!(output.contains("[tag]"));
@@ -2167,6 +2285,11 @@ mod tests {
 
         for (i, row) in rows.iter().enumerate() {
             let output = formatter.format_row_cells(row);
+            let output = crate::template::apply_style_tags(
+                &output,
+                &crate::Styles::new(),
+                crate::StyleMode::Plain,
+            );
             assert_eq!(
                 display_width(&output),
                 60,
@@ -2217,8 +2340,13 @@ mod tests {
             .build();
         let formatter = TabularFormatter::new(&spec, 12);
 
-        let result = formatter.format_row(&["prefix [match]needle[/match] suffix"]);
+        let value = FormattedText::text("prefix ")
+            .append(FormattedText::text("needle").styled("match").unwrap())
+            .append(" suffix");
+        let result = formatter.format_formatted_row(&[value]);
 
+        assert_eq!(result.plain_text(), "prefix need…");
+        let result = markup(&Value::from(result));
         assert_eq!(result, "prefix [match]need[/match]…");
         assert_eq!(
             visible_width_with_policy(&result, AmbiguousWidth::Narrow),

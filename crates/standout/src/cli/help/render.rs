@@ -154,7 +154,7 @@ pub(crate) fn render_via_request<T: Serialize>(
     warnings: Option<standout_render::warnings::WarningBuffer>,
 ) -> Result<String, RenderError> {
     let request = RenderRequest {
-        data: serde_json::to_value(data)?,
+        data: standout_render::RenderData::from_serialize(data)?,
         template,
         theme,
         format: human_help_format(format),

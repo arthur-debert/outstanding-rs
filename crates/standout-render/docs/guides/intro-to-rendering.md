@@ -110,7 +110,7 @@ let template = r#"
 [title]Your Tasks[/title]
 ──────────
 {% for task in tasks %}
-[{{ task.status }}]{{ task.status }}[/{{ task.status }}]  {{ task.title }}
+{{ task.status | style_as(task.status) }}  {{ task.title }}
 {% endfor %}
 
 {% if message %}[muted]{{ message }}[/muted]{% endif %}
@@ -135,7 +135,7 @@ use console::Style;
 
 let theme = Theme::new().add("title", Style::new().cyan().bold());
 let request = RenderRequest {
-    data: json!({"name": "Tasks", "count": 42}),
+    data: json!({"name": "Tasks", "count": 42}).into(),
     template: TemplateRef::Inline("[title]{{ name }}[/title]: {{ count }} items".into()),
     theme,
     format: Representation::Human,
@@ -217,7 +217,7 @@ See [File System Resources](../topics/file-system-resources.md) for details on h
 {% if message %}[accent]{{ message }}[/accent]{% endif %}
 
 {% for task in tasks %}
-[{{ task.status }}]{{ task.status | upper }}[/{{ task.status }}]  {{ task.title }}
+{{ task.status | upper | style_as(task.status) }}  {{ task.title }}
 {% endfor %}
 ```
 
@@ -298,12 +298,14 @@ let theme = Theme::from_yaml("...")?
 
 ## Template Integration with Styling
 
-Styles are applied with BBCode-like syntax: `[style]content[/style]`. A familiar, simple, and accessible form.
+Write fixed styles as `[style]content[/style]` and choose dynamic styles with
+`style_as`. Inserted values remain literal text; [formatted values](../topics/templating.md#text-and-formatted-values)
+carry styles constructed by application code.
 
 ```jinja
 [title]Your Tasks[/title]
 {% for task in tasks %}
-[{{ task.status }}]{{ task.title }}[/{{ task.status }}]
+{{ task.title | style_as(task.status) }}
 {% endfor %}
 ```
 
@@ -489,7 +491,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 [title]My Tasks[/title]
 
 {% for task in tasks %}
-{{ loop.index }}.  [{{ task.status }}]{{ task.status }}[/{{ task.status }}]  {{ task.title }}
+{{ loop.index }}.  {{ task.status | style_as(task.status) }}  {{ task.title }}
 {% endfor %}
 
 {% if message %}[muted]{{ message }}[/muted]{% endif %}

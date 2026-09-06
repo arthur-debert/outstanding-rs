@@ -12,7 +12,7 @@
 {%- if cmd.separator %}
 {{ "" }}
 {%- else %}
-  {{ ("[item]" ~ cmd.name ~ "[/item]") | pad_right(subcommands_width) }}  [desc]{{ cmd.about }}[/desc]
+  {{ (cmd.name | style_as('item')) | pad_right(subcommands_width) }}  [desc]{{ cmd.about }}[/desc]
 {%- endif %}
 {%- endfor %}
 {%- endfor %}
@@ -21,7 +21,7 @@
 [header]ARGUMENTS[/header]
 {%- for group in arguments %}
 {%- for arg in group.items %}
-  {{ ("[metavar]" ~ arg.name ~ "[/metavar]") | pad_right(arguments_width) }}  [desc]{{ arg.help }}[/desc]
+  {{ (arg.name | style_as('metavar')) | pad_right(arguments_width) }}  [desc]{{ arg.help }}[/desc]
 {%- if arg.default %}
   {{ "" | pad_right(arguments_width) }}  [default]default: {{ arg.default }}[/default]
 {%- endif %}
@@ -36,9 +36,9 @@
 [header]OPTIONS[/header]
 {%- for group in options %}
 {%- for opt in group.items %}
-{%- set opt_label = "[item]" ~ opt.name ~ "[/item]" -%}
+{%- set opt_label = opt.name | style_as('item') -%}
 {%- if opt.value_name %}
-{%- set opt_label = opt_label ~ " [metavar]" ~ opt.value_name ~ "[/metavar]" -%}
+{%- set opt_label = [opt_label, ' ', opt.value_name | style_as('metavar')] | join -%}
 {%- endif %}
   {{ opt_label | pad_right(options_width) }}  [desc]{{ opt.help }}[/desc]
 {%- if opt.default %}
@@ -59,6 +59,6 @@
 
 [header]LEARN MORE[/header]
 {%- for topic in learn_more %}
-  {{ ("[item]" ~ topic.name ~ "[/item]") | pad_right(learn_more_width) }}  [desc]{{ topic.title }}[/desc]
+  {{ (topic.name | style_as('item')) | pad_right(learn_more_width) }}  [desc]{{ topic.title }}[/desc]
 {%- endfor %}
 {%- endif %}

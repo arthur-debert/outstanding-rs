@@ -1,7 +1,7 @@
 use super::output::{Representation, StyleMode};
 use super::theme::Theme;
 use crate::AmbiguousWidth;
-use minijinja::Value;
+use standout_types::RenderData;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::rc::Rc;
@@ -18,7 +18,7 @@ pub struct RenderContext<'a> {
 
     /// The request's serialized data: the handler's render output for a command,
     /// a request-specific shape for help, artifact reports, and direct renders.
-    pub data: &'a serde_json::Value,
+    pub data: &'a standout_types::RenderData,
 
     pub extras: HashMap<String, String>,
 
@@ -31,7 +31,7 @@ impl<'a> RenderContext<'a> {
         style: StyleMode,
         terminal_width: Option<usize>,
         theme: &'a Theme,
-        data: &'a serde_json::Value,
+        data: &'a standout_types::RenderData,
     ) -> Self {
         Self::with_ambiguous_width(
             representation,
@@ -49,7 +49,7 @@ impl<'a> RenderContext<'a> {
         terminal_width: Option<usize>,
         ambiguous_width: AmbiguousWidth,
         theme: &'a Theme,
-        data: &'a serde_json::Value,
+        data: &'a standout_types::RenderData,
     ) -> Self {
         let extras = match ambiguous_width {
             AmbiguousWidth::Narrow => HashMap::new(),
@@ -86,31 +86,31 @@ impl<'a> RenderContext<'a> {
 }
 
 pub trait ContextProvider {
-    fn provide(&self, ctx: &RenderContext) -> Value;
+    fn provide(&self, ctx: &RenderContext) -> RenderData;
 }
 
 impl<F> ContextProvider for F
 where
-    F: Fn(&RenderContext) -> Value,
+    F: Fn(&RenderContext) -> RenderData,
 {
-    fn provide(&self, ctx: &RenderContext) -> Value {
+    fn provide(&self, ctx: &RenderContext) -> RenderData {
         (self)(ctx)
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct StaticProvider {
-    value: Value,
+    value: RenderData,
 }
 
 impl StaticProvider {
-    pub fn new(value: Value) -> Self {
+    pub fn new(value: RenderData) -> Self {
         Self { value }
     }
 }
 
 impl ContextProvider for StaticProvider {
-    fn provide(&self, _ctx: &RenderContext) -> Value {
+    fn provide(&self, _ctx: &RenderContext) -> RenderData {
         self.value.clone()
     }
 }
@@ -125,7 +125,7 @@ impl ContextRegistry {
         Self::default()
     }
 
-    pub fn add_static(&mut self, name: impl Into<String>, value: Value) {
+    pub fn add_static(&mut self, name: impl Into<String>, value: RenderData) {
         self.providers
             .insert(name.into(), Rc::new(StaticProvider::new(value)));
     }
@@ -146,7 +146,7 @@ impl ContextRegistry {
         self.providers.len()
     }
 
-    pub fn resolve(&self, ctx: &RenderContext) -> HashMap<String, Value> {
+    pub fn resolve(&self, ctx: &RenderContext) -> HashMap<String, RenderData> {
         self.providers
             .iter()
             .map(|(name, provider)| (name.clone(), provider.provide(ctx)))
@@ -171,8 +171,8 @@ mod tests {
     use super::*;
     use crate::Theme;
 
-    fn test_context() -> (Theme, serde_json::Value) {
-        (Theme::new(), serde_json::json!({"test": true}))
+    fn test_context() -> (Theme, standout_types::RenderData) {
+        (Theme::new(), crate::test_data!({"test": true}))
     }
 
     #[test]
@@ -209,10 +209,10 @@ mod tests {
         let (theme, data) = test_context();
         let ctx = RenderContext::new(Representation::Human, StyleMode::Plain, None, &theme, &data);
 
-        let provider = StaticProvider::new(Value::from(42));
+        let provider = StaticProvider::new(RenderData::from(42));
         let result = provider.provide(&ctx);
 
-        assert_eq!(result, Value::from(42));
+        assert_eq!(result, RenderData::from(42));
     }
 
     #[test]
@@ -226,11 +226,12 @@ mod tests {
             &data,
         );
 
-        let provider =
-            |ctx: &RenderContext| -> Value { Value::from(ctx.terminal_width.unwrap_or(80)) };
+        let provider = |ctx: &RenderContext| -> RenderData {
+            RenderData::from(ctx.terminal_width.unwrap_or(80) as u64)
+        };
 
         let result = provider.provide(&ctx);
-        assert_eq!(result, Value::from(120));
+        assert_eq!(result, RenderData::from(120));
     }
 
     #[test]
@@ -239,10 +240,10 @@ mod tests {
         let ctx = RenderContext::new(Representation::Human, StyleMode::Plain, None, &theme, &data);
 
         let mut registry = ContextRegistry::new();
-        registry.add_static("version", Value::from("1.0.0"));
+        registry.add_static("version", RenderData::from("1.0.0"));
 
         let resolved = registry.resolve(&ctx);
-        assert_eq!(resolved.get("version"), Some(&Value::from("1.0.0")));
+        assert_eq!(resolved.get("version"), Some(&RenderData::from("1.0.0")));
     }
 
     #[test]
@@ -258,11 +259,11 @@ mod tests {
 
         let mut registry = ContextRegistry::new();
         registry.add_provider("width", |ctx: &RenderContext| {
-            Value::from(ctx.terminal_width.unwrap_or(80))
+            RenderData::from(ctx.terminal_width.unwrap_or(80) as u64)
         });
 
         let resolved = registry.resolve(&ctx);
-        assert_eq!(resolved.get("width"), Some(&Value::from(100)));
+        assert_eq!(resolved.get("width"), Some(&RenderData::from(100)));
     }
 
     #[test]
@@ -277,24 +278,24 @@ mod tests {
         );
 
         let mut registry = ContextRegistry::new();
-        registry.add_static("app", Value::from("myapp"));
+        registry.add_static("app", RenderData::from("myapp"));
         registry.add_provider("terminal_width", |ctx: &RenderContext| {
-            Value::from(ctx.terminal_width.unwrap_or(80))
+            RenderData::from(ctx.terminal_width.unwrap_or(80) as u64)
         });
 
         assert_eq!(registry.len(), 2);
         assert!(!registry.is_empty());
 
         let resolved = registry.resolve(&ctx);
-        assert_eq!(resolved.get("app"), Some(&Value::from("myapp")));
-        assert_eq!(resolved.get("terminal_width"), Some(&Value::from(120)));
+        assert_eq!(resolved.get("app"), Some(&RenderData::from("myapp")));
+        assert_eq!(resolved.get("terminal_width"), Some(&RenderData::from(120)));
     }
 
     #[test]
     fn context_registry_names() {
         let mut registry = ContextRegistry::new();
-        registry.add_static("foo", Value::from(1));
-        registry.add_static("bar", Value::from(2));
+        registry.add_static("foo", RenderData::from(1));
+        registry.add_static("bar", RenderData::from(2));
 
         let names: Vec<&str> = registry.names().collect();
         assert!(names.contains(&"foo"));
@@ -312,28 +313,29 @@ mod tests {
     fn provider_uses_the_style_mode() {
         let (theme, data) = test_context();
 
-        let provider = |ctx: &RenderContext| -> Value { Value::from(format!("{:?}", ctx.style)) };
+        let provider =
+            |ctx: &RenderContext| -> RenderData { RenderData::from(format!("{:?}", ctx.style)) };
 
         let ctx_term =
             RenderContext::new(Representation::Human, StyleMode::Ansi, None, &theme, &data);
-        assert_eq!(provider.provide(&ctx_term), Value::from("Ansi"));
+        assert_eq!(provider.provide(&ctx_term), RenderData::from("Ansi"));
 
         let ctx_text =
             RenderContext::new(Representation::Human, StyleMode::Plain, None, &theme, &data);
-        assert_eq!(provider.provide(&ctx_text), Value::from("Plain"));
+        assert_eq!(provider.provide(&ctx_text), RenderData::from("Plain"));
     }
 
     #[test]
     fn provider_uses_data() {
         let theme = Theme::new();
-        let data = serde_json::json!({"count": 42});
+        let data = crate::test_data!({"count": 42});
         let ctx = RenderContext::new(Representation::Human, StyleMode::Plain, None, &theme, &data);
 
-        let provider = |ctx: &RenderContext| -> Value {
+        let provider = |ctx: &RenderContext| -> RenderData {
             let count = ctx.data.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
-            Value::from(count * 2)
+            RenderData::from(count * 2)
         };
 
-        assert_eq!(provider.provide(&ctx), Value::from(84));
+        assert_eq!(provider.provide(&ctx), RenderData::from(84));
     }
 }

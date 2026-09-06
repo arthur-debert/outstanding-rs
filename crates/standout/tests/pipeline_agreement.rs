@@ -4,10 +4,10 @@ use std::rc::Rc;
 
 use clap::{Arg, Command};
 use console::Style;
-use minijinja::Value;
 use serde_json::json;
 use standout::cli::{render_help, App, HelpConfig, Output, RenderedOutput};
 use standout::context::{ContextRegistry, RenderContext};
+use standout::RenderData;
 use standout::{
     render_request, AmbiguousWidth, ColorMode, ColorPolicy, IconMode, InputSources,
     MiniJinjaEngine, RenderRequest, Representation, SharedTemplateEngine, TargetProperties,
@@ -29,9 +29,7 @@ fn capable_target() -> TargetProperties {
 
 fn shout_engine() -> MiniJinjaEngine {
     let mut engine = MiniJinjaEngine::new();
-    engine
-        .environment_mut()
-        .add_filter("shout", |value: String| value.to_uppercase());
+    engine.add_filter("shout", |value: String| value.to_uppercase());
     engine
 }
 
@@ -95,9 +93,9 @@ fn composition_app(templates: &std::path::Path) -> App {
         .template_engine(Box::new(shout_engine()))
         .templates_dir(templates)
         .unwrap()
-        .context("app_version", Value::from("9.9"))
+        .context("app_version", RenderData::from("9.9"))
         .context_fn("where", |ctx: &RenderContext| {
-            Value::from(format!("w{}", ctx.terminal_width.unwrap_or(0)))
+            RenderData::from(format!("w{}", ctx.terminal_width.unwrap_or(0)))
         })
         .command_with(
             "greet",
@@ -118,12 +116,12 @@ fn composition_request(
     registry.add_template_dir(templates).unwrap();
     registry.refresh().unwrap();
     let mut context_registry = ContextRegistry::new();
-    context_registry.add_static("app_version", Value::from("9.9"));
+    context_registry.add_static("app_version", RenderData::from("9.9"));
     context_registry.add_provider("where", |ctx: &RenderContext| {
-        Value::from(format!("w{}", ctx.terminal_width.unwrap_or(0)))
+        RenderData::from(format!("w{}", ctx.terminal_width.unwrap_or(0)))
     });
     RenderRequest {
-        data: json!({"name": "Ada", "label": "hi"}),
+        data: json!({"name": "Ada", "label": "hi"}).into(),
         template: TemplateRef::Inline(COMPOSITION_TEMPLATE.to_string()),
         theme: app.get_default_theme().clone(),
         format: Representation::Human,

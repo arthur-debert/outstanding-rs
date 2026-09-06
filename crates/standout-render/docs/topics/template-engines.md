@@ -120,13 +120,13 @@ let output = renderer.render("status", &data)?;
 ### With render_auto_with_engine
 
 ```rust
-use standout_render::{render_auto_with_engine, StyleMode, Theme};
+use standout_render::{render_auto_with_engine, RenderData, Representation, StyleMode, Theme};
 use standout_render::template::SimpleEngine;
 use standout_render::context::{ContextRegistry, RenderContext};
 
 let engine = SimpleEngine::new();
 let theme = Theme::new();
-let data = serde_json::json!({"name": "World"});
+let data: RenderData = serde_json::json!({"name": "World"}).into();
 
 let registry = ContextRegistry::new();
 let render_ctx = RenderContext::new(Representation::Human, StyleMode::Plain, Some(80), &theme, &data);
@@ -164,11 +164,18 @@ When multiple files share the same base name, higher-priority extensions win for
 
 ## Implementing a Custom Engine
 
-To create your own template engine, implement the `TemplateEngine` trait:
+`TemplateEngine` receives `RenderData`, which retains formatted children through
+nested collections. Construct it with `RenderData::from_serialize(&data)?`;
+converting through JSON first discards formatting. `to_json()` returns the
+structured plain-text projection.
+
+Custom engines must preserve the [text and formatting rules](templating.md#text-and-formatted-values)
+when substituting data and return text with deliberate style markup for the
+bracket parser. Implement `TemplateEngine`:
 
 ```rust
 use standout_render::template::TemplateEngine;
-use standout_render::RenderError;
+use standout_render::{RenderData, RenderError};
 use std::collections::HashMap;
 
 pub struct MyEngine {
@@ -179,7 +186,7 @@ impl TemplateEngine for MyEngine {
     fn render_template(
         &self,
         template: &str,
-        data: &serde_json::Value,
+        data: &RenderData,
     ) -> Result<String, RenderError> {
         // Your rendering logic here
         Ok(format!("Rendered: {}", template))
@@ -193,7 +200,7 @@ impl TemplateEngine for MyEngine {
     fn render_named(
         &self,
         name: &str,
-        data: &serde_json::Value,
+        data: &RenderData,
     ) -> Result<String, RenderError> {
         let template = self.templates.get(name)
             .ok_or_else(|| RenderError::TemplateNotFound(name.to_string()))?;
@@ -207,8 +214,8 @@ impl TemplateEngine for MyEngine {
     fn render_with_context(
         &self,
         template: &str,
-        data: &serde_json::Value,
-        context: HashMap<String, serde_json::Value>,
+        data: &RenderData,
+        context: HashMap<String, RenderData>,
     ) -> Result<String, RenderError> {
         // Merge context with data and render
         self.render_template(template, data)
@@ -265,3 +272,7 @@ use standout_render::{
     render_auto_with_engine,  // Render with custom engine
 };
 ```
+
+Register custom MiniJinja filters with `MiniJinjaEngine::add_filter`. Register
+templates through `TemplateEngine::add_template`; each source is validated and
+adapted before compilation, including sources used by includes and imports.

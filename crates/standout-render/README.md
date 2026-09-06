@@ -17,7 +17,14 @@ let output = render(
 )?;
 ```
 
-`render_request` is the contract: pass an owned `RenderRequest` (data, template, theme, format, color policy, `TargetProperties`) and get bytes back. `render`, `render_with_output`, and siblings stay as detect-then-call wrappers — they probe the process at their edge, build a request, and delegate. They keep their own names. Tests construct `TargetProperties` instead of installing detector overrides; those APIs (`set_terminal_width_detector`, `set_color_capability_detector`, `set_theme_detector`, `set_icon_detector`, and the `detect_*` cluster they served) are removed.
+`{{ value }}` displays supplied brackets and backslashes literally and makes
+terminal controls visible. Construct deliberate styles with `FormattedText`;
+structured output serializes its plain text. See [Text and formatted
+values](docs/topics/templating.md#text-and-formatted-values).
+
+`render_request` accepts owned `RenderData`, template, theme, color policy and
+`TargetProperties`. Convenience functions such as `render` detect destination
+properties and build the request; tests can supply those properties directly.
 
 ## Why standout-render?
 

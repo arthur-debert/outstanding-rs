@@ -440,7 +440,8 @@ Then use the `style_as` filter to apply styles based on the value itself:
 {% endfor %}
 ```
 
-The `style_as` filter wraps the value in style tags: `[done]done[/done]`. The rendering system then applies the green color.
+The `style_as` filter validates the style name and formats the literal value.
+A `done` status receives the green style; brackets in the value remain text.
 
 Output (with colors):
 
