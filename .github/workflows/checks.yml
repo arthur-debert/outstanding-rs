@@ -1,13 +1,13 @@
-name: Checks
+name: Quality checks
 
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
     inputs:
       macos:
-        description: Also validate macOS
+        description: Run on macOS instead of Linux
         type: boolean
         default: false
 
@@ -20,13 +20,10 @@ permissions:
 
 jobs:
   quality:
-    name: Quality (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: ${{ fromJSON(inputs.macos && '["ubuntu-24.04", "macos-15"]' || '["ubuntu-24.04"]') }}
-    runs-on: ${{ matrix.os }}
+    name: Format, lint, and test
+    runs-on: ${{ inputs.macos && 'macos-15' || 'ubuntu-24.04' }}
     env:
+      DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
       CARGO_INCREMENTAL: '0'
       SCCACHE_BASEDIRS: ${{ github.workspace }}
       SCCACHE_CLIENT_SIDE: '1'
@@ -42,7 +39,10 @@ jobs:
           path: .quality-tools
           key: quality-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/install-quality-tools', 'scripts/install-sccache', 'scripts/tool-versions.env', 'scripts/quality-tools/package*.json', '.node-version') }}
       - name: Install quality tools
-        run: scripts/install-quality-tools
+        run: |
+          scripts/install-quality-tools
+          source scripts/tool-versions.env
+          echo "SCCACHE_VERSION=$SCCACHE_VERSION" >> "$GITHUB_ENV"
 
       - name: Cache Rust toolchain
         uses: actions/cache@v5
@@ -52,55 +52,23 @@ jobs:
       - name: Install repository Rust toolchain
         run: rustup show
 
-      - name: Cache downloaded Rust dependencies
-        uses: actions/cache@v5
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/registry/src
-            ~/.cargo/git
-          key: cargo-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}
-          restore-keys: |
-            cargo-deps-${{ runner.os }}-${{ runner.arch }}-
+          shared-key: ${{ runner.os }}-${{ runner.arch }}
+          cache-bin: false
 
-      - name: Cache compiled Rust outputs
-        uses: actions/cache@v5
+      - name: Load secrets from Doppler
+        if: env.DOPPLER_TOKEN != ''
+        uses: DopplerHQ/secrets-fetch-action@v2.0.0
         with:
-          path: target
-          key: rust-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'scripts/quality') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ hashFiles('crates/**') }}
-          restore-keys: |
-            rust-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'scripts/quality') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-
-            rust-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'scripts/quality') }}-
-
-      - name: Cache local compiler results
-        uses: actions/cache@v5
+          doppler-token: ${{ env.DOPPLER_TOKEN }}
+          inject-env-vars: true
+      - name: Set up shared compiler cache
+        uses: arthur-debert/release/.github/actions/setup-sccache@v3
         with:
-          path: |
-            ~/.cache/sccache
-            ~/Library/Caches/Mozilla.sccache
-          key: sccache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'scripts/tool-versions.env') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ hashFiles('crates/**') }}
-          restore-keys: |
-            sccache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'scripts/tool-versions.env') }}-
-
-      - name: Install Doppler
-        uses: dopplerhq/cli-action@v4
+          gcs-key: ${{ env.SCCACHE_GCS_KEY }}
+          key-prefix: ${{ github.repository }}/${{ runner.os }}/${{ runner.arch }}
+          version: v${{ env.SCCACHE_VERSION }}
       - name: Run repository quality checks
-        env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
-        run: |
-          if [ -n "$DOPPLER_TOKEN" ]; then
-            doppler run -- scripts/with-sccache scripts/quality
-          else
-            scripts/quality
-          fi
-
-  check:
-    if: always()
-    needs: quality
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Require quality checks to pass
-        env:
-          RESULT: ${{ needs.quality.result }}
-        run: test "$RESULT" = success
+        run: scripts/with-sccache --keep-server scripts/quality
