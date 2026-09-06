@@ -2,12 +2,12 @@ use clap::Command;
 use serde_json::json;
 use standout::cli::{
     App, CommandContext, CommandContextInput, Confirmation, ConfirmationAcceptance, DispatchResult,
-    FnHandler, HandlerResult, Output,
+    ExitStatus, FnHandler, HandlerResult, HelpResult, Output, RunErrorKind,
 };
 use standout::input::questionnaire::{
     AnswerSheetDiagnostic, AnswerSheetFormat, Questionnaire as RuntimeQuestionnaire, RawAnswers,
 };
-use standout::EmbeddedTemplates;
+use standout::{EmbeddedTemplates, InputSources};
 use standout_test::{serial, TestHarness, TestResult};
 
 const TEMPLATES: &[(&str, &str)] = &[("entry", "{{ name }}/{{ region }}")];
@@ -264,25 +264,176 @@ fn a_parent_global_yes_collides_with_the_injected_questionnaire_flag() {
     );
 }
 
+fn global_yes() -> clap::Arg {
+    clap::Arg::new("yes")
+        .long("yes")
+        .global(true)
+        .action(clap::ArgAction::SetTrue)
+}
+
+fn run_with(cmd: Command) -> TestResult {
+    TestHarness::new().fixture("answers.txt", SPEC_SHEET).run(
+        &spec_sheet_app(),
+        cmd,
+        ["formlike", "entry", "--answers", "answers.txt", "--yes"],
+    )
+}
+
+fn assert_reserved_name_reported(result: &TestResult, name: &str) {
+    let error = error_text(result);
+    assert!(
+        error.contains(&format!("declares reserved name(s): {name}")),
+        "{error}"
+    );
+    assert_eq!(result.error_kind(), Some(RunErrorKind::ClapUsage));
+    result.assert_exit_status(ExitStatus::USAGE_ERROR);
+}
+
 #[test]
 #[serial(questionnaire)]
-#[should_panic(expected = "Long option names must be unique")]
-fn running_a_parent_global_yes_panics_today_instead_of_reporting_the_reserved_name() {
+fn running_a_parent_global_yes_reports_the_reserved_name_clap_would_have_crashed_on() {
+    let cmd = Command::new("formlike")
+        .subcommand_required(true)
+        .arg(global_yes())
+        .subcommand(Command::new("entry"));
+
+    assert_reserved_name_reported(&run_with(cmd), "--yes");
+}
+
+#[test]
+#[serial(questionnaire)]
+fn a_global_reaching_the_questionnaire_through_an_alias_is_reported_the_same_way() {
     let cmd = Command::new("formlike")
         .subcommand_required(true)
         .arg(
-            clap::Arg::new("yes")
-                .long("yes")
+            clap::Arg::new("confirm")
+                .long("confirm")
+                .alias("yes")
                 .global(true)
                 .action(clap::ArgAction::SetTrue),
         )
         .subcommand(Command::new("entry"));
 
-    TestHarness::new().fixture("answers.txt", SPEC_SHEET).run(
+    assert_reserved_name_reported(&run_with(cmd), "--yes");
+}
+
+#[test]
+#[serial(questionnaire)]
+fn a_global_two_levels_above_the_questionnaire_reaches_it_too() {
+    let cmd = Command::new("formlike")
+        .subcommand_required(true)
+        .arg(global_yes())
+        .subcommand(
+            Command::new("forms")
+                .subcommand_required(true)
+                .subcommand(Command::new("entry")),
+        );
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(
+            &[("forms/entry", "{{ name }}/{{ region }}")],
+            "",
+        ))
+        .command_with("forms.entry", FnHandler::new(entry), |cfg| {
+            cfg.questionnaire::<EntryAnswers>()
+                .answer_sheet_format(SpecSheet)
+        })
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let verified = app.verify_command(&cmd).unwrap_err().to_string();
+    assert!(
+        verified.contains("declares reserved name(s): --yes"),
+        "{verified}"
+    );
+
+    let result = TestHarness::new().fixture("answers.txt", SPEC_SHEET).run(
+        &app,
+        cmd,
+        [
+            "formlike",
+            "forms",
+            "entry",
+            "--answers",
+            "answers.txt",
+            "--yes",
+        ],
+    );
+    assert_reserved_name_reported(&result, "--yes");
+}
+
+#[test]
+#[serial(questionnaire)]
+fn a_global_clap_propagates_without_colliding_still_runs() {
+    let cmd = Command::new("formlike")
+        .subcommand_required(true)
+        .arg(
+            clap::Arg::new("verbose")
+                .long("verbose")
+                .global(true)
+                .action(clap::ArgAction::SetTrue),
+        )
+        .subcommand(Command::new("entry"));
+
+    assert!(spec_sheet_app().verify_command(&cmd).is_ok());
+
+    let result = TestHarness::new().fixture("answers.txt", SPEC_SHEET).run(
         &spec_sheet_app(),
         cmd,
-        ["formlike", "entry", "--answers", "answers.txt", "--yes"],
+        [
+            "formlike",
+            "entry",
+            "--answers",
+            "answers.txt",
+            "--yes",
+            "--verbose",
+        ],
     );
+
+    result.assert_success();
+    assert_eq!(result.stdout(), "ada/eu");
+}
+
+#[test]
+#[serial(questionnaire)]
+fn the_parse_only_entry_point_reports_the_reserved_name_as_well() {
+    let colliding = Command::new("formlike")
+        .subcommand_required(true)
+        .arg(global_yes())
+        .subcommand(Command::new("entry"));
+
+    match spec_sheet_app().get_matches_from(
+        colliding,
+        ["formlike", "entry"],
+        &InputSources::from_process(),
+    ) {
+        HelpResult::Error(error) => assert!(
+            error
+                .to_string()
+                .contains("declares reserved name(s): --yes"),
+            "{error}"
+        ),
+        other => panic!("expected a reserved-name error, got {other:?}"),
+    }
+
+    let clear = Command::new("formlike")
+        .subcommand_required(true)
+        .arg(
+            clap::Arg::new("verbose")
+                .long("verbose")
+                .global(true)
+                .action(clap::ArgAction::SetTrue),
+        )
+        .subcommand(Command::new("entry"));
+
+    match spec_sheet_app().get_matches_from(
+        clear,
+        ["formlike", "entry", "--verbose"],
+        &InputSources::from_process(),
+    ) {
+        HelpResult::Matches(matches) => assert_eq!(matches.subcommand_name(), Some("entry")),
+        other => panic!("expected matches, got {other:?}"),
+    }
 }
 
 #[test]
