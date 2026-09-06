@@ -1,10 +1,3 @@
-//! `preserve_order` (crates/standout-render/Cargo.toml) makes the
-//! standalone `render_request_split` entry point emit JSON, YAML, and CSV
-//! keys in the data's declaration order rather than alphabetically.
-//! `App` dispatch (crates/standout) delegates here, so this is the shared
-//! seam both paths run through; see docs/topics/output-modes.md
-//! "Key ordering".
-
 use std::collections::HashMap;
 
 use serde_json::json;

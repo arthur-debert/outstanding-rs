@@ -1,6 +1,3 @@
-//! ANSI-aware text measurement, truncation, and padding: escapes are preserved
-//! in output and excluded from display width.
-
 use crate::width::VisibleTruncateAt;
 use crate::{AmbiguousWidth, WidthCalculator};
 use standout_bbparser::ansi::ansi_units;

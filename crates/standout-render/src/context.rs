@@ -1,9 +1,3 @@
-//! Injects extra objects into template rendering beyond the handler's
-//! serialized data — table formatters, terminal info, environment values —
-//! via [`ContextProvider`]s that receive a [`RenderContext`] and return a
-//! MiniJinja [`Value`], either statically or computed from render-time
-//! conditions (representation, style mode, terminal width, theme, data).
-
 use super::output::{Representation, StyleMode};
 use super::theme::Theme;
 use crate::AmbiguousWidth;

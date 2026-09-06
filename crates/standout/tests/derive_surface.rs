@@ -1,8 +1,3 @@
-//! The derive path a standout-only downstream sees, driven end to end.
-//!
-//! The fixture crate is the compile-time half (it depends on `standout` alone
-//! and denies warnings); these run the app it wires.
-
 use clap::Command;
 use standout::cli::FnHandler;
 use standout::cli::{App, CommandContext, GroupBuilder, HandlerResult, Output};

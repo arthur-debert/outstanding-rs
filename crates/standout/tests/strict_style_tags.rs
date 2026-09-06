@@ -1,6 +1,3 @@
-//! `AppBuilder::strict_style_tags`: an unresolved style tag fails the run instead of
-//! degrading to unstyled text plus a stderr warning.
-
 use clap::Command;
 use serde_json::json;
 use standout::cli::handler::{DispatchResult, ExitStatus, RunErrorKind};

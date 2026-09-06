@@ -1,19 +1,3 @@
-//! MiniJinja filters (`col`, `pad_left`, `pad_right`, `pad_center`,
-//! `truncate_at`, `display_width`, `style_as`) and global functions
-//! (`tabular(columns, ...)`, `table(columns, ...)`) for columnar output.
-//!
-//! Both functions take `rows` — the row arrays about to be rendered — and
-//! size every `{min, max}` column to the widest cell they hold, the
-//! whole-table measurement a formatter that sees one row at a time cannot do
-//! on its own; `table()` measures its `header` alongside them.
-//!
-//! Columns are defined as dicts with `width` (a number, `"fill"`, `"Nfr"`,
-//! or `{min, max}`/`{fraction}`), `align`, `truncate`, `key`, `header`,
-//! `style`, `null_repr`, `anchor`, `overflow`, and `sub_columns`. BBCode-style
-//! style tags (`[bold]...[/bold]`) are treated as zero-width throughout: width
-//! measurement excludes tag bytes, and tags stay balanced after padding or
-//! truncation.
-
 use minijinja::value::ValueKind;
 use minijinja::{Environment, Value};
 

@@ -1,15 +1,3 @@
-//! Schema snapshots: the key names and JSON value types of a structured
-//! document, with every value ignored (`docs/topics/stability.md`).
-//!
-//! A schema is the document with each scalar replaced by its type name
-//! (`"string"`, `"number"`, `"boolean"`, `"null"`), each object mapped key by
-//! key, and each array reduced to its distinct element schemas in order of
-//! first appearance. The stored file is that schema as pretty JSON under
-//! `tests/schemas/<name>` in the crate under test (`CARGO_MANIFEST_DIR`). A
-//! missing file is written and the assertion fails, so a first run never
-//! passes on nothing; `STANDOUT_UPDATE_SNAPSHOTS=1` rewrites a stored file
-//! to accept an intentional change.
-
 use serde_json::Value;
 use standout_render::Representation;
 use std::path::{Path, PathBuf};

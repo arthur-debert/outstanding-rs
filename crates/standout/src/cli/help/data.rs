@@ -214,7 +214,6 @@ fn is_clap_generated_help_subcommand(parent: &Command, sub: &Command) -> bool {
     sub.get_name() == "help" && !parent.is_disable_help_subcommand_set()
 }
 
-/// `None` when no command sits at `path` (empty for the root).
 pub(crate) fn extract_help_data(
     root: &Command,
     path: &[&str],

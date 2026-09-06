@@ -1,6 +1,3 @@
-//! What an incremental command writes under an encoding with no line framing:
-//! one document at the end, or the diagnostic in its place.
-
 use clap::{ArgMatches, Command};
 use serde_json::{json, Value};
 use standout::cli::hooks::TextOutput;

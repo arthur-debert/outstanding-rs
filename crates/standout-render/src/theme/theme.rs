@@ -1,10 +1,3 @@
-//! A named collection of styles, built programmatically or loaded from
-//! YAML/CSS, that resolves to a [`Styles`] set for a given [`ColorMode`].
-//! Styles have a base value plus optional light/dark overrides; aliases
-//! point at another style name and are resolved at [`Theme::resolve_styles`]
-//! time rather than eagerly, so themes can be [`Theme::merge`]d (e.g. a
-//! framework base layered with user overrides) without breaking references.
-
 use std::collections::HashMap;
 
 use console::Style;

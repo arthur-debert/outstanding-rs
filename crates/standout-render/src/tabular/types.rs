@@ -1,5 +1,3 @@
-//! Table layout configuration: column widths, alignment, truncation, decorations.
-
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

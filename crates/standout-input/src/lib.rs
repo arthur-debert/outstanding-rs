@@ -9,12 +9,6 @@
 //! Feature flags: `editor` (default) enables [`EditorCollector`];
 //! `simple-prompts` (default) enables basic terminal prompts; `inquire`
 //! enables rich TUI prompts.
-//!
-//! The [`questionnaire`] module renders an application-defined questionnaire
-//! as an editable prose answer sheet, collects answers from prompts, a file,
-//! or stdin, and decodes every submission through one validation pipeline
-//! keyed by stable identity. See its module doc for the format and
-//! compatibility contract.
 
 mod chain;
 mod collector;

@@ -1,27 +1,19 @@
-//! Structured records of what the style-tag pass could not resolve,
-//! captured for callers that need more than the rendered output.
+//! Structured records of what the style-tag pass could not resolve.
 //!
-//! [`resolve_tags`] is the render path's replacement for building a
-//! [`BBParser`] directly: same output, but unresolved-tag warnings go to an
-//! optional [`crate::warnings::WarningBuffer`] and a [`TagResolution`] is
-//! recorded for every pass while a capture window is open.
-//!
-//! Capture is off by default. [`resolve_tags`] runs on every render,
-//! including a standalone [`Renderer`](crate::Renderer) that may render
-//! millions of times in a long-lived process, so nothing is recorded unless
-//! [`begin_capture`] has opened a [`CaptureWindow`]. The window is a guard
-//! rather than a begin/end pair so that a handler panicking mid-render still
-//! closes it (via unwind) instead of leaking an ever-growing collector.
+//! Capture is off by default. [`resolve_tags`] runs on every render, including
+//! a standalone [`Renderer`](crate::Renderer) that may render millions of times
+//! in a long-lived process, so nothing is recorded unless [`begin_capture`] has
+//! opened a [`CaptureWindow`]. The window is a guard rather than a begin/end
+//! pair so that a handler panicking mid-render still closes it via unwind
+//! instead of leaking an ever-growing collector.
 //!
 //! Windows nest: a handler may drive another app through `run_to_string`,
 //! opening an inner window inside the outer one. Closing the inner window
-//! publishes its own batch to `take_captured` *and* folds it into the
-//! enclosing window one level deeper on [`TagResolution::nesting_depth`] —
+//! publishes its own batch to `take_captured` *and* folds it into the enclosing
+//! window one level deeper on [`TagResolution::nesting_depth`] —
 //! unconditionally, because this layer sees only the returned `String` and
-//! cannot tell whether the caller embedded it or discarded it, and
-//! under-reporting a page that does embed it would leave no evidence at all
-//! in `Text` mode. A caller that wants only its own run's passes filters on
-//! `nesting_depth() == 0`.
+//! cannot tell whether the caller embedded it or discarded it. A caller that
+//! wants only its own run's passes filters on `nesting_depth() == 0`.
 
 use std::cell::RefCell;
 use std::collections::HashMap;

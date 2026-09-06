@@ -1,6 +1,3 @@
-//! [`TemplateEngine`] abstracts the template backend; [`MiniJinjaEngine`] is
-//! the default.
-
 use minijinja::{Environment, Value};
 
 use std::collections::HashMap;

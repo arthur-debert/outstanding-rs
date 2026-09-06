@@ -35,7 +35,7 @@ pub(crate) fn human_help_format(mode: Representation) -> Representation {
     }
 }
 
-/// Without the newline the process edge appends; `None` when no command sits at `path`.
+/// Without the newline the process edge appends.
 pub(crate) fn render_help_document(
     root: &Command,
     path: &[&str],

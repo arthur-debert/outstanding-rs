@@ -1,21 +1,17 @@
 //! In-process test harness for apps built on the `standout` CLI framework.
 //!
-//! [`TestHarness`] is a fluent builder over the injection seams a test
-//! needs: env vars, cwd, stdin, clipboard, the representation, the color
-//! policy and whether stdout is a terminal, theme facts on
-//! `TargetProperties`, and tempdir fixtures. `run` applies every override,
-//! calls into the app in-process, and a `Drop` impl restores everything on
-//! success or panic. [`TestResult`] then exposes the run's
-//! result values as data ([`TestResult::result`]), the rendered bytes
-//! ([`TestResult::stdout`]) and the delivery decision
-//! ([`TestResult::delivery`]) separately, plus structured facts like style-tag
-//! resolutions that a text search can't get at.
+//! [`TestHarness`] is a fluent builder over the injection seams a test needs:
+//! env vars, cwd, stdin, clipboard, the representation, the color policy and
+//! whether stdout is a terminal, theme facts on `TargetProperties`, and tempdir
+//! fixtures. `run` applies every override, calls into the app in-process, and a
+//! `Drop` impl restores everything on success or panic. [`TestResult`] exposes
+//! the run's result values as data, the rendered bytes and the delivery
+//! decision separately.
 //!
-//! There is no in-process TTY simulation: [`TestHarness::run_process`]
-//! spawns the real binary and [`TestHarness::run_pty`] (Unix) gives it a
-//! pseudo-terminal. The fixed `TargetProperties` defaults and the
-//! `#[serial]` rule for tests that mutate env or cwd are in
-//! `docs/topics/testing.md`.
+//! There is no in-process TTY simulation: [`TestHarness::run_process`] spawns
+//! the real binary and [`TestHarness::run_pty`] (Unix) gives it a
+//! pseudo-terminal. The fixed `TargetProperties` defaults and the `#[serial]`
+//! rule for tests that mutate env or cwd are in `docs/topics/testing.md`.
 
 use clap::Command;
 use standout::cli::DispatchResult;
