@@ -40,7 +40,7 @@ while IFS= read -r -d '' file; do
             if [[ "$first_line" =~ ^\#!.*(bash|/sh)$ ]]; then files+=("$file"); fi
             ;;
     esac
-done < <(git ls-files -z -- '*.sh' '*.env' 'scripts/*' '.agents/hooks/*')
+done < <(git ls-files -z -- '*.sh' '*.env' 'scripts/*' 'app-bin/*' '.agents/hooks/*')
 if ((${#files[@]})); then shellcheck -x "${files[@]}"; fi
 
 printf 'Checking Rust formatting\n'

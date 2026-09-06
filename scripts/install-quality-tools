@@ -5,12 +5,16 @@ project_root=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
 cd "$project_root"
 # shellcheck source=scripts/tool-versions.env
 source scripts/tool-versions.env
+fingerprint=$(cat scripts/install-quality-tools scripts/install-sccache \
+    scripts/tool-versions.env scripts/quality-tools/package{,-lock}.json | shasum -a 256 | awk '{print $1}')
+if [[ "${1:-}" == --cache-key ]]; then
+    printf '%s\n' "$fingerprint"
+    exit 0
+fi
 prefix=${1:-"$project_root/.quality-tools"}
 mkdir -p "$prefix/bin" "$prefix/npm"
 prefix=$(cd "$prefix" && pwd -P)
 export PATH="$prefix/bin:$PATH"
-fingerprint=$(cat scripts/install-quality-tools scripts/install-sccache \
-    scripts/tool-versions.env scripts/quality-tools/package{,-lock}.json | shasum -a 256 | awk '{print $1}')
 if [[ -f "$prefix/.installed" && "$(cat "$prefix/.installed")" == "$fingerprint" ]] &&
     [[ -x "$prefix/bin/node" && -x "$prefix/bin/lefthook" && -x "$prefix/bin/shellcheck" &&
        -x "$prefix/bin/sccache" && -x "$prefix/bin/markdownlint" && -x "$prefix/bin/prettier" ]]; then
