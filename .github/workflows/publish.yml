@@ -39,8 +39,9 @@ jobs:
           path: ~/.rustup/toolchains
           key: rust-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}
 
-      - name: Cache release tools
-        uses: actions/cache@v5
+      - name: Restore release tools
+        id: release-tools
+        uses: actions/cache/restore@v5
         with:
           path: .quality-tools
           key: release-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'scripts/tool-versions.env', 'scripts/install-release-tools') }}
@@ -48,6 +49,8 @@ jobs:
       - name: Install repository Rust toolchain
         run: |
           rustup show
+          # rust-cache starts unawaited cleanup of both optional test directories.
+          mkdir -p target/tests/{target,trybuild}
           source scripts/tool-versions.env
           echo "SCCACHE_VERSION=$SCCACHE_VERSION" >> "$GITHUB_ENV"
 
@@ -56,6 +59,7 @@ jobs:
         with:
           shared-key: ${{ runner.os }}-${{ runner.arch }}
           cache-bin: false
+          cache-on-failure: true
 
       - name: Load secrets from Doppler
         uses: DopplerHQ/secrets-fetch-action@v2.0.0
@@ -71,10 +75,26 @@ jobs:
       - name: Install release tools
         run: scripts/with-sccache --keep-server scripts/install-release-tools
 
+      - name: Save installed release tools
+        if: steps.release-tools.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: .quality-tools
+          key: ${{ steps.release-tools.outputs.cache-primary-key }}
+
       - name: Publish the workspace
+        id: publish
         env:
           BUMP: ${{ inputs.bump }}
-        run: |
-          scripts/release/configure-git scripts/release/publish "$BUMP" --execute --no-confirm
-          # rust-cache starts unawaited cleanup of both optional test directories.
-          mkdir -p target/tests/{target,trybuild}
+        run: scripts/release/configure-git scripts/release/publish "$BUMP" --execute --no-confirm
+
+      - name: Preserve release commit after failure
+        if: failure() && steps.publish.outcome == 'failure'
+        run: git bundle create "$RUNNER_TEMP/release-recovery.bundle" HEAD
+      - name: Upload release recovery bundle
+        if: failure() && steps.publish.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-recovery.bundle
+          retention-days: 7
