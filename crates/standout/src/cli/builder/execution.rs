@@ -151,6 +151,12 @@ impl AppBuilder {
                         self.questionnaire_commands
                             .insert(name.clone(), questionnaire);
                     }
+                    if let Some(resolution) = handler.take_questionnaire_resolution() {
+                        self.register_command_questionnaire_resolution(&name, resolution);
+                    }
+                    if handler.without_config() {
+                        self.config_exempt_commands.insert(name.clone());
+                    }
 
                     let recipe = ErasedConfigRecipe::from_handler(handler);
 
@@ -333,6 +339,15 @@ impl App {
 
         if let Some(chains) = self.command_input_chains.get(&path_str) {
             if let Err(e) = chains.run_pre_dispatch(sub_matches, &mut ctx) {
+                return DispatchResult::Error(super::super::dispatch::hook_run_error(
+                    e,
+                    crate::cli::HookPhase::PreDispatch,
+                ));
+            }
+        }
+
+        if let Some(resolution) = self.command_questionnaire_resolution.get(&path_str) {
+            if let Err(e) = resolution.run_pre_dispatch(sub_matches, &mut ctx) {
                 return DispatchResult::Error(super::super::dispatch::hook_run_error(
                     e,
                     crate::cli::HookPhase::PreDispatch,
@@ -888,7 +903,7 @@ impl App {
 
     fn resolve_config_for(&self, matches: &ArgMatches) -> Result<Option<ResolvedConfig>, RunError> {
         let path = extract_command_path(matches).join(".");
-        if !self.get_commands().contains_key(&path) {
+        if !self.get_commands().contains_key(&path) || self.config_exempt_commands.contains(&path) {
             return Ok(None);
         }
         self.resolve_config(matches)

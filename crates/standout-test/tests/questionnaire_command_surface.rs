@@ -1,6 +1,7 @@
 use clap::{Arg, Command, Subcommand};
 use serde_json::json;
 use serial_test::serial;
+use standout::cli::hooks::Hooks;
 use standout::cli::FnHandler;
 use standout::cli::{
     App, CommandContext, CommandContextInput, Dispatch, DispatchResult, HandlerResult, Output,
@@ -10,7 +11,7 @@ use standout::input::{DefaultSource, InputChain, PromptResponse, ScriptedRespond
 use standout::EmbeddedTemplates;
 use standout_test::{TestHarness, TestResult};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 const TEMPLATES: &[(&str, &str)] = &[("other", "{{ name }}"), ("collect", "{{ name }}")];
 #[derive(Debug, Clone, PartialEq, Eq, standout::Questionnaire)]
@@ -428,4 +429,65 @@ fn questionnaire_rejects_existing_input_name_declared_after_it() {
         "{error}"
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+fn app_with_a_pre_dispatch_hook(
+    calls: Arc<AtomicUsize>,
+    recorded: Arc<Mutex<Option<String>>>,
+    derived: bool,
+) -> App {
+    let builder = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .app_state(Calls(calls));
+    let builder = if derived {
+        builder.commands(Commands::dispatch_config()).unwrap()
+    } else {
+        builder
+            .command_with("collect", FnHandler::new(handlers::collect), |cfg| {
+                cfg.questionnaire::<FixtureAnswers>()
+            })
+            .unwrap()
+    };
+    builder
+        .hooks(
+            "collect",
+            Hooks::new().pre_dispatch(move |_matches, ctx| {
+                let answers: &FixtureAnswers = ctx
+                    .questionnaire()
+                    .expect("the questionnaire resolves before the command's pre-dispatch hooks");
+                *recorded.lock().unwrap() = Some(answers.name.clone());
+                Ok(())
+            }),
+        )
+        .build()
+        .expect("a questionnaire and an AppBuilder::hooks pre-dispatch hook belong to one command")
+}
+
+fn assert_the_questionnaire_and_the_hook_both_ran(derived: bool) {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let recorded = Arc::new(Mutex::new(None));
+    let app = app_with_a_pre_dispatch_hook(calls.clone(), recorded.clone(), derived);
+    let result = TestHarness::new()
+        .fixture("answers.txt", answered_sheet("from-file"))
+        .run(
+            &app,
+            command(),
+            ["fixture", "collect", "--answers", "answers.txt", "--yes"],
+        );
+    result.assert_success();
+    assert_eq!(result.stdout(), "from-file");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(recorded.lock().unwrap().as_deref(), Some("from-file"));
+}
+
+#[test]
+#[serial(questionnaire)]
+fn a_derived_questionnaire_leaves_the_pre_dispatch_registration_free() {
+    assert_the_questionnaire_and_the_hook_both_ran(true);
+}
+
+#[test]
+#[serial(questionnaire)]
+fn a_builder_questionnaire_leaves_the_pre_dispatch_registration_free() {
+    assert_the_questionnaire_and_the_hook_both_ran(false);
 }

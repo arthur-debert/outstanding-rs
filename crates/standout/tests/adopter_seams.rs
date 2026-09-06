@@ -285,7 +285,7 @@ fn hooks_read_the_command_s_own_matches() {
 
 #[test]
 #[serial_test::serial(questionnaire)]
-fn questionnaire_resolution_runs_where_its_call_sits_in_the_hook_chain() {
+fn questionnaire_resolution_runs_before_every_pre_dispatch_hook() {
     use standout::cli::{CommandContext, CommandContextInput};
     use standout::input::questionnaire::QuestionnaireInput;
     use standout_fixtures::derive_surface::ProvisionAnswers;
@@ -354,7 +354,7 @@ fn questionnaire_resolution_runs_where_its_call_sits_in_the_hook_chain() {
 
     result.assert_success();
     result.assert_stdout_eq("db-1");
-    assert_eq!(&*seen.borrow(), &["before: no", "after: yes"]);
+    assert_eq!(&*seen.borrow(), &["before: yes", "after: yes"]);
 }
 
 fn framed_failure_app(status: u8, diagnostic: &'static str) -> App {
