@@ -14,7 +14,7 @@ pub enum InputError {
     #[error("Failed to read stdin: {0}")]
     StdinFailed(#[source] io::Error),
 
-    #[error("StdinSource has no reader bound. Return a copy bound to the run's stdin from InputCollector::bind_sources, or construct the source with StdinSource::with_reader.")]
+    #[error("StdinSource has no reader bound. Return a copy bound to the run's stdin from InputCollector::bind_sources, built with StdinSource::with_shared_reader(sources.stdin_arc()); StdinSource::with_reader takes an owned reader such as a MockStdin.")]
     StdinNotBound,
 
     #[error("Failed to read {path}: {source}")]

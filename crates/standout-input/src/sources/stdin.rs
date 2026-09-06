@@ -187,7 +187,9 @@ mod tests {
         let source = StdinSource::new();
         let err = source.collect(&empty_matches()).unwrap_err();
         assert!(matches!(err, InputError::StdinNotBound));
-        assert!(err.to_string().contains("bind_sources"));
+        let message = err.to_string();
+        assert!(message.contains("bind_sources"));
+        assert!(message.contains("with_shared_reader"));
     }
 
     #[test]
