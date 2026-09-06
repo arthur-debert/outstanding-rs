@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC1090
 
-standout_root=$(git rev-parse --show-toplevel)
+standout_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")/.." && pwd -P)
 export PATH="$standout_root/.quality-tools/bin:$PATH"
 
 standout_device_env=/Volumes/code/projects/dotfiles/devdevice/env.sh
