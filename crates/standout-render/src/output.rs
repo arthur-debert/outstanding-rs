@@ -52,43 +52,7 @@ pub fn write_binary_output(content: &[u8], dest: &OutputDestination) -> std::io:
     }
 }
 
-/// What the run produces on stdout. The human template has no `--output`
-/// spelling; `term-debug` is the diagnostic view of its style tags.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Representation {
-    #[default]
-    Human,
-    TermDebug,
-    Json,
-    Yaml,
-    Csv,
-    Ndjson,
-}
-
-impl Representation {
-    pub fn is_human(&self) -> bool {
-        matches!(self, Representation::Human | Representation::TermDebug)
-    }
-
-    pub fn is_debug(&self) -> bool {
-        matches!(self, Representation::TermDebug)
-    }
-
-    pub fn is_structured(&self) -> bool {
-        matches!(
-            self,
-            Representation::Json
-                | Representation::Yaml
-                | Representation::Csv
-                | Representation::Ndjson
-        )
-    }
-
-    /// True only for `Ndjson`, the one representation whose stdout is a stream of entries.
-    pub fn is_stream(&self) -> bool {
-        matches!(self, Representation::Ndjson)
-    }
-}
+pub use standout_types::Representation;
 
 /// Whether rendered human text carries escape sequences. Resolved per run from
 /// the representation, the color policy and the destination; a structured

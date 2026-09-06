@@ -1,0 +1,11 @@
+[package]
+name = "standout-types"
+version = "12.0.1"
+edition = "2021"
+description = "Presentation types shared by the standout crates"
+license = "MIT"
+keywords = ["cli", "terminal", "output", "color"]
+categories = ["command-line-interface"]
+repository = "https://github.com/arthur-debert/standout"
+
+[dependencies]

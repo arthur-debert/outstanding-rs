@@ -1945,6 +1945,7 @@ dependencies = [
  "clap",
  "serde",
  "serde_json",
+ "standout-types",
  "tempfile",
  "thiserror 2.0.20",
 ]
@@ -2031,6 +2032,7 @@ dependencies = [
  "serde_yaml",
  "serial_test",
  "standout-bbparser",
+ "standout-types",
  "tempfile",
  "terminal_size",
  "thiserror 2.0.20",
@@ -2065,6 +2067,10 @@ dependencies = [
  "standout-render",
  "tempfile",
 ]
+
+[[package]]
+name = "standout-types"
+version = "12.0.1"
 
 [[package]]
 name = "static_assertions"
