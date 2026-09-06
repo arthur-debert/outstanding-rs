@@ -9,11 +9,7 @@ pub(crate) fn find_subcommand_recursive<'a>(
 ) -> Option<&'a Command> {
     let mut current = cmd;
     for k in keywords {
-        if let Some(sub) = find_subcommand(current, k) {
-            current = sub;
-        } else {
-            return None;
-        }
+        current = find_subcommand(current, k)?;
     }
     Some(current)
 }
