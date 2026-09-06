@@ -10,4 +10,4 @@ local
 site/
 book/
 .claude/settings.local.json
-/.quality-tools/
+/.quality-tools
