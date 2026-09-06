@@ -25,6 +25,10 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11.16"
+
       - name: Verify crates.io and create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
