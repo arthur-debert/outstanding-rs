@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 source scripts/agent-env
-if [[ ! -e .quality-tools && ! -L .quality-tools ]]; then
+if [[ ! -e .quality-tools || -L .quality-tools ]]; then
   standout_tools_root="${XDG_CACHE_HOME:-$HOME/.cache}/standout/tools"
   if [[ -d $WORKSPACES && -w $WORKSPACES ]]; then
     standout_tools_root="$(cd "$WORKSPACES" && pwd -P)/.standout-tools"
@@ -26,9 +26,10 @@ except OSError as error:
         raise
 PY
   fi
-  ln -s "$standout_tools" .quality-tools
+  ln -sfn "$standout_tools" .quality-tools
+else
+  scripts/install-quality-tools >&2
 fi
-scripts/install-quality-tools >&2
 lefthook install >&2
 
 if [[ -n ${CLAUDE_ENV_FILE:-} ]]; then
