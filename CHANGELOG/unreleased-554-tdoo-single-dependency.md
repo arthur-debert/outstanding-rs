@@ -1,0 +1,1 @@
+- The `tdoo` worked example now declares one `standout` dependency, matching what the guides tell you to write. It had kept direct `standout-dispatch` and `standout-input` entries, so an adopter reading it first copied a `Cargo.toml` the guides say to avoid; its test module reaches those items through `standout::dispatch::` and `standout::input::` instead (closes #554).

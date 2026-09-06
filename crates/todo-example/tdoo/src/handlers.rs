@@ -195,9 +195,9 @@ pub(crate) fn export(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use standout::dispatch::Extensions;
+    use standout::input::{InputSourceKind, Inputs, ResolvedInput};
     use standout::{InputSources, TermSettings};
-    use standout_dispatch::Extensions;
-    use standout_input::{InputSourceKind, Inputs, ResolvedInput};
     use std::path::PathBuf;
     use std::rc::Rc;
     use tempfile::TempDir;
