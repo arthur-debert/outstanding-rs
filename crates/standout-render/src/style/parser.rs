@@ -1,9 +1,3 @@
-//! Parses a YAML stylesheet into [`ThemeVariants`]: base/light/dark style maps
-//! plus alias definitions. During the build phase, light/dark variants are
-//! stored only when a style actually overrides that mode (merged onto base);
-//! [`ThemeVariants::resolve`] falls back to the base style for any mode with
-//! no override, so most styles need no per-mode entry at all.
-
 use std::collections::HashMap;
 
 use console::Style;

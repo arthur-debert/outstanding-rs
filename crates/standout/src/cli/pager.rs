@@ -1,12 +1,12 @@
-//! The pager rule: which command pages a run's human output, how it is
-//! started, and what happens when it will not start or stops reading.
+//! The pager rule: which command pages a run's human output, how it is started,
+//! and what happens when it will not start or stops reading.
 //!
-//! The command comes from the environment only — `<APP>_PAGER`, then `PAGER`
-//! — so no configuration file can name a program the framework will execute.
-//! `<APP>` is the name the application gave the builder. An unset variable and
-//! an empty winning value both mean "do not page": there is no built-in `less`
-//! or `more` to fall back to. The value is a shell word list, not a program
-//! name, so it runs through `sh -c`; Windows has no such shell and never pages.
+//! The command comes from the environment only — `<APP>_PAGER`, then `PAGER` —
+//! so no configuration file can name a program the framework will execute. An
+//! unset variable and an empty winning value both mean "do not page": there is
+//! no built-in `less` or `more` to fall back to. The value is a shell word
+//! list, not a program name, so it runs through `sh -c`; Windows has no such
+//! shell and never pages.
 //!
 //! `page` reports which of three things happened rather than deciding for the
 //! caller: the pager read the bytes, it could not start (the caller still owes

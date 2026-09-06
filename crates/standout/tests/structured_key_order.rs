@@ -1,6 +1,3 @@
-//! `preserve_order` makes JSON, YAML and CSV emit a handler's declared field order
-//! (docs/topics/output-modes.md, "Key ordering"), asserted on a derived struct through `App`.
-
 use clap::Command;
 use serde::Serialize;
 use standout::cli::FnHandler;

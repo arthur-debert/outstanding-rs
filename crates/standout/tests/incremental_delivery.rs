@@ -1,6 +1,3 @@
-//! When an emitted event reaches the destination, and what a reader that walks
-//! away does to the rest of the run.
-
 use clap::{ArgMatches, Command};
 use serde::Serialize;
 use serde_json::json;

@@ -1,7 +1,3 @@
-//! Crate-private process probes used by
-//! [`TargetProperties::detect`](crate::TargetProperties::detect). There is no
-//! override API — tests construct [`crate::TargetProperties`] directly.
-
 use console::Term;
 
 pub(crate) fn probe_terminal_width() -> Option<usize> {

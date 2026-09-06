@@ -1,11 +1,3 @@
-//! Resolves the crate a macro expansion names.
-//!
-//! A consumer either depends on a leaf crate (`standout-input`,
-//! `standout-dispatch`) or only on `standout`, which re-exports both. The
-//! expansion has to name whichever one the consuming crate actually declared,
-//! so each path is read from that crate's manifest at expansion time rather
-//! than hard-coded.
-
 use crate::ident::safe_ident;
 use proc_macro2::{Span, TokenStream};
 use proc_macro_crate::{crate_name, FoundCrate};

@@ -1,9 +1,3 @@
-//! [`StyleAttributes`] is the intermediate form of style properties parsed
-//! from YAML before conversion to `console::Style`. Adaptive resolution
-//! merges mode-specific attributes onto a base using `Option<T>` semantics —
-//! `Some` in the override replaces the base, `None` preserves it — e.g. a
-//! `light:`/`dark:` block overrides only the keys it sets.
-
 use console::Style;
 
 use crate::colorspace::ThemePalette;

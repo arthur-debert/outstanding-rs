@@ -1,5 +1,3 @@
-//! Traits implemented by `#[derive(Tabular)]` and `#[derive(TabularRow)]`.
-
 use super::TabularSpec;
 
 pub trait Tabular {

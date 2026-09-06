@@ -5,7 +5,6 @@ use standout_test::{ProcessResult, TestHarness};
 /// Marks every line it delivered, so a paged page shows in the bytes.
 const MARKING: &str = "sed -e 's/^/PAGED /'";
 
-/// The harness applies every removal after every set.
 fn help(vars: &[(&str, &str)]) -> TestHarness {
     let mut harness = common::tdoo();
     for key in ["PAGER", "TDOO_PAGER"] {

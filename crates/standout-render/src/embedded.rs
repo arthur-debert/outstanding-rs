@@ -1,9 +1,3 @@
-//! Holds both embedded content (for release builds) and a source path (for
-//! debug hot-reload) so the choice between them can be made at runtime via
-//! `cfg!(debug_assertions)` and path existence, rather than at compile time.
-//! `embed_templates!`/`embed_styles!` produce these; `App::builder()`
-//! consumes them.
-
 use std::marker::PhantomData;
 use std::path::Path;
 

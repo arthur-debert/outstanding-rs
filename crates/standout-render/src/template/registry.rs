@@ -1,10 +1,3 @@
-//! [`TemplateRegistry`] wraps [`FileRegistry<String>`](crate::file_loader::FileRegistry)
-//! and resolves template names against four tiers, highest priority first:
-//! inline templates, `add_from_files` templates, directory-registered
-//! templates, then framework (`standout/`-namespaced) defaults. Recognized
-//! extensions are [`TEMPLATE_EXTENSIONS`]; extension matching and collision
-//! rules are those of [`crate::file_loader`].
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};

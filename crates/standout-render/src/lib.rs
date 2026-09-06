@@ -1,10 +1,14 @@
 //! Templating, theming, and adaptive color handling for styled terminal output.
 //!
 //! [`Theme`] maps names to styles that adapt to [`ColorMode`]; templates use
-//! `[name]content[/name]` tags resolved against a theme. [`render_request`] is
-//! the contract (owned [`RenderRequest`] in, bytes out); [`render`] and its
-//! siblings are detect-then-call wrappers around it. [`Renderer`] compiles and
-//! reuses templates for repeated rendering.
+//! `[name]content[/name]` tags resolved against a theme. A style carries base
+//! attributes plus optional `light`/`dark` overrides merged onto that base at
+//! resolve time; stylesheet formats are in
+//! `docs/crates/render/topics/styling-system.md`.
+//!
+//! [`render_request`] is the contract (owned [`RenderRequest`] in, bytes out);
+//! [`render`] and its siblings detect [`TargetProperties`] at their edge and
+//! delegate. [`Renderer`] compiles and reuses templates for repeated rendering.
 
 pub mod colorspace;
 pub mod context;

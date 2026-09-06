@@ -1,7 +1,3 @@
-//! Visual test for alternating table row background colors with tint variants.
-//!
-//! Run with: cargo run -p standout-render --example table_row_styles
-
 use serde::Serialize;
 use standout_render::{render_with_mode, ColorMode, ColorPolicy, Representation, Theme};
 

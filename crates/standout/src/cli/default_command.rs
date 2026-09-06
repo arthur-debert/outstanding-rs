@@ -3,10 +3,10 @@
 //!
 //! [`AppBuilder::default_command`](crate::cli::AppBuilder::default_command)
 //! substitutes a static name; `default_command_with` resolves one per
-//! invocation from non-consuming facts ([`DefaultCommandContext`]: parsed
-//! root matches, read-only app state, whether stdin is a terminal — stdin is
-//! never read here, only checked, so a handler's `InputChain` still sees it
-//! fresh). Both funnel through [`resolve`], reached from every parse path, so
+//! invocation from non-consuming facts ([`DefaultCommandContext`]: parsed root
+//! matches, read-only app state, whether stdin is a terminal — stdin is never
+//! read here, only checked, so a handler's `InputChain` still sees it fresh).
+//! Both funnel through [`resolve`], reached from every parse path, so
 //! `dispatch_from`/`run`/`run_to_string` and `get_matches_from`/`parse_from`
 //! never disagree about which command a line meant.
 //!
@@ -14,9 +14,6 @@
 //! [`ArgMatches::subcommand`], not a manual scan — so `--`, `--flag=value`,
 //! short clusters, aliases, and global args behave exactly as elsewhere
 //! (`docs/adr/0018-let-the-parser-classify-the-command-line.md`).
-//!
-//! A resolver naming a command the CLI doesn't have is an application bug,
-//! reported as [`UnknownDefaultCommand`] rather than a panic.
 
 use clap::{ArgMatches, Command};
 use standout_input::env::StdinReader;

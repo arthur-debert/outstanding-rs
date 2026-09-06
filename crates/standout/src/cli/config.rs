@@ -1,40 +1,32 @@
 //! Where clapfig meets the run pipeline.
 //!
 //! An application hands `App::builder().config(...)` a `clapfig::TypedBuilder<C>`
-//! for its own settings struct. `App` is not generic, so the builder is held behind
-//! [`ConfigSeam`], a trait object that knows how to clone it, apply the override
-//! flag's `key=value` pairs, build a resolver, resolve at a directory into a
-//! `Box<dyn Any>`, and run a `ConfigAction` for the injected `config` command.
-//! [`ResolvedConfig`] carries the erased struct plus an installer that puts it back
-//! into `ctx.extensions` under its real type, where `ctx.config::<C>()` finds it.
+//! for its own settings struct. `App` is not generic, so the builder is held
+//! behind [`ConfigSeam`], a trait object that knows how to clone it, apply the
+//! override flag's `key=value` pairs, build a resolver, resolve at a directory
+//! into a `Box<dyn Any>`, and run a `ConfigAction`. [`ResolvedConfig`] carries
+//! the erased struct plus an installer that puts it back into `ctx.extensions`
+//! under its real type, where `ctx.config::<C>()` finds it.
 //!
 //! Resolution happens once per run, after clap parses and only when the parsed
-//! path names a registered handler: `--help`, usage errors, the help word and the
-//! `config` tree never read the app's configuration, so a broken file cannot take
-//! them down, and the override pairs exist before they are needed. The resolver is
-//! built per run rather than at `App::build()` because clapfig snapshots the process
-//! environment inside `build_resolver`, and a test sets its environment after the
-//! app is built.
+//! path names a registered handler: `--help`, usage errors, the help word and
+//! the `config` tree never read the app's configuration, so a broken file
+//! cannot take them down. The resolver is built per run rather than at
+//! `App::build()` because clapfig snapshots the process environment inside
+//! `build_resolver`, and a test sets its environment after the app is built.
 //!
-//! `[term]` is opt-in through `term_settings(accessor)`: clapfig has no reserved
-//! section and this module does not look for a field by name in someone else's
-//! struct. [`TermSettings`] holds the keys the framework reads for itself;
-//! `output` names one of the four structured encodings and fills
+//! `[term]` is opt-in through `term_settings(accessor)`: clapfig has no
+//! reserved section and this module does not look for a field by name in
+//! someone else's struct. [`TermSettings`] holds the keys the framework reads
+//! for itself; `output` names one of the four structured encodings and fills
 //! `resolve_run`'s fallback arm when `--output` was not typed. It has no
-//! spelling for the human representation, which is what a bare invocation
-//! renders, and none for `term-debug`. `color` is the same three values
-//! `--color` takes and fills the same arm of the color resolution.
+//! spelling for the human representation or for `term-debug`.
 //!
-//! The `config` command is clapfig's `ConfigCommand` tree, installed beside the help
-//! word. clapfig executes the action; this module only projects the `ConfigResult`
-//! into `Output` so it rides the normal render path, which is what makes
-//! `--output json` apply and keeps integers as numbers. Template and schema output
-//! are artifacts. Its file option is spelled `--file` because `--output` is the
-//! global mode flag.
-//!
-//! A `ClapfigError` keeps clapfig's words (`render_plain`) and becomes
-//! `RunErrorKind::Config`; the diagnostic range is filled only when clapfig has a
-//! real position.
+//! The `config` command is clapfig's `ConfigCommand` tree. clapfig executes the
+//! action; this module only projects the `ConfigResult` into `Output` so it
+//! rides the normal render path, which is what makes `--output json` apply and
+//! keeps integers as numbers. Its file option is spelled `--file` because
+//! `--output` is the global mode flag.
 
 use std::any::Any;
 use std::path::Path;

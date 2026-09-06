@@ -1,5 +1,3 @@
-//! Style registry for managing named styles.
-
 use console::Style;
 use std::collections::HashMap;
 

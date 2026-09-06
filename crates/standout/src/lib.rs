@@ -1,12 +1,8 @@
 //! Standout is a CLI output framework that decouples application logic from
 //! terminal presentation: template rendering (MiniJinja + styled tag syntax),
 //! adaptive light/dark themes, terminal capability detection, the
-//! representation and color policy of a run, help topics, and pager support. It is
-//! CLI-agnostic at its core; for clap integration see the [`cli`] module.
-//!
-//! [`render_request`] is the contract: [`render`] and its siblings detect
-//! [`TargetProperties`] at their edge, build a [`RenderRequest`], and
-//! delegate.
+//! representation and color policy of a run, help topics, and pager support. It
+//! is CLI-agnostic at its core; for clap integration see the [`cli`] module.
 //!
 //! ```rust
 //! use standout::{render, Theme};

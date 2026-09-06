@@ -2,10 +2,9 @@
 //! installs, the entry points that dispatch a command, and the write of what
 //! the run produced.
 //!
-//! The payload and delivery decisions read the post-output hooks' final
-//! result, and the pager delivery is recorded on the final outcome, because a
-//! hook can still turn a document into a payload or add a report to an
-//! artifact whose handler returned none.
+//! The payload and delivery decisions read the post-output hooks' final result,
+//! because a hook can still turn a document into a payload or add a report to
+//! an artifact whose handler returned none.
 
 use crate::{
     open_output_file, write_binary_output, write_output, ColorPolicy, InputSources,

@@ -1,5 +1,3 @@
-//! Error types for style validation and stylesheet parsing.
-
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,6 +1,3 @@
-//! `tdoo list` is the application's pageable command, run as a process so the
-//! pager is really started and the bytes really cross a terminal.
-
 mod common;
 
 use standout_test::{ProcessResult, TestHarness};
@@ -8,7 +5,6 @@ use standout_test::{ProcessResult, TestHarness};
 /// Marks every line it delivered, so a paged run shows in the bytes.
 const MARKING: &str = "sed -e 's/^/PAGED /'";
 
-/// The harness applies every removal after every set.
 fn listing(vars: &[(&str, &str)]) -> TestHarness {
     let mut harness = common::tdoo();
     for key in ["PAGER", "TDOO_PAGER"] {

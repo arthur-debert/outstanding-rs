@@ -1,6 +1,3 @@
-//! An event value that does not serialize fails the run, whether the handler
-//! propagates the `emit` failure or swallows it.
-
 use clap::{ArgMatches, Command};
 use serde::Serialize;
 use standout::cli::{

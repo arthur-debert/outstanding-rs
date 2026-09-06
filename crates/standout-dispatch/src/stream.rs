@@ -1,13 +1,12 @@
 //! The one destination a run's rendered bytes reach.
 //!
-//! Every byte a run produces goes through a [`StreamSink`]: a handler's
-//! incremental events as they are emitted, then the result or the diagnostic,
-//! then the warning entries. The process edge writes through it to stdout; a
-//! capture entry point hands it a [`StreamCapture`] and reads the bytes back;
-//! an output file override retargets it before the handler runs, so the file
-//! receives the whole run and stdout nothing — [`StreamSink::redirect`] straight
-//! away, or [`StreamSink::redirect_on_first_write`] when a run that writes
-//! nothing should leave the file uncreated.
+//! Every byte a run produces goes through a [`StreamSink`]: incremental events
+//! as they are emitted, then the result or the diagnostic, then the warning
+//! entries. An output file override retargets it before the handler runs, so
+//! the file receives the whole run and stdout nothing —
+//! [`StreamSink::redirect`] straight away, or
+//! [`StreamSink::redirect_on_first_write`] when a run that writes nothing
+//! should leave the file uncreated.
 //!
 //! The sink classifies a `BrokenPipe` from its writer rather than reporting
 //! it: a reader that left closes the sink, every later write is discarded and

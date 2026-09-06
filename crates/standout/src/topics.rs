@@ -1,7 +1,6 @@
-//! Help topics: documentation beyond `--help` (guides, tutorials, reference
-//! material) accessible via `myapp help <topic>`, either registered inline
-//! or loaded from a directory of `.txt`/`.md` files (first non-blank line is
-//! the title; filename minus extension is the topic name).
+//! Help topics: documentation beyond `--help`, reached with `myapp help
+//! <topic>`, registered inline or loaded from a directory of `.txt`/`.md` files
+//! (first non-blank line is the title; filename minus extension is the name).
 //!
 //! ```rust
 //! use standout::topics::{Topic, TopicRegistry, TopicType, render_topic};
