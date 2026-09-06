@@ -1,13 +1,3 @@
-//! The `dispatch!` macro declares a command hierarchy that expands to
-//! [`GroupBuilder`](crate::cli::GroupBuilder) method calls.
-//!
-//! ```rust,ignore
-//! App::builder().commands(dispatch! {
-//!     db: { migrate => db::migrate, backup => db::backup },
-//!     version => version,
-//! });
-//! ```
-
 #[macro_export]
 macro_rules! dispatch {
     { $($tokens:tt)* } => {

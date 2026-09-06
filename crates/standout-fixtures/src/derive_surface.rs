@@ -1,10 +1,8 @@
 //! A downstream that reaches the derive path through `standout` alone.
 //!
-//! This crate depends on `standout` and on no other Standout crate, and this
-//! module compiles under `deny(warnings)`, so the module is what fails when a
-//! derive expands to a crate the consumer never named or emits an item whose
-//! generated name trips a rustc lint. `command` declares the same subcommands
-//! `Commands` registers, spelled the way clap's own derive spells them.
+//! The crate depends on no other Standout crate and this module compiles under
+//! `deny(warnings)`, so it is what fails when a derive expands to a crate the
+//! consumer never named or emits an item whose generated name trips a lint.
 #![deny(warnings)]
 
 use clap::{ArgMatches, Command};

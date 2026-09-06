@@ -1,7 +1,3 @@
-//! Line framing: one raw record per emitted event, the summary as the `result`
-//! record, and the diagnostic and warning entries the machine contract places
-//! around them.
-
 use clap::Command;
 use serde::Serialize;
 use serde_json::json;

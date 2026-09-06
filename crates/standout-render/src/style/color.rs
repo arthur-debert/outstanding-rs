@@ -1,8 +1,3 @@
-//! Color value parsing for stylesheets: named colors (`red`, `bright_red`,
-//! ...), 256-color palette indices, RGB hex (`#ff6b35`/`#fff`), RGB tuples
-//! (`[255, 107, 53]`), and theme-relative cube coordinates (`cube(60%, 20%,
-//! 0%)`, resolved via [`ThemePalette`]).
-
 use console::Color;
 
 use crate::colorspace::{CubeCoord, ThemePalette};

@@ -1,8 +1,3 @@
-//! [`SimpleEngine`]: format-string style `{variable}` substitution, with
-//! `{a.b.0}` dotted/indexed path access and `{{`/`}}` as escaped braces.
-//! Deliberately has no loops, conditionals, filters, includes, or macros —
-//! use [`MiniJinjaEngine`](super::MiniJinjaEngine) when those are needed.
-
 use std::collections::HashMap;
 
 use crate::error::RenderError;

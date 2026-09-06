@@ -2,28 +2,22 @@
 //!
 //! `run_emitted` and `standout-test`'s harness both call [`emit_run_result`],
 //! so what a test observes is what a process writes. The representation decides
-//! where a failure goes: under `json`, `yaml`, `csv` and `ndjson` the failure
-//! is the stdout document, serialized from [`RunError::diagnostic`], and
-//! stderr carries nothing the framework wrote for it; under the human
-//! representation the failure is prose on stderr. An `External` failure, and
-//! an `App` failure that did not ask to be framed, writes its verbatim bytes
-//! to stderr under every representation and adds the stdout document in the
-//! structured ones; `AppFailure::framed` keeps the status and takes the
-//! ordinary path instead. A status a successful handler declared
-//! (`Output::with_exit_status`) changes none of this: the outcome is
-//! `Handled`, emitted as any success is.
+//! where a failure goes: under `json`, `yaml`, `csv` and `ndjson` the failure is
+//! the stdout document, serialized from [`RunError::diagnostic`], and stderr
+//! carries nothing the framework wrote for it; under the human representation
+//! the failure is prose on stderr. An `App` or `External` failure writes its
+//! verbatim bytes to stderr under every representation and adds the stdout
+//! document in the structured ones. A status a successful handler declared
+//! (`Output::with_exit_status`) changes none of this: the outcome is `Handled`,
+//! emitted as any success is.
 //!
 //! Under `ndjson` the document is one compact line, and it is the only
-//! representation whose warnings are stdout entries too:
-//! [`emit_warning_entries`] writes each as a `severity: warning` diagnostic of
-//! kind `framework` after the result or the failure. A single-document encoding
-//! keeps warnings as stderr prose, which
-//! `standout_render::warnings::flush_to_stderr` owns, and so does a `NoMatch`
-//! handoff. The exception is an incremental command under `json` or `yaml`,
-//! whose array already ends in those warning records:
+//! representation whose warnings are stdout entries too. A single-document
+//! encoding keeps warnings as stderr prose, and so does a `NoMatch` handoff.
+//! The exception is an incremental command under `json` or `yaml`, whose array
+//! already ends in those warning records:
 //! [`warnings_delivered_on_stdout`] is the question both callers ask before
-//! rendering anything to stderr. Both write the `ndjson` bytes through the run's
-//! `StreamSink`, so an output file override receives the whole stream.
+//! rendering anything to stderr.
 
 use std::io::Write;
 

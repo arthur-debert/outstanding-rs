@@ -26,8 +26,6 @@ If a mandatory slot is missing, flag it in your handoff and in the PR `## Contex
 
 Read the issue and governing docs before editing. For bugs, write the failing test first, then fix the root cause, not just the reported instance. Keep the diff scoped to the issue and decision boundaries.
 
-When you change behavior, signatures, arguments, returns, or module contracts, update the affected docstring in the same diff. Also update caller docstrings or comments that describe the altered behavior.
-
 ## Verify
 
 Run the exact verify commands from the brief before opening the PR. In shipit, the usual manual suite is:

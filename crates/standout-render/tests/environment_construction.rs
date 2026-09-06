@@ -1,12 +1,3 @@
-//! Every rendering environment standout builds must carry the `true`/`false`/
-//! `none` spelling, and there is no way to enforce that on a call to
-//! `minijinja::Environment::new()`. So production code does not call it: it
-//! calls `standout_render::template::new_environment()`, and this guard fails
-//! the build when a new call site drifts back.
-//!
-//! Test crates are exempt — `tests/value_spelling.rs` builds a bare environment
-//! on purpose, to prove the downstream `register_filters` path normalizes too.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 

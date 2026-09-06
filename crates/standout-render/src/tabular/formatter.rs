@@ -1,15 +1,3 @@
-//! `TabularFormatter` formats data rows to a resolved [`TabularSpec`]/
-//! [`FlatDataSpec`], one row at a time so callers can interleave other output
-//! between rows. It also implements `minijinja::value::Object`, so a
-//! formatter injected into template context exposes `row(values)` and
-//! `num_columns` to templates directly (`{{ table.row([a, b, c]) }}`).
-//!
-//! Columns may carry sub-columns (stacked sub-cells within one column) or
-//! wrap onto multiple lines; anchored columns (left/right) get a computed gap
-//! between them rather than the fixed separator. Cell values may include
-//! BBCode-style style tags, which are kept balanced through truncation,
-//! padding, and wrapping rather than counted toward visible width.
-
 use minijinja::value::{Enumerator, Object, Value};
 use serde::Serialize;
 use serde_json::Value as JsonValue;

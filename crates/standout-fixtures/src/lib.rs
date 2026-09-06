@@ -1,18 +1,12 @@
 //! A downstream-shaped fixture the help and rendering suites assert against.
 //!
 //! [`Fixture::app`] and [`Fixture::command`] are built together from one
-//! [`Downstream`] configuration, so app and command can't drift apart the
-//! way two hand-written test doubles could.
-//!
-//! The shape carries the properties that co-occur in a real CLI and must be
-//! distinguished from each other: subcommands (so COMMANDS renders), a
-//! presence flag next to a valued positional, a `Count` flag (valueless but
-//! not boolean), a valued option with and without a metavar, an enumerated
-//! option with a default, a long option name, an app theme that overlays
-//! rather than replaces the help theme, and default help handling with topics
-//! registered. [`Downstream::flat`] swaps the subcommands for a required
-//! `ArgGroup` on the same arguments, so nested and flat shapes never disagree
-//! about what an option is called.
+//! [`Downstream`] configuration, so app and command can't drift apart the way
+//! two hand-written test doubles could. The shape carries the properties that
+//! co-occur in a real CLI and must be distinguished from each other;
+//! [`Downstream::flat`] swaps the subcommands for a required `ArgGroup` on the
+//! same arguments, so nested and flat shapes never disagree about what an
+//! option is called.
 //!
 //! ```
 //! use standout_fixtures::downstream;

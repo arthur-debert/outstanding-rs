@@ -1,26 +1,23 @@
 //! Unicode-aware column formatting for terminal tables.
 //!
-//! Handles Unicode display width (CJK characters count as 2 columns) and
-//! ANSI escapes (excluded from width) so text aligns and truncates without
-//! visual drift.
+//! Handles Unicode display width (CJK characters count as 2 columns) and ANSI
+//! escapes (excluded from width) so text aligns and truncates without visual
+//! drift. Semantic style tags likewise do not consume display width —
+//! truncation and wrapping preserve styles on retained text and emit balanced
+//! tags, so a styled cell can be measured and fitted without first converting
+//! it to plain text.
 //!
-//! Two APIs, pick based on need: template filters (`col`, `pad_left`, …) for
-//! simple tables with widths known at template time, or [`TabularFormatter`]
-//! for dynamic widths, CSV export, or specs that extract data from structs.
+//! Two APIs: template filters (`col`, `pad_left`, …) for widths known at
+//! template time, or [`TabularFormatter`] for dynamic widths, CSV export, or
+//! specs that extract data from structs. The `tabular()`/`table()` template
+//! functions take the row arrays about to be rendered, because sizing a
+//! `{min, max}` column to the widest cell is a whole-table measurement a
+//! formatter that sees one row at a time cannot do on its own.
 //!
-//! Column widths: [`Width::Fixed`] (exact), [`Width::Bounded`] (auto-sized
-//! within bounds from content), [`Width::Fill`] (one or more per table,
-//! sharing the remaining space by weight). Truncation: [`TruncateAt::End`],
-//! [`TruncateAt::Start`], [`TruncateAt::Middle`] (keeps both ends, useful for paths).
-//!
-//! Semantic style tags do not consume display width — truncation and
-//! wrapping preserve styles on retained text and emit balanced tags, so a
-//! styled cell can be measured and fitted without first converting it to
-//! plain text.
-//!
-//! Columns can nest sub-columns for per-row layout within a parent column:
-//! exactly one sub-column is [`Width::Fill`], the rest are Fixed or Bounded,
-//! and widths are resolved per-row from actual content.
+//! [`Width::Fill`] and `Fraction` columns split whatever space is left after
+//! fixed and bounded columns are sized; with no flex column, leftover space
+//! goes to the rightmost [`Width::Bounded`] column instead, ignoring its `max`,
+//! since that is explicit layout expansion rather than the bound itself.
 
 mod decorator;
 pub mod filters;

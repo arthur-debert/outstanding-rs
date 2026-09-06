@@ -1,7 +1,3 @@
-//! An incremental command's values as data: the ordered events and the summary
-//! `result()` returns, whatever representation the run selected, beside the
-//! bytes `stdout()` and `stderr()` carry and the `delivery()` decision.
-
 use clap::Command;
 use serde::Serialize;
 use serde_json::json;

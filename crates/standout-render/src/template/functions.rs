@@ -1,7 +1,3 @@
-//! Convenience render entry points that build a [`crate::RenderRequest`]
-//! from detected or explicit settings and delegate to
-//! [`crate::render_request`].
-
 use serde::Serialize;
 use standout_bbparser::{BBParser, TagTransform, UnknownTagBehavior};
 use std::collections::HashMap;

@@ -1,9 +1,3 @@
-//! [`Table`] wraps a `TabularSpec`/`FlatDataSpec` and adds borders, headers,
-//! row separators, and alternating row styles on top of the plain formatted
-//! rows. Alternating styles wrap each data row in `[style]...[/style]` tags;
-//! `Table` also implements `minijinja::value::Object` so templates can call
-//! `.row(...)`, `.header_row()`, etc. directly.
-
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::formatter::{CellValue, OwnedCellValue, TabularFormatter};

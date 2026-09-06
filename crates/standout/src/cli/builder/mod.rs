@@ -1,12 +1,8 @@
 //! [`AppBuilder`] configures a CLI application (commands, hooks, templates,
 //! themes, app-level state); [`AppBuilder::build`] consumes it into the
 //! executable [`App`] that owns parsing, dispatch, rendering, and run entry
-//! points. Split into submodules by concern: [`config`] (themes, templates,
-//! context, flags), [`commands`] (registration), [`execution`] (dispatch and
-//! run), [`rendering`] (template rendering and serialization).
-//!
-//! App-level state (DB connections, config, API clients) is injected via
-//! `.app_state()` and read in handlers via `ctx.app_state`.
+//! points. Split by concern into [`config`], [`commands`], [`execution`] and
+//! [`rendering`].
 
 mod commands;
 mod config;
@@ -1145,7 +1141,6 @@ impl App {
         )
     }
 
-    /// `csv` has no help projection and is a render error.
     fn help_document(
         &self,
         cmd: &Command,

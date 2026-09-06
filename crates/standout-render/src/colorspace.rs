@@ -3,20 +3,17 @@
 //! Terminal 256-color palettes have 240 extended colors (indices 16-255) that
 //! are normally hardcoded, ignoring the user's base16 theme. This module
 //! generates those colors instead, per [jake-stewart's proposal][gist], by
-//! **trilinear interpolation in CIE LAB space** using the 8 base ANSI colors
-//! as the corners of a cube.
+//! trilinear interpolation in CIE LAB space using the 8 base ANSI colors as the
+//! corners of a cube.
 //!
 //! [gist]: https://gist.github.com/jake-stewart/0a8ea46159a7da2c808e5be2177e1783
 //!
 //! A [`CubeCoord`] addresses a color as a fractional position in that cube
-//! (e.g. `(0.6, 0.2, 0.0)` = 60% toward red, 20% toward green) rather than as
-//! an absolute RGB value, so the same coordinate renders differently under
-//! different themes. Interpolation happens in LAB rather than RGB because LAB
-//! is perceptually uniform: equal numeric distance means equal perceived
-//! difference, so blends stay smooth and brightness stays consistent across
-//! hues. [`ThemePalette::resolve`] interpolates one coordinate;
-//! [`ThemePalette::generate_palette`] sweeps the whole cube plus a grayscale
-//! ramp to build a full extended palette.
+//! rather than as an absolute RGB value, so the same coordinate renders
+//! differently under different themes. Interpolation happens in LAB rather than
+//! RGB because LAB is perceptually uniform: equal numeric distance means equal
+//! perceived difference, so blends stay smooth and brightness stays consistent
+//! across hues.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rgb(pub u8, pub u8, pub u8);

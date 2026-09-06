@@ -1,8 +1,3 @@
-//! [`Representation`] is what a run puts on stdout; [`StyleMode`] is the
-//! separate decision of whether rendered human text carries escape sequences,
-//! which [`crate::request`] resolves. This module never probes the process
-//! itself while applying styles.
-
 use std::io::Write;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

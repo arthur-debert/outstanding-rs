@@ -1,13 +1,3 @@
-//! The versioned contract surface (`docs/topics/stability.md`).
-//!
-//! A type that implements [`ContractSurface`] names the version of the shape
-//! it serializes to. `T::envelope(self)` wraps a value as an [`Envelope`],
-//! which serializes as `{"schema_version": N, "data": <T>}`, so a consumer of
-//! `--output json` can tell a shape change from a data change without parsing
-//! anything else. A framework-owned document (the diagnostic, the list view,
-//! the help document) implements the trait too but carries `schema_version`
-//! as a top-level key beside its own fields instead of nesting under `data`.
-
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 

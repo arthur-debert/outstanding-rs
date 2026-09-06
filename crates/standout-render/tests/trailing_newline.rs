@@ -1,9 +1,3 @@
-//! The engine consumes exactly one of a template's trailing newlines.
-//!
-//! Jinja's rule, kept by MiniJinja, and observable in the bytes a script reads
-//! once `App::run` appends its own newline at the process edge. Documented as a
-//! contract in `docs/topics/templating.md`.
-
 use serde::Serialize;
 use standout_render::{render, Theme};
 

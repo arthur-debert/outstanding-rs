@@ -1,8 +1,3 @@
-//! Which runs the framework decides to page, read back off `delivery()`.
-//!
-//! The decision is taken in dispatch and carried out at the process edge, so
-//! every case here is settled without a terminal and without starting a pager.
-
 use clap::{ArgMatches, Command};
 use serde::Serialize;
 use serde_json::json;

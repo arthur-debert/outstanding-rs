@@ -1,9 +1,3 @@
-//! Standout spells booleans and none `true`/`false`/`none` regardless of
-//! minijinja version, even though minijinja 2.22+ switched its own rendering
-//! to Jinja2's Python spellings (`True`/`False`/`None`). Assertions here
-//! check standout's output only, so they hold across the open
-//! `minijinja = "2"` range and fail the moment the normalization is removed.
-
 use minijinja::{context, Environment};
 use serde_json::json;
 use standout_render::template::{new_environment, register_filters, MiniJinjaEngine};

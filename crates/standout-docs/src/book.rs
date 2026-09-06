@@ -1,29 +1,22 @@
 //! Walking the book: which pages it mounts, and where its links point.
 //!
-//! Two properties are checked here, both of them about the book as a graph
-//! rather than about any page's prose. Reachability: `docs/SUMMARY.md` is
-//! mdbook's table of contents, and a page under a mounted root that no entry
-//! names is a page the book never renders and no reader can reach. Resolution:
-//! a relative link between two pages must name a file that exists, and a link
-//! carrying a `#fragment` must name a heading that exists on that page.
+//! Reachability: `docs/SUMMARY.md` is mdbook's table of contents, and a page
+//! under a mounted root that no entry names is a page the book never renders.
+//! Resolution: a relative link must name a file that exists, and a link
+//! carrying a `#fragment` must name a heading on that page.
 //!
-//! Both of CommonMark's link forms count, since either can name a page that
-//! moved: inline links, and reference links resolved through a `[label]:`
-//! definition on the same page. The scanner ignores fenced code blocks and
-//! inline code spans, because a template's `[tag]` vocabulary and a Rust
-//! example's `#` lines otherwise read as links and headings; outside code, a
-//! bare `[tag]` is a link only when a definition gives that label a
-//! destination. A page's prose is scanned as one string, not line by line,
-//! because a link's text may wrap while its destination sits on the last
-//! line. Anchors are computed with mdbook's own rule — keep alphanumerics,
-//! `_` and `-`, turn whitespace into `-`, lowercase, and suffix a repeated
-//! anchor with `-1`, `-2` and so on.
+//! Both of CommonMark's link forms count. The scanner ignores fenced code
+//! blocks and inline code spans, because a template's `[tag]` vocabulary and a
+//! Rust example's `#` lines otherwise read as links and headings. A page's
+//! prose is scanned as one string, not line by line, because a link's text may
+//! wrap while its destination sits on the last line. Anchors are computed with
+//! mdbook's own rule — keep alphanumerics, `_` and `-`, turn whitespace into
+//! `-`, lowercase, and suffix a repeated anchor with `-1`, `-2` and so on.
 //!
 //! Paths run through `docs/`, the directory a relative link resolves from;
-//! `docs/crates` holds one symlink per documented crate, so the walk sees
-//! `crates/*/docs` under the paths the book itself uses. Links from outside
-//! the book (the README) use the deployed URL: `<page>.html` is backed by
-//! `docs/<page>.md`, a directory URL by that directory's `index.md`.
+//! `docs/crates` holds one symlink per documented crate. Links from outside the
+//! book use the deployed URL: `<page>.html` is backed by `docs/<page>.md`, a
+//! directory URL by that directory's `index.md`.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;

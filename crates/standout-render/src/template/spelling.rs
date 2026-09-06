@@ -1,16 +1,16 @@
 //! How standout spells minijinja values as text.
 //!
-//! minijinja renders booleans and none with Jinja2's Python spellings —
-//! `True`, `False`, `None`. Standout renders `true`, `false`, and `none`.
-//! Two seams keep that true everywhere: [`new_environment`] installs a
-//! formatter that normalizes top-level interpolation, and [`stringify`]
-//! replaces `Value::to_string()` wherever standout itself turns a value into
-//! text (filters, table cells, borders) — a formatter cannot reach those,
-//! since they go through `Display for Value` directly.
+//! minijinja renders booleans and none with Jinja2's Python spellings — `True`,
+//! `False`, `None`. Standout renders `true`, `false`, and `none`. Two seams
+//! keep that true everywhere: [`new_environment`] installs a formatter that
+//! normalizes top-level interpolation, and [`stringify`] replaces
+//! `Value::to_string()` wherever standout itself turns a value into text
+//! (filters, table cells, borders) — a formatter cannot reach those, since they
+//! go through `Display for Value` directly.
 //!
-//! Known limitation: the `~` concatenation operator formats its operands
-//! inside minijinja's evaluator, which exposes no hook, so `{{ "x" ~ flag }}`
-//! still yields `xTrue`. Use `{{ "x" }}{{ flag }}` or `{{ "x" ~ flag|string }}`.
+//! Known limitation: the `~` concatenation operator formats its operands inside
+//! minijinja's evaluator, which exposes no hook, so `{{ "x" ~ flag }}` still
+//! yields `xTrue`. Use `{{ "x" }}{{ flag }}` or `{{ "x" ~ flag|string }}`.
 
 use std::borrow::Cow;
 

@@ -1,12 +1,3 @@
-//! Style system for named styles, aliases, and stylesheets.
-//!
-//! Stylesheets can be written in CSS (preferred) or YAML (legacy); the
-//! [`StylesheetRegistry`] auto-detects the format from content when loading.
-//! A [`StyleValue`] is either a concrete style or an alias to another named
-//! style, and a style can carry `light`/`dark` overrides resolved by
-//! [`ThemeVariants::resolve`] against the active [`ColorMode`](crate::ColorMode).
-//! Formats are documented in `docs/crates/render/topics/styling-system.md`.
-
 mod error;
 mod registry;
 mod value;

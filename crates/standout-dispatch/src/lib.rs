@@ -3,17 +3,12 @@
 //! Routes parsed `ArgMatches` to a [`Handler`], running pre-dispatch, handler,
 //! post-dispatch, and post-output hooks around it, and returns typed
 //! [`HandlerResult`] data — presentation stays with the consuming framework.
-//! A handler adapter takes `(&ArgMatches, &CommandContext)` and returns
-//! serializable data, so application logic stays reusable outside a CLI. The
-//! third parameter of [`Handler::handle`] is the typed results channel of
-//! [`results`]; a batch command sets `Handler::Event` to [`NoEvents`] and
-//! ignores it, and a command that produces its result while it runs takes the
-//! channel as a third closure parameter through [`EventsFnHandler`].
+//! The third parameter of [`Handler::handle`] is the typed results channel of
+//! [`results`].
 //!
 //! [`CommandContext`] carries two kinds of injected state: `app_state` is
-//! immutable and app-lifetime (database, config, API clients), built once
-//! and shared via `Rc`; `extensions` is mutable and per-request, set by
-//! pre-dispatch hooks for things like a resolved user session.
+//! immutable and app-lifetime, built once and shared via `Rc`; `extensions` is
+//! mutable and per-request, set by pre-dispatch hooks.
 
 pub mod artifact;
 mod contract;

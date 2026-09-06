@@ -1,5 +1,3 @@
-//! MiniJinja filter registration.
-
 use minijinja::{Environment, Error, ErrorKind, Value};
 
 pub fn register_filters(env: &mut Environment<'static>) {
