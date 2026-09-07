@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-const OWNER: &str = "crates/standout/src/cli/group.rs";
+const OWNER: &str = "crates/standout/src/cli/group/config.rs";
 const IMPL: &str = "impl<H> CommandConfig<H> {";
 
 const HOOK_API: &[&str] = &["hooks", "pre_dispatch", "post_dispatch", "post_output"];
