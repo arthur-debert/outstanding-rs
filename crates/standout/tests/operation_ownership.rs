@@ -39,7 +39,7 @@ const SINGLE_DEFINITIONS: [(&str, &str); 5] = [
     ),
     (
         "fn take_prefix_to_display_width",
-        "crates/standout-render/src/tabular/util.rs",
+        "crates/standout-render/src/tabular/util/truncate.rs",
     ),
 ];
 

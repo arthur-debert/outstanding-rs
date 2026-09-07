@@ -9,5 +9,6 @@ tmp/
 local
 site/
 book/
+!/crates/standout-docs/src/book/
 .claude/settings.local.json
 /.quality-tools

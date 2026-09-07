@@ -9,122 +9,9 @@ fn stringify(value: &minijinja::Value) -> std::borrow::Cow<'_, str> {
 }
 use crate::{AmbiguousWidth, FormattedText, WidthCalculator};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum BorderStyle {
-    #[default]
-    None,
-    Ascii,
-    Light,
-    Heavy,
-    Double,
-    Rounded,
-}
-
-impl BorderStyle {
-    fn chars(&self) -> BorderChars {
-        match self {
-            BorderStyle::None => BorderChars::empty(),
-            BorderStyle::Ascii => BorderChars {
-                horizontal: '-',
-                vertical: '|',
-                top_left: '+',
-                top_right: '+',
-                bottom_left: '+',
-                bottom_right: '+',
-                left_t: '+',
-                cross: '+',
-                right_t: '+',
-                top_t: '+',
-                bottom_t: '+',
-            },
-            BorderStyle::Light => BorderChars {
-                horizontal: '─',
-                vertical: '│',
-                top_left: '┌',
-                top_right: '┐',
-                bottom_left: '└',
-                bottom_right: '┘',
-                left_t: '├',
-                cross: '┼',
-                right_t: '┤',
-                top_t: '┬',
-                bottom_t: '┴',
-            },
-            BorderStyle::Heavy => BorderChars {
-                horizontal: '━',
-                vertical: '┃',
-                top_left: '┏',
-                top_right: '┓',
-                bottom_left: '┗',
-                bottom_right: '┛',
-                left_t: '┣',
-                cross: '╋',
-                right_t: '┫',
-                top_t: '┳',
-                bottom_t: '┻',
-            },
-            BorderStyle::Double => BorderChars {
-                horizontal: '═',
-                vertical: '║',
-                top_left: '╔',
-                top_right: '╗',
-                bottom_left: '╚',
-                bottom_right: '╝',
-                left_t: '╠',
-                cross: '╬',
-                right_t: '╣',
-                top_t: '╦',
-                bottom_t: '╩',
-            },
-            BorderStyle::Rounded => BorderChars {
-                horizontal: '─',
-                vertical: '│',
-                top_left: '╭',
-                top_right: '╮',
-                bottom_left: '╰',
-                bottom_right: '╯',
-                left_t: '├',
-                cross: '┼',
-                right_t: '┤',
-                top_t: '┬',
-                bottom_t: '┴',
-            },
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-struct BorderChars {
-    horizontal: char,
-    vertical: char,
-    top_left: char,
-    top_right: char,
-    bottom_left: char,
-    bottom_right: char,
-    left_t: char,
-    cross: char,
-    right_t: char,
-    top_t: char,
-    bottom_t: char,
-}
-
-impl BorderChars {
-    fn empty() -> Self {
-        BorderChars {
-            horizontal: ' ',
-            vertical: ' ',
-            top_left: ' ',
-            top_right: ' ',
-            bottom_left: ' ',
-            bottom_right: ' ',
-            left_t: ' ',
-            cross: ' ',
-            right_t: ' ',
-            top_t: ' ',
-            bottom_t: ' ',
-        }
-    }
-}
+mod borders;
+mod template_object;
+pub use borders::BorderStyle;
 
 pub struct Table {
     formatter: TabularFormatter,
@@ -242,47 +129,6 @@ impl Table {
         self
     }
 
-    fn rebuild_formatter(&mut self) {
-        let policy = self.formatter.ambiguous_width();
-        let mut formatter_width = self.requested_width;
-
-        // Preserve the legacy Narrow layout exactly. Under Wide, Unicode border
-        // glyphs occupy two cells, so the requested table width becomes a hard
-        // maximum and the formatter receives the remaining interior width.
-        if policy == AmbiguousWidth::Wide
-            && matches!(
-                self.border,
-                BorderStyle::Light
-                    | BorderStyle::Heavy
-                    | BorderStyle::Double
-                    | BorderStyle::Rounded
-            )
-        {
-            let calculator = WidthCalculator::new(policy);
-            let vertical = self.border.chars().vertical;
-            formatter_width =
-                formatter_width.saturating_sub(calculator.char_width(vertical).saturating_mul(2));
-        }
-
-        self.formatter = match &self.data_widths {
-            Some(measured) => {
-                let resolved =
-                    self.spec
-                        .resolve_prepared_widths_measured(formatter_width, measured, policy);
-                TabularFormatter::from_prepared_resolved(
-                    &self.spec,
-                    resolved,
-                    formatter_width,
-                    policy,
-                )
-            }
-            None => TabularFormatter::from_prepared_spec(&self.spec, formatter_width, policy),
-        };
-        if policy == AmbiguousWidth::Wide && self.border != BorderStyle::None {
-            self.formatter.limit_to_width(formatter_width);
-        }
-    }
-
     pub fn header<S: Into<String>, I: IntoIterator<Item = S>>(mut self, headers: I) -> Self {
         self.headers = Some(
             headers
@@ -384,18 +230,6 @@ impl Table {
         }
     }
 
-    pub fn separator_row(&self) -> String {
-        self.horizontal_line(LineType::Middle)
-    }
-
-    pub fn top_border(&self) -> String {
-        self.horizontal_line(LineType::Top)
-    }
-
-    pub fn bottom_border(&self) -> String {
-        self.horizontal_line(LineType::Bottom)
-    }
-
     fn wrap_data_row(&self, content: &str) -> String {
         let bordered = self.wrap_row(content);
         if let Some((odd_style, even_style)) = &self.row_styles {
@@ -413,41 +247,6 @@ impl Table {
         } else {
             bordered
         }
-    }
-
-    fn wrap_row(&self, content: &str) -> String {
-        if self.border == BorderStyle::None {
-            return content.to_string();
-        }
-
-        let chars = self.border.chars();
-        format!("{}{}{}", chars.vertical, content, chars.vertical)
-    }
-
-    fn horizontal_line(&self, line_type: LineType) -> String {
-        if self.border == BorderStyle::None {
-            return String::new();
-        }
-
-        let chars = self.border.chars();
-        let total_content = self.formatter.rendered_width();
-
-        let (left, _joint, right) = match line_type {
-            LineType::Top => (chars.top_left, chars.top_t, chars.top_right),
-            LineType::Middle => (chars.left_t, chars.cross, chars.right_t),
-            LineType::Bottom => (chars.bottom_left, chars.bottom_t, chars.bottom_right),
-        };
-
-        let horizontal_width = WidthCalculator::new(self.formatter.ambiguous_width())
-            .char_width(chars.horizontal)
-            .max(1);
-        format!(
-            "{}{}{}",
-            left,
-            std::iter::repeat_n(chars.horizontal, total_content / horizontal_width)
-                .collect::<String>(),
-            right
-        )
     }
 
     pub fn render<S: AsRef<str>>(&self, rows: &[Vec<S>]) -> String {
@@ -510,208 +309,17 @@ impl Table {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum LineType {
-    Top,
-    Middle,
-    Bottom,
-}
-
-impl minijinja::value::Object for Table {
-    fn get_value(self: &std::sync::Arc<Self>, key: &minijinja::Value) -> Option<minijinja::Value> {
-        match key.as_str()? {
-            "num_columns" => Some(minijinja::Value::from(self.num_columns())),
-            "border" => Some(minijinja::Value::from(format!("{:?}", self.get_border()))),
-            _ => None,
-        }
-    }
-
-    fn enumerate(self: &std::sync::Arc<Self>) -> minijinja::value::Enumerator {
-        minijinja::value::Enumerator::Str(&["num_columns", "border"])
-    }
-
-    fn call_method(
-        self: &std::sync::Arc<Self>,
-        _state: &minijinja::State,
-        name: &str,
-        args: &[minijinja::Value],
-    ) -> Result<minijinja::Value, minijinja::Error> {
-        match name {
-            "row" => {
-                if args.is_empty() {
-                    return Err(minijinja::Error::new(
-                        minijinja::ErrorKind::MissingArgument,
-                        "row() requires an array of values",
-                    ));
-                }
-
-                let values_arg = &args[0];
-
-                if self.formatter.has_sub_columns() {
-                    let outer_iter = match values_arg.try_iter() {
-                        Ok(iter) => iter,
-                        Err(_) => {
-                            let values = vec![stringify(values_arg).into_owned()];
-                            return Ok(fragment(self.row_markup(&values)));
-                        }
-                    };
-
-                    let mut owned_values: Vec<OwnedCellValue> = Vec::new();
-                    for (i, v) in outer_iter.enumerate() {
-                        let is_sub_col = self
-                            .formatter
-                            .columns()
-                            .get(i)
-                            .and_then(|c| c.sub_columns.as_ref())
-                            .is_some();
-
-                        if is_sub_col {
-                            if let Ok(inner_iter) = v.try_iter() {
-                                let sub_vals: Vec<String> =
-                                    inner_iter.map(|iv| stringify(&iv).into_owned()).collect();
-                                owned_values.push(OwnedCellValue::Sub(sub_vals));
-                            } else {
-                                owned_values
-                                    .push(OwnedCellValue::Single(stringify(&v).into_owned()));
-                            }
-                        } else {
-                            owned_values.push(OwnedCellValue::Single(stringify(&v).into_owned()));
-                        }
-                    }
-
-                    let cell_values: Vec<_> = owned_values
-                        .iter()
-                        .map(OwnedCellValue::as_borrowed)
-                        .collect();
-
-                    let formatted = self.row_markup_cells(&cell_values);
-                    Ok(fragment(formatted))
-                } else {
-                    let values: Vec<String> = match values_arg.try_iter() {
-                        Ok(iter) => iter.map(|v| stringify(&v).into_owned()).collect(),
-                        Err(_) => vec![stringify(values_arg).into_owned()],
-                    };
-
-                    let formatted = self.row_markup(&values);
-                    Ok(fragment(formatted))
-                }
-            }
-            "row_from" => {
-                if args.is_empty() {
-                    return Err(minijinja::Error::new(
-                        minijinja::ErrorKind::MissingArgument,
-                        "row_from() requires an object argument",
-                    ));
-                }
-
-                let value =
-                    crate::RenderData::from_template_value(args[0].clone()).map_err(|error| {
-                        minijinja::Error::new(
-                            minijinja::ErrorKind::InvalidOperation,
-                            error.to_string(),
-                        )
-                    })?;
-                let formatted = self.formatter.row_from(&value);
-                Ok(fragment(self.wrap_data_row(&formatted)))
-            }
-            "header_row" => Ok(fragment(self.header_row())),
-            "separator_row" => Ok(fragment(self.separator_row())),
-            "top_border" => Ok(fragment(self.top_border())),
-            "bottom_border" => Ok(fragment(self.bottom_border())),
-            "render_all" => {
-                if args.is_empty() {
-                    return Err(minijinja::Error::new(
-                        minijinja::ErrorKind::MissingArgument,
-                        "render_all() requires an array of rows",
-                    ));
-                }
-
-                let rows_iter = args[0].try_iter().map_err(|_| {
-                    minijinja::Error::new(
-                        minijinja::ErrorKind::InvalidOperation,
-                        "render_all() requires an array of rows",
-                    )
-                })?;
-
-                let rows: Vec<Vec<String>> = rows_iter
-                    .map(|row| {
-                        row.try_iter()
-                            .map(|iter| iter.map(|v| stringify(&v).into_owned()).collect())
-                            .unwrap_or_else(|_| vec![stringify(&row).into_owned()])
-                    })
-                    .collect();
-
-                let formatted = self.render_markup(&rows);
-                Ok(fragment(formatted))
-            }
-            _ => Err(minijinja::Error::new(
-                minijinja::ErrorKind::UnknownMethod,
-                format!("Table has no method '{}'", name),
-            )),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tabular::Col;
-    use crate::WidthCalculator;
 
-    fn simple_spec() -> TabularSpec {
+    pub(super) fn simple_spec() -> TabularSpec {
         TabularSpec::builder()
             .column(Col::fixed(10))
             .column(Col::fixed(8))
             .separator("  ")
             .build()
-    }
-
-    #[test]
-    fn table_no_border() {
-        let table = Table::new(simple_spec(), 80);
-        let row = table.row(&["Hello", "World"]);
-        assert!(!row.contains('│'));
-        assert!(row.contains("Hello"));
-    }
-
-    #[test]
-    fn table_with_ascii_border() {
-        let table = Table::new(simple_spec(), 80).border(BorderStyle::Ascii);
-        let row = table.row(&["Hello", "World"]);
-        assert!(row.starts_with('|'));
-        assert!(row.ends_with('|'));
-    }
-
-    #[test]
-    fn table_with_light_border() {
-        let table = Table::new(simple_spec(), 80).border(BorderStyle::Light);
-        let row = table.row(&["Hello", "World"]);
-        assert!(row.starts_with('│'));
-        assert!(row.ends_with('│'));
-    }
-
-    #[test]
-    fn table_with_heavy_border() {
-        let table = Table::new(simple_spec(), 80).border(BorderStyle::Heavy);
-        let row = table.row(&["Hello", "World"]);
-        assert!(row.starts_with('┃'));
-        assert!(row.ends_with('┃'));
-    }
-
-    #[test]
-    fn table_with_double_border() {
-        let table = Table::new(simple_spec(), 80).border(BorderStyle::Double);
-        let row = table.row(&["Hello", "World"]);
-        assert!(row.starts_with('║'));
-        assert!(row.ends_with('║'));
-    }
-
-    #[test]
-    fn table_with_rounded_border() {
-        let table = Table::new(simple_spec(), 80).border(BorderStyle::Rounded);
-        let row = table.row(&["Hello", "World"]);
-        assert!(row.starts_with('│'));
-        assert!(row.ends_with('│'));
     }
 
     #[test]
@@ -745,33 +353,6 @@ mod tests {
     }
 
     #[test]
-    fn table_separator_row() {
-        let table = Table::new(simple_spec(), 80).border(BorderStyle::Light);
-        let sep = table.separator_row();
-        assert!(sep.contains('─'));
-        assert!(sep.starts_with('├'));
-        assert!(sep.ends_with('┤'));
-    }
-
-    #[test]
-    fn table_top_border() {
-        let table = Table::new(simple_spec(), 80).border(BorderStyle::Light);
-        let top = table.top_border();
-        assert!(top.contains('─'));
-        assert!(top.starts_with('┌'));
-        assert!(top.ends_with('┐'));
-    }
-
-    #[test]
-    fn table_bottom_border() {
-        let table = Table::new(simple_spec(), 80).border(BorderStyle::Light);
-        let bottom = table.bottom_border();
-        assert!(bottom.contains('─'));
-        assert!(bottom.starts_with('└'));
-        assert!(bottom.ends_with('┘'));
-    }
-
-    #[test]
     fn table_render_full() {
         let table = Table::new(simple_spec(), 80)
             .border(BorderStyle::Light)
@@ -790,25 +371,6 @@ mod tests {
         assert!(lines[3].contains("Alice"));
         assert!(lines[4].contains("Bob"));
         assert!(lines[5].starts_with('└'));
-    }
-
-    #[test]
-    fn table_render_no_border() {
-        let table = Table::new(simple_spec(), 80).header(vec!["Name", "Value"]);
-
-        let data = vec![vec!["Alice", "100"]];
-
-        let output = table.render(&data);
-        let lines: Vec<&str> = output.lines().collect();
-
-        assert!(lines.len() >= 2);
-        assert!(lines[0].contains("Name"));
-        assert!(lines[1].contains("Alice"));
-    }
-
-    #[test]
-    fn border_style_default() {
-        assert_eq!(BorderStyle::default(), BorderStyle::None);
     }
 
     #[test]
@@ -844,69 +406,6 @@ mod tests {
         let row = table.row_from(&record);
         assert!(row.contains("Alice"));
         assert!(row.contains("active"));
-    }
-
-    #[test]
-    fn table_row_from_with_border() {
-        use serde::Serialize;
-
-        #[derive(Serialize)]
-        struct Item {
-            id: u32,
-            value: String,
-        }
-
-        let spec = TabularSpec::builder()
-            .column(Col::fixed(5).key("id"))
-            .column(Col::fixed(10).key("value"))
-            .build();
-
-        let table = Table::new(spec, 80).border(BorderStyle::Light);
-        let item = Item {
-            id: 42,
-            value: "test".to_string(),
-        };
-
-        let row = table.row_from(&item);
-        assert!(row.starts_with('│'));
-        assert!(row.ends_with('│'));
-        assert!(row.contains("42"));
-        assert!(row.contains("test"));
-    }
-
-    #[test]
-    fn table_row_separator_option() {
-        let spec = TabularSpec::builder()
-            .column(Col::fixed(10))
-            .column(Col::fixed(8))
-            .build();
-
-        let table = Table::new(spec, 80)
-            .border(BorderStyle::Light)
-            .row_separator(true);
-
-        let data = vec![vec!["A", "1"], vec!["B", "2"], vec!["C", "3"]];
-        let output = table.render(&data);
-        let lines: Vec<&str> = output.lines().collect();
-
-        let sep_count = lines.iter().filter(|l| l.starts_with('├')).count();
-        assert_eq!(sep_count, 2, "Expected 2 separators between 3 rows");
-    }
-
-    #[test]
-    fn table_row_separator_disabled_by_default() {
-        let spec = TabularSpec::builder()
-            .column(Col::fixed(10))
-            .column(Col::fixed(8))
-            .build();
-
-        let table = Table::new(spec, 80).border(BorderStyle::Light);
-
-        let data = vec![vec!["A", "1"], vec!["B", "2"]];
-        let output = table.render(&data);
-        let lines: Vec<&str> = output.lines().collect();
-
-        assert_eq!(lines.len(), 4);
     }
 
     #[test]
@@ -992,67 +491,5 @@ mod tests {
         assert!(output.contains("Value"));
         assert!(output.contains("Alice"));
         assert!(output.contains("100"));
-    }
-
-    #[test]
-    fn unicode_borders_honor_wide_maximum_without_ascii_fallback() {
-        let styles = [
-            (BorderStyle::Light, '┌'),
-            (BorderStyle::Heavy, '┏'),
-            (BorderStyle::Double, '╔'),
-            (BorderStyle::Rounded, '╭'),
-        ];
-        let calculator = WidthCalculator::new(AmbiguousWidth::Wide);
-
-        for (style, expected_corner) in styles {
-            for requested in [20, 21] {
-                let spec = TabularSpec::builder().column(Col::fill()).build();
-                let table = Table::with_ambiguous_width(spec, requested, AmbiguousWidth::Wide)
-                    .border(style);
-                let rendered = table.render(&[vec!["≈Δ"]]);
-
-                for line in rendered.lines() {
-                    let width = calculator.visible_width(line);
-                    assert!(
-                        width <= requested,
-                        "{style:?} line exceeded {requested}: {line}"
-                    );
-                    assert!(
-                        requested - width <= 1,
-                        "{style:?} underfilled {requested}: {line}"
-                    );
-                }
-                assert!(table.top_border().starts_with(expected_corner));
-                assert!(
-                    !rendered.contains('+'),
-                    "must not substitute ASCII: {rendered}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn narrow_unicode_border_layout_remains_compatible() {
-        let calculator = WidthCalculator::new(AmbiguousWidth::Narrow);
-
-        for style in [
-            BorderStyle::Light,
-            BorderStyle::Heavy,
-            BorderStyle::Double,
-            BorderStyle::Rounded,
-        ] {
-            let spec = TabularSpec::builder().column(Col::fill()).build();
-            let default = Table::new(spec.clone(), 21)
-                .border(style)
-                .render(&[vec!["≈Δ"]]);
-            let explicit = Table::with_ambiguous_width(spec, 21, AmbiguousWidth::Narrow)
-                .border(style)
-                .render(&[vec!["≈Δ"]]);
-
-            assert_eq!(default, explicit);
-            assert!(default
-                .lines()
-                .all(|line| calculator.visible_width(line) == 23));
-        }
     }
 }
